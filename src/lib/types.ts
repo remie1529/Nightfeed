@@ -36,6 +36,8 @@ export interface AppSettings {
   telegramEnabled: boolean;
   telegramBotToken: string;
   telegramAllowedChatIds: string;
+  /** GitHub PAT for private-repo auto-updates — never log this. */
+  githubToken: string;
 }
 
 export interface Episode {

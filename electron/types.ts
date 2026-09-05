@@ -47,6 +47,8 @@ export interface AppSettings {
   telegramBotToken: string;
   /** Comma-separated allowed chat ids (only these can control the bot). */
   telegramAllowedChatIds: string;
+  /** GitHub PAT for private-repo auto-updates — never log this. */
+  githubToken: string;
 }
 
 export interface Episode {
@@ -151,4 +153,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramEnabled: false,
   telegramBotToken: '',
   telegramAllowedChatIds: '',
+  githubToken: '',
 };

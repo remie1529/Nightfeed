@@ -17,6 +17,7 @@ const empty: AppSettings = {
   telegramEnabled: false,
   telegramBotToken: '',
   telegramAllowedChatIds: '',
+  githubToken: '',
 };
 
 export default function SettingsView() {
@@ -392,6 +393,27 @@ export default function SettingsView() {
         )}
         <div className="hint">
           Packaged builds check GitHub Releases for remie1529/TV-Show-Manager on startup.
+          The repo is private, so a GitHub token is required for update checks to succeed.
+        </div>
+      </div>
+
+      <div className="field" style={{ maxWidth: 640 }}>
+        <label>GitHub personal access token</label>
+        <input
+          type="password"
+          autoComplete="off"
+          value={settings.githubToken || ''}
+          onChange={(e) => setLocal({ ...settings, githubToken: e.target.value })}
+          placeholder="ghp_… or github_pat_…"
+        />
+        <div className="hint">
+          Needed because the update repo is private. Create a classic PAT with the{' '}
+          <code>repo</code> scope at{' '}
+          <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">
+            github.com/settings/tokens
+          </a>
+          , or a fine-grained token with Contents: Read on remie1529/TV-Show-Manager.
+          Stored locally in electron-store. Never logged. Save, then Check for updates.
         </div>
       </div>
 

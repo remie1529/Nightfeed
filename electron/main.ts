@@ -244,6 +244,36 @@ async function addShowWithPolicy(mazeId: number, policy: AddShowPolicy = 'manual
   return withLocalStatuses(show);
 }
 
+
+const UPDATE_FEED = {
+  provider: 'github' as const,
+  owner: 'remie1529',
+  repo: 'TV-Show-Manager',
+};
+
+/** Configure electron-updater for private GitHub when a PAT is set. Never log the token. */
+function configureUpdaterFeed(): void {
+  const token = (getSettings().githubToken || '').trim();
+  if (!token) return;
+  autoUpdater.setFeedURL({
+    ...UPDATE_FEED,
+    private: true,
+    token,
+  });
+}
+
+function formatUpdateError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const hasToken = !!(getSettings().githubToken || '').trim();
+  if (
+    !hasToken &&
+    /\b(404|401)\b|Not Found|Unauthorized|Unable to find latest version|HttpError/i.test(msg)
+  ) {
+    return 'Private repo — add a GitHub token in Settings';
+  }
+  return msg;
+}
+
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -274,7 +304,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (err) => {
     updateState.checking = false;
-    updateState.error = err?.message || String(err);
+    updateState.error = formatUpdateError(err);
     updateState.message = updateState.error;
     pushUpdateStatus();
   });
@@ -298,13 +328,14 @@ async function checkForUpdates(manual: boolean): Promise<UpdateStatus> {
     return { ...updateState };
   }
   try {
+    configureUpdaterFeed();
     updateState.checking = true;
     updateState.error = null;
     pushUpdateStatus();
     await autoUpdater.checkForUpdates();
   } catch (e) {
     updateState.checking = false;
-    updateState.error = e instanceof Error ? e.message : String(e);
+    updateState.error = formatUpdateError(e);
     updateState.message = updateState.error;
     pushUpdateStatus();
   }
@@ -416,6 +447,8 @@ function registerIpc() {
     scheduleRefresh();
     applyLoginItem(!!next.launchOnStartup);
     telegramBot.sync(next);
+    // Re-apply private GitHub feed if token present (never log token)
+    configureUpdaterFeed();
     return next;
   });
 

@@ -19,8 +19,10 @@ export default function App() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [libraryKey, setLibraryKey] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
+    window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || ''))).catch(() => undefined);
     window.torrentAPI.getDownloads().then(setDownloads).catch(() => undefined);
     const offDl = window.torrentAPI.onDownloadsUpdate((items) => {
       setDownloads(items as DownloadItem[]);
@@ -78,7 +80,7 @@ export default function App() {
         </button>
         <div style={{ flex: 1 }} />
         <div style={{ padding: '0.75rem', color: 'var(--text-faint)', fontSize: '0.75rem' }}>
-          v1.2 · local library
+          {appVersion ? `v${appVersion}` : '…'} · local library
         </div>
       </nav>
       <main className="main">
