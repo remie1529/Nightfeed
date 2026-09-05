@@ -1,8 +1,8 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
-import { DownloadItem, Show } from '../types';
-import { buildEpisodePath } from './paths';
+import { DownloadItem, Movie, Show } from '../types';
+import { buildEpisodePath, buildMoviePath } from './paths';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const WebTorrent = require('webtorrent') as any;
@@ -254,6 +254,147 @@ export class DownloadEngine extends EventEmitter {
             item.status = 'done';
             item.savePath = dest;
             // Emit done first so main can set override + toast; then remove from queue / stop seeding
+            const snapshot = { ...item };
+            this.emit('done', snapshot);
+            setImmediate(() => this.remove(id));
+          } catch (err) {
+            item.status = 'error';
+            item.error = err instanceof Error ? err.message : String(err);
+            this.emit('update', this.list());
+          }
+        });
+
+        torrent.on('error', (err: Error) => {
+          item.status = 'error';
+          item.error = err.message;
+          this.emit('update', this.list());
+          reject(err);
+        });
+      } catch (err) {
+        item.status = 'error';
+        item.error = err instanceof Error ? err.message : String(err);
+        this.emit('update', this.list());
+        reject(err);
+      }
+    });
+  }
+
+  /** True if this movie is already queued/downloading/paused/done. */
+  hasMovieActivity(movieId: number): boolean {
+    for (const item of this.items.values()) {
+      if (
+        item.kind === 'movie' &&
+        item.movieId === movieId &&
+        (item.status === 'downloading' ||
+          item.status === 'queued' ||
+          item.status === 'paused' ||
+          item.status === 'done')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getDownloadingMovieIds(): Set<number> {
+    const ids = new Set<number>();
+    for (const item of this.items.values()) {
+      if (
+        item.kind === 'movie' &&
+        item.movieId != null &&
+        (item.status === 'downloading' || item.status === 'queued' || item.status === 'paused')
+      ) {
+        ids.add(item.movieId);
+      }
+    }
+    return ids;
+  }
+
+  async startMovie(opts: {
+    magnet: string;
+    movie: Movie;
+    movieLibraryRoot: string;
+  }): Promise<DownloadItem> {
+    const client = this.getClient();
+    const id = `movie-${opts.movie.tmdbId}-${Date.now()}`;
+
+    const provisional = buildMoviePath(opts.movie, opts.movieLibraryRoot, '.mkv');
+
+    const item: DownloadItem = {
+      id,
+      infoHash: '',
+      name: opts.movie.title,
+      showId: opts.movie.tmdbId,
+      showName: opts.movie.title,
+      seasonNumber: 0,
+      episodeNumber: 0,
+      episodeTitle: opts.movie.releaseYear ? String(opts.movie.releaseYear) : opts.movie.title,
+      progress: 0,
+      downloadSpeed: 0,
+      uploadSpeed: 0,
+      numPeers: 0,
+      status: 'queued',
+      savePath: provisional.movieDir,
+      magnet: opts.magnet,
+      kind: 'movie',
+      movieId: opts.movie.tmdbId,
+    };
+    this.items.set(id, item);
+    this.emit('update', this.list());
+
+    return new Promise((resolve, reject) => {
+      try {
+        const torrent = client.add(
+          opts.magnet,
+          { path: provisional.movieDir, announce: DEFAULT_ANNOUNCE },
+          (t: any) => {
+            item.infoHash = t.infoHash;
+            item.status = 'downloading';
+            item.name = t.name || item.name;
+            this.emit('update', this.list());
+            resolve(item);
+          }
+        );
+
+        this.torrents.set(id, torrent);
+
+        torrent.on('ready', () => {
+          this.selectVideoOnly(torrent);
+        });
+
+        torrent.on('download', () => {
+          item.progress = torrent.progress;
+          item.downloadSpeed = torrent.downloadSpeed;
+          item.uploadSpeed = torrent.uploadSpeed;
+          item.numPeers = torrent.numPeers;
+          item.status = 'downloading';
+          this.emit('update', this.list());
+        });
+
+        torrent.on('done', async () => {
+          try {
+            const files = torrent.files.map((f: any) => ({
+              name: f.name,
+              length: f.length,
+              path: path.join(torrent.path, f.path),
+            }));
+            const best = pickVideoFile(files);
+            const ext = path.extname(best.name) || '.mkv';
+            const finalPaths = buildMoviePath(opts.movie, opts.movieLibraryRoot, ext);
+            const src = best.path;
+            const dest = finalPaths.filePath;
+            if (src !== dest && fs.existsSync(src)) {
+              try {
+                if (fs.existsSync(dest)) fs.unlinkSync(dest);
+                fs.renameSync(src, dest);
+              } catch {
+                fs.copyFileSync(src, dest);
+              }
+            }
+            item.progress = 1;
+            item.downloadSpeed = 0;
+            item.status = 'done';
+            item.savePath = dest;
             const snapshot = { ...item };
             this.emit('done', snapshot);
             setImmediate(() => this.remove(id));

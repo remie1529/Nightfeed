@@ -1,8 +1,8 @@
 {
   "name": "tv-show-manager",
   "productName": "Torrent",
-  "version": "1.4.1",
-  "description": "Desktop TV show episode manager",
+  "version": "1.5.0",
+  "description": "Desktop TV show and movie manager",
   "main": "dist-electron/main.js",
   "author": "Remco Groothoff",
   "license": "MIT",

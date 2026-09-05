@@ -19,7 +19,9 @@ const SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: str
 const empty: AppSettings = {
   tmdbApiKey: '',
   libraryRoot: '',
+  movieLibraryRoot: '',
   defaultResolution: '1080p',
+  defaultMovieResolution: '1080p',
   refreshIntervalMinutes: 60,
   torrentSources: { ...defaultSources },
   jackettUrl: 'http://127.0.0.1:9117',
@@ -95,6 +97,11 @@ export default function SettingsView() {
     if (folder) setLocal({ ...settings, libraryRoot: folder });
   };
 
+  const pickMovieRoot = async () => {
+    const folder = await window.torrentAPI.pickLibraryFolder();
+    if (folder) setLocal({ ...settings, movieLibraryRoot: folder });
+  };
+
   const setSource = (id: keyof TorrentSources, checked: boolean) => {
     setLocal({
       ...settings,
@@ -157,7 +164,7 @@ export default function SettingsView() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <p>Library, downloads, auto-download, startup, Telegram, updates</p>
+          <p>TV & movie libraries, downloads, auto-download, startup, Telegram, updates</p>
         </div>
         <div className="toolbar">
           {saved && <span style={{ color: 'var(--ok)' }}>Saved</span>}
@@ -171,7 +178,7 @@ export default function SettingsView() {
         <div className="settings-section">Library & quality</div>
 
         <div className="field">
-          <label>Default library root</label>
+          <label>TV library root</label>
           <div className="row">
             <input
               value={settings.libraryRoot}
@@ -185,11 +192,39 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
-          <label>Default resolution</label>
+          <label>Movie library root</label>
+          <div className="row">
+            <input
+              value={settings.movieLibraryRoot || ''}
+              onChange={(e) => setLocal({ ...settings, movieLibraryRoot: e.target.value })}
+            />
+            <button onClick={pickMovieRoot}>Browse</button>
+          </div>
+          <div className="hint">
+            Separate from TV. Movies save as {'{Title} ({Year})/{Title} ({Year}).ext'} under this folder only.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Default TV resolution</label>
           <select
             value={settings.defaultResolution}
             onChange={(e) =>
               setLocal({ ...settings, defaultResolution: e.target.value as Resolution })
+            }
+          >
+            <option value="720p">720p</option>
+            <option value="1080p">1080p</option>
+            <option value="2160p">2160p</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label>Default movie resolution</label>
+          <select
+            value={settings.defaultMovieResolution || settings.defaultResolution || '1080p'}
+            onChange={(e) =>
+              setLocal({ ...settings, defaultMovieResolution: e.target.value as Resolution })
             }
           >
             <option value="720p">720p</option>
@@ -320,9 +355,27 @@ export default function SettingsView() {
         <div className="settings-section">Metadata & search</div>
 
         <div className="field">
-          <label>Metadata</label>
+          <label>TV metadata</label>
           <input value="TVMaze (api.tvmaze.com) — free, no API key" disabled />
           <div className="hint">Show search and episode air dates come from TVMaze. IMDb ids are stored for EZTV. No signup required.</div>
+        </div>
+
+        <div className="field">
+          <label>TMDB API key (movies)</label>
+          <input
+            type="password"
+            autoComplete="off"
+            value={settings.tmdbApiKey || ''}
+            onChange={(e) => setLocal({ ...settings, tmdbApiKey: e.target.value })}
+            placeholder="Paste free TMDB API key"
+          />
+          <div className="hint">
+            Required only for movie search/metadata. Get a free key at{' '}
+            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">
+              themoviedb.org/settings/api
+            </a>
+            . TV shows do not use this key.
+          </div>
         </div>
 
         <div className="field">
@@ -488,7 +541,7 @@ export default function SettingsView() {
       >
         <div style={{ fontWeight: 650, marginBottom: 6 }}>About Torrent</div>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
-          Desktop TV show manager with embedded downloads. Metadata via free TVMaze API.
+          Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via free TMDB API key.
           Prefer legal sources and content you have rights to download.
         </div>
       </div>

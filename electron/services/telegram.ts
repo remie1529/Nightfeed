@@ -6,6 +6,7 @@ type CommandHandler = (chatId: number, args: string, reply: SendFn) => Promise<v
 export type TelegramHandlers = {
   status: CommandHandler;
   shows: CommandHandler;
+  movies?: CommandHandler;
   check: CommandHandler;
   downloads: CommandHandler;
   add: CommandHandler;
@@ -193,6 +194,10 @@ export class TelegramBot {
           break;
         case 'shows':
           await this.handlers.shows(chatId, args, reply);
+          break;
+        case 'movies':
+          if (this.handlers.movies) await this.handlers.movies(chatId, args, reply);
+          else await reply(chatId, 'Movies command not available.');
           break;
         case 'check':
           await this.handlers.check(chatId, args, reply);

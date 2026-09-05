@@ -6,12 +6,14 @@ import {
   DEFAULT_SETTINGS,
   DownloadItem,
   EpisodeOverrideStatus,
+  Movie,
   Show,
 } from '../types';
 
 export interface AppData {
   settings: AppSettings;
   shows: Show[];
+  movies: Movie[];
   downloads: DownloadItem[];
   /** Manual episode status overrides keyed by `${showId}:${season}:${episode}` */
   episodeOverrides: Record<string, EpisodeOverrideStatus>;
@@ -21,8 +23,10 @@ const defaults: AppData = {
   settings: {
     ...DEFAULT_SETTINGS,
     libraryRoot: path.join(app.getPath('documents'), 'TV Shows'),
+    movieLibraryRoot: path.join(app.getPath('documents'), 'Movies'),
   },
   shows: [],
+  movies: [],
   downloads: [],
   episodeOverrides: {},
 };
@@ -63,6 +67,14 @@ export function getSettings(): AppSettings {
   const raw = store.get('settings') || {};
   const merged: AppSettings = { ...DEFAULT_SETTINGS, ...raw };
   merged.torrentSources = migrateTorrentSources(raw as Partial<AppSettings>);
+  if (!merged.movieLibraryRoot) {
+    merged.movieLibraryRoot =
+      (raw as Partial<AppSettings>).movieLibraryRoot ||
+      path.join(app.getPath('documents'), 'Movies');
+  }
+  if (!merged.defaultMovieResolution) {
+    merged.defaultMovieResolution = merged.defaultResolution || '1080p';
+  }
   return merged;
 }
 
@@ -94,6 +106,29 @@ export function removeShow(tmdbId: number): Show[] {
   saveShows(shows);
   clearShowOverrides(tmdbId);
   return shows;
+}
+
+export function getMovies(): Movie[] {
+  return store.get('movies') || [];
+}
+
+export function saveMovies(movies: Movie[]): void {
+  store.set('movies', movies);
+}
+
+export function upsertMovie(movie: Movie): Movie[] {
+  const movies = getMovies();
+  const idx = movies.findIndex((m) => m.tmdbId === movie.tmdbId);
+  if (idx >= 0) movies[idx] = movie;
+  else movies.push(movie);
+  saveMovies(movies);
+  return movies;
+}
+
+export function removeMovie(tmdbId: number): Movie[] {
+  const movies = getMovies().filter((m) => m.tmdbId !== tmdbId);
+  saveMovies(movies);
+  return movies;
 }
 
 export function getDownloads(): DownloadItem[] {

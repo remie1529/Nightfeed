@@ -166,8 +166,8 @@ function mapApibayItems(data: ApibayItem[], query: string): SearchResult[] {
   });
 }
 
-async function searchApibay(query: string): Promise<SearchResult[]> {
-  const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}&cat=205`;
+async function searchApibay(query: string, cat = 205): Promise<SearchResult[]> {
+  const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}&cat=${cat}`;
   const res = await fetchWithTimeout(url);
   if (!res.ok) throw new Error(`Apibay HTTP ${res.status}`);
   const data = (await res.json()) as ApibayItem[];
@@ -225,10 +225,10 @@ async function searchKnaben(query: string): Promise<SearchResult[]> {
   return results;
 }
 
-async function searchYourBittorrent(query: string): Promise<SearchResult[]> {
+async function searchYourBittorrent(query: string, category = 'television'): Promise<SearchResult[]> {
   const url =
     `https://yourbittorrent.com/api/search.json?q=${encodeURIComponent(query)}` +
-    `&category=television&limit=50&sort=seeds`;
+    `&category=${encodeURIComponent(category)}&limit=50&sort=seeds`;
   const res = await fetchWithTimeout(url);
   if (!res.ok) throw new Error(`YourBittorrent HTTP ${res.status}`);
   const data = (await res.json()) as {
@@ -484,14 +484,14 @@ async function searchLimeTorrents(query: string): Promise<SearchResult[]> {
   return results;
 }
 
-async function searchJackett(settings: AppSettings, query: string): Promise<SearchResult[]> {
+async function searchJackett(settings: AppSettings, query: string, category = 5000): Promise<SearchResult[]> {
   if (!settings.jackettUrl || !settings.jackettApiKey) {
     throw new Error('Jackett URL and API key are required when Jackett is enabled.');
   }
   const base = settings.jackettUrl.replace(/\/$/, '');
   const url =
     `${base}/api/v2.0/indexers/all/results?apikey=${encodeURIComponent(settings.jackettApiKey)}` +
-    `&Query=${encodeURIComponent(query)}&Category[]=5000`;
+    `&Query=${encodeURIComponent(query)}&Category[]=${category}`;
   const res = await fetchWithTimeout(url, {}, 30000);
   if (!res.ok) throw new Error(`Jackett HTTP ${res.status}`);
   const data = (await res.json()) as {
@@ -621,6 +621,65 @@ export async function searchEpisodeTorrents(
   }
   if (sources.includes('jackett')) {
     runners.push(run('Jackett', () => searchJackett(settings, query)));
+  }
+
+  await Promise.all(runners);
+
+  const merged = mergeByInfoHash(groups);
+  const ranked = rankResults(merged, preferred);
+  const error = errors.length > 0 ? errors.join(' | ') : undefined;
+
+  return { results: ranked, query, error };
+}
+
+export function buildMovieQuery(title: string, year?: number | null): string {
+  const t = (title || '').trim();
+  if (year) return `${t} ${year}`;
+  return t;
+}
+
+/** Movie torrent search — skips EZTV (TV-only); prefers movie categories where supported. */
+export async function searchMovieTorrents(
+  settings: AppSettings,
+  title: string,
+  year: number | null | undefined,
+  preferred: Resolution
+): Promise<{ results: SearchResult[]; query: string; error?: string }> {
+  const query = buildMovieQuery(title, year);
+  const sources = enabledTorrentSources(settings).filter((id) => id !== 'eztv');
+  const errors: string[] = [];
+  const groups: SearchResult[][] = [];
+
+  const run = (label: string, fn: () => Promise<SearchResult[]>) =>
+    fn()
+      .then((r) => {
+        groups.push(r);
+      })
+      .catch((err) => {
+        errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+      });
+
+  const runners: Array<Promise<void>> = [];
+
+  // Apibay cat 201 = Movies
+  if (sources.includes('apibay')) runners.push(run('Apibay', () => searchApibay(query, 201)));
+  if (sources.includes('knaben')) runners.push(run('Knaben', () => searchKnaben(query)));
+  if (sources.includes('yourbittorrent')) {
+    runners.push(run('YourBittorrent', () => searchYourBittorrent(query, 'movies')));
+  }
+  if (sources.includes('torrentscsv')) {
+    runners.push(run('TorrentsCSV', () => searchTorrentsCsv(query)));
+  }
+  if (sources.includes('animetosho')) {
+    runners.push(run('AnimeTosho', () => searchAnimeTosho(query)));
+  }
+  if (sources.includes('nyaa')) runners.push(run('Nyaa', () => searchNyaa(query)));
+  if (sources.includes('limetorrents')) {
+    runners.push(run('LimeTorrents', () => searchLimeTorrents(query)));
+  }
+  // Jackett movies category 2000
+  if (sources.includes('jackett')) {
+    runners.push(run('Jackett', () => searchJackett(settings, query, 2000)));
   }
 
   await Promise.all(runners);
