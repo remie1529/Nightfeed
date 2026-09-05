@@ -508,3 +508,61 @@ table.dense tr:hover td {
 .status-select.status-ignored { color: #9a9690; border-color: #3a3a3a; background: #1a1a1a; }
 .status-select.status-upcoming { color: var(--text-faint); }
 .status-select.status-aired { color: #a0b8d4; border-color: #3d4d5a; background: #1a2024; }
+
+
+.form-grid-wide {
+  max-width: 760px;
+}
+
+.source-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+@media (max-width: 900px) {
+  .source-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.source-card {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  margin: 0 !important;
+  min-height: 3.2rem;
+}
+
+.source-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.source-card input[type="checkbox"] {
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.source-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.source-card-title {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.source-card-hint {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  line-height: 1.25;
+}

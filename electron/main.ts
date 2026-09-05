@@ -17,11 +17,7 @@ import {
   ignoreAiredEpisodes,
   searchShows,
 } from './services/tvmaze';
-import {
-  searchEpisodeTorrents,
-  openUindexUnlockWindow,
-  clearUindexCookies,
-} from './services/search';
+import { searchEpisodeTorrents } from './services/search';
 import { downloadEngine } from './services/engine';
 import { telegramBot } from './services/telegram';
 import {
@@ -158,7 +154,8 @@ async function autoDownloadForShows(shows: Show[]): Promise<number> {
             show.name,
             ep.seasonNumber,
             ep.episodeNumber,
-            preferred
+            preferred,
+            { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
           if (!results.length) {
             continue;
@@ -532,14 +529,13 @@ function registerIpc() {
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) throw new Error('Show not found');
     const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
-    const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred);
-    if (res.error && /cloudflare|uindex/i.test(res.error)) {
-      notify(
-        res.results.length
-          ? 'UIndex Cloudflare issue — showing other sources (Settings → Unlock UIndex)'
-          : 'UIndex blocked by Cloudflare — use Settings → Unlock UIndex (Cloudflare)',
-        'warn'
-      );
+    const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred, {
+      imdbId: show.imdbId,
+      mazeId: show.tmdbId,
+    });
+    // Partial source errors are returned in res.error but must not wipe other results
+    if (res.error && !res.results.length) {
+      notify(res.error, 'warn');
     }
     return res;
   });
@@ -586,12 +582,6 @@ function registerIpc() {
     pushDownloads();
   });
 
-
-  ipcMain.handle('uindex:unlock', async () => openUindexUnlockWindow());
-  ipcMain.handle('uindex:clearCookies', async () => {
-    await clearUindexCookies();
-    return { ok: true };
-  });
 
   ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
   ipcMain.handle('telegram:test', async () => telegramBot.sendTest(getSettings()));

@@ -13,11 +13,26 @@ export type EpisodeOverrideStatus = 'upcoming' | 'downloaded' | 'missing' | 'ign
 
 export type AddShowPolicy = 'all' | 'future' | 'manual';
 
-export type TorrentSourceId = 'apibay' | 'uindex' | 'jackett';
+export type TorrentSourceId =
+  | 'apibay'
+  | 'knaben'
+  | 'yourbittorrent'
+  | 'torrentscsv'
+  | 'eztv'
+  | 'animetosho'
+  | 'nyaa'
+  | 'limetorrents'
+  | 'jackett';
 
 export interface TorrentSources {
   apibay: boolean;
-  uindex: boolean;
+  knaben: boolean;
+  yourbittorrent: boolean;
+  torrentscsv: boolean;
+  eztv: boolean;
+  animetosho: boolean;
+  nyaa: boolean;
+  limetorrents: boolean;
   jackett: boolean;
 }
 
@@ -49,10 +64,6 @@ export interface AppSettings {
   telegramAllowedChatIds: string;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
-  /** FlareSolverr base URL (optional CF bypass). Default http://127.0.0.1:8191 */
-  flaresolverrUrl: string;
-  /** When true, UIndex uses FlareSolverr /v1 and parses solution.response HTML directly. */
-  useFlareSolverr: boolean;
 }
 
 export interface Episode {
@@ -87,6 +98,8 @@ export interface Show {
   backdropPath: string | null;
   firstAirDate: string | null;
   status: string;
+  /** IMDb id from TVMaze externals, e.g. "tt0903747" — used by EZTV */
+  imdbId?: string | null;
   preferredResolution?: Resolution;
   libraryPath?: string;
   seasons: Season[];
@@ -142,12 +155,24 @@ export interface UpdateStatus {
   error: string | null;
 }
 
+export const DEFAULT_TORRENT_SOURCES: TorrentSources = {
+  apibay: true,
+  knaben: true,
+  yourbittorrent: true,
+  torrentscsv: true,
+  eztv: true,
+  animetosho: true,
+  nyaa: true,
+  limetorrents: true,
+  jackett: false,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   tmdbApiKey: '',
   libraryRoot: '',
   defaultResolution: '1080p',
   refreshIntervalMinutes: 60,
-  torrentSources: { apibay: true, uindex: true, jackett: false },
+  torrentSources: { ...DEFAULT_TORRENT_SOURCES },
   searchProvider: 'apibay',
   jackettUrl: 'http://127.0.0.1:9117',
   jackettApiKey: '',
@@ -158,6 +183,4 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
-  flaresolverrUrl: 'http://127.0.0.1:8191',
-  useFlareSolverr: false,
 };

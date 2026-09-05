@@ -1,7 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus } from '../lib/types';
+import { DEFAULT_TORRENT_SOURCES } from '../lib/types';
 
-const defaultSources: TorrentSources = { apibay: true, uindex: true, jackett: false };
+const defaultSources: TorrentSources = { ...DEFAULT_TORRENT_SOURCES };
+
+const SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: string }> = [
+  { id: 'apibay', label: 'Apibay', hint: 'Pirate Bay JSON API' },
+  { id: 'knaben', label: 'Knaben', hint: 'Meta-search JSON API' },
+  { id: 'yourbittorrent', label: 'YourBittorrent', hint: 'Public search JSON' },
+  { id: 'torrentscsv', label: 'Torrents.csv', hint: 'Open dump search API' },
+  { id: 'eztv', label: 'EZTV', hint: 'TV via IMDb id' },
+  { id: 'animetosho', label: 'AnimeTosho', hint: 'Anime JSON feed' },
+  { id: 'nyaa', label: 'Nyaa', hint: 'Anime/raw RSS' },
+  { id: 'limetorrents', label: 'LimeTorrents', hint: 'Public RSS + magnets' },
+  { id: 'jackett', label: 'Jackett', hint: 'Self-hosted (optional)' },
+];
 
 const empty: AppSettings = {
   tmdbApiKey: '',
@@ -18,8 +31,6 @@ const empty: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
-  flaresolverrUrl: 'http://127.0.0.1:8191',
-  useFlareSolverr: false,
 };
 
 export default function SettingsView() {
@@ -32,8 +43,6 @@ export default function SettingsView() {
   const [appVersion, setAppVersion] = useState('—');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
-  const [uindexMsg, setUindexMsg] = useState<string | null>(null);
-  const [uindexBusy, setUindexBusy] = useState(false);
 
   const refreshTg = async () => {
     try {
@@ -83,6 +92,17 @@ export default function SettingsView() {
     if (folder) setLocal({ ...settings, libraryRoot: folder });
   };
 
+  const setSource = (id: keyof TorrentSources, checked: boolean) => {
+    setLocal({
+      ...settings,
+      torrentSources: {
+        ...defaultSources,
+        ...settings.torrentSources,
+        [id]: checked,
+      },
+    });
+  };
+
   const sendTest = async () => {
     setTgTesting(true);
     setTgTestMsg(null);
@@ -117,34 +137,6 @@ export default function SettingsView() {
     }
   };
 
-
-  const unlockUindex = async () => {
-    setUindexBusy(true);
-    setUindexMsg(null);
-    try {
-      await window.torrentAPI.setSettings(settings);
-      const res = (await window.torrentAPI.unlockUindex()) as { ok: boolean; message: string };
-      setUindexMsg(res.message || (res.ok ? 'Unlocked' : 'Failed'));
-    } catch (e) {
-      setUindexMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setUindexBusy(false);
-    }
-  };
-
-  const clearUindexCookies = async () => {
-    setUindexBusy(true);
-    setUindexMsg(null);
-    try {
-      await window.torrentAPI.clearUindexCookies();
-      setUindexMsg('UIndex cookies cleared.');
-    } catch (e) {
-      setUindexMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setUindexBusy(false);
-    }
-  };
-
   const tgLabel = (() => {
     if (!settings.telegramEnabled) return 'Disabled';
     if (tgStatus?.polling) return 'Connected (polling)';
@@ -154,6 +146,8 @@ export default function SettingsView() {
     }
     return 'Enabled — starting…';
   })();
+
+  const enabledCount = SOURCE_OPTIONS.filter((o) => !!settings.torrentSources?.[o.id]).length;
 
   return (
     <div className="page">
@@ -170,7 +164,7 @@ export default function SettingsView() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="form-grid">
+      <div className="form-grid form-grid-wide">
         <div className="settings-section">Library & quality</div>
 
         <div className="field">
@@ -271,55 +265,31 @@ export default function SettingsView() {
         <div className="field">
           <label>Metadata</label>
           <input value="TVMaze (api.tvmaze.com) — free, no API key" disabled />
-          <div className="hint">Show search and episode air dates come from TVMaze. No signup required.</div>
+          <div className="hint">Show search and episode air dates come from TVMaze. IMDb ids are stored for EZTV. No signup required.</div>
         </div>
 
         <div className="field">
-          <label>Torrent sources</label>
-          <div className="hint" style={{ marginBottom: 8 }}>
-            Enable one or more free indexes. Searches query all enabled sources, then merge by infohash and rank by resolution + seeders.
+          <label>Torrent sources ({enabledCount} enabled)</label>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Enable any combination. Searches query <strong>all enabled</strong> sources in parallel, merge/dedupe by infohash, and rank by resolution + seeders. Partial failures keep other sources’ hits.
           </div>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={!!settings.torrentSources?.apibay}
-              onChange={(e) =>
-                setLocal({
-                  ...settings,
-                  torrentSources: { ...defaultSources, ...settings.torrentSources, apibay: e.target.checked },
-                })
-              }
-            />
-            <span>Apibay — public Pirate Bay API mirror (no key)</span>
-          </label>
-          <label className="toggle-row" style={{ marginTop: 6 }}>
-            <input
-              type="checkbox"
-              checked={!!settings.torrentSources?.uindex}
-              onChange={(e) =>
-                setLocal({
-                  ...settings,
-                  torrentSources: { ...defaultSources, ...settings.torrentSources, uindex: e.target.checked },
-                })
-              }
-            />
-            <span>UIndex — public torrent index at uindex.org (no key)</span>
-          </label>
-          <label className="toggle-row" style={{ marginTop: 6 }}>
-            <input
-              type="checkbox"
-              checked={!!settings.torrentSources?.jackett}
-              onChange={(e) =>
-                setLocal({
-                  ...settings,
-                  torrentSources: { ...defaultSources, ...settings.torrentSources, jackett: e.target.checked },
-                })
-              }
-            />
-            <span>Jackett — optional self-hosted meta-search (needs your own server)</span>
-          </label>
-          <div className="hint" style={{ marginTop: 8 }}>
-            Default: Apibay + UIndex. No paid subscriptions required.
+          <div className="source-grid">
+            {SOURCE_OPTIONS.map((opt) => (
+              <label key={opt.id} className="source-card toggle-row">
+                <input
+                  type="checkbox"
+                  checked={!!settings.torrentSources?.[opt.id]}
+                  onChange={(e) => setSource(opt.id, e.target.checked)}
+                />
+                <span className="source-card-text">
+                  <span className="source-card-title">{opt.label}</span>
+                  <span className="source-card-hint">{opt.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="hint" style={{ marginTop: 10 }}>
+            Defaults: all free public APIs on; Jackett off (needs your own server).
           </div>
         </div>
 
@@ -341,60 +311,6 @@ export default function SettingsView() {
               />
             </div>
           </>
-        )}
-
-
-        <div className="settings-section">UIndex Cloudflare</div>
-
-        <div className="field">
-          <label>Unlock Cloudflare once</label>
-          <div className="hint" style={{ marginBottom: 8 }}>
-            UIndex uses a persistent Chromium session (<code>persist:uindex</code>).
-            If search hits a Turnstile check, a visible window opens so you can complete it.
-            Cookies survive restarts — later searches use session.fetch without a window.
-          </div>
-          <div className="row">
-            <button onClick={unlockUindex} disabled={uindexBusy}>
-              {uindexBusy ? 'Working…' : 'Unlock UIndex (Cloudflare)'}
-            </button>
-            <button onClick={clearUindexCookies} disabled={uindexBusy}>
-              Clear UIndex cookies
-            </button>
-          </div>
-          {uindexMsg && (
-            <div className="hint" style={{ marginTop: 8, color: uindexMsg.toLowerCase().includes('clear') || uindexMsg.toLowerCase().includes('unlock') ? 'var(--ok)' : 'var(--text-dim)' }}>
-              {uindexMsg}
-            </div>
-          )}
-        </div>
-
-        <div className="field">
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={!!settings.useFlareSolverr}
-              onChange={(e) => setLocal({ ...settings, useFlareSolverr: e.target.checked })}
-            />
-            <span>Use FlareSolverr for UIndex (optional)</span>
-          </label>
-          <div className="hint">
-            If the unlock window still fails, run FlareSolverr locally:
-            <code style={{ display: 'block', marginTop: 4 }}>
-              docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
-            </code>
-            When enabled, UIndex POSTs to FlareSolverr and parses <code>solution.response</code> HTML directly (no cookie replay).
-          </div>
-        </div>
-
-        {settings.useFlareSolverr && (
-          <div className="field">
-            <label>FlareSolverr URL</label>
-            <input
-              value={settings.flaresolverrUrl || 'http://127.0.0.1:8191'}
-              onChange={(e) => setLocal({ ...settings, flaresolverrUrl: e.target.value })}
-              placeholder="http://127.0.0.1:8191"
-            />
-          </div>
         )}
 
         <div className="settings-section">Telegram</div>
@@ -458,8 +374,8 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="settings-section" style={{ maxWidth: 640 }}>Updates</div>
-      <div className="field" style={{ maxWidth: 640 }}>
+      <div className="settings-section" style={{ maxWidth: 760 }}>Updates</div>
+      <div className="field" style={{ maxWidth: 760 }}>
         <label>App version</label>
         <div className="status-line">v{appVersion}</div>
         <div className="row" style={{ marginTop: 8 }}>
@@ -483,7 +399,7 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="field" style={{ maxWidth: 640 }}>
+      <div className="field" style={{ maxWidth: 760 }}>
         <label>GitHub personal access token</label>
         <input
           type="password"
@@ -510,7 +426,7 @@ export default function SettingsView() {
           border: '1px solid var(--border)',
           borderRadius: 8,
           background: 'var(--bg-elevated)',
-          maxWidth: 640,
+          maxWidth: 760,
         }}
       >
         <div style={{ fontWeight: 650, marginBottom: 6 }}>About Torrent</div>

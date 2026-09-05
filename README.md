@@ -1,19 +1,23 @@
 # Torrent – TV Show Manager
 
-Desktop TV show / episode manager (Electron + Vite + React). **v1.3.3**
+Desktop TV show / episode manager (Electron + Vite + React). **v1.4.0**
 
 ## Free by default
-- Metadata: **TVMaze** — show info and episode air dates, no API key
-- Torrent sources (enable any combination in Settings):
-  - **Apibay** — public Pirate Bay JSON API miror; no key
-  - **UIndex** — public torrent index at uindex.org (persistent Chromium session + visible Cloudflare unlock + optional FlareSolverr); no key
-  - **Jackett** — optional self-hosted meta-search if you run Jackett yourself
+- Metadata: **TVMaze** — show info, episode air dates, and IMDb ids (for EZTV). No API key.
+- Torrent sources (enable any combination in Settings – checkbox grid):
+  1. **Apibay** — public Pirate Bay JSON API (apibay.org) — default on
+  2. **Knaben** — meta-search JSON API (api.knaben.org) — default on
+  3. **YourBittorrent** — public search JSON API — default on
+  4. **Torrents.csv** — open dump search API (torrents-csv.com) — default on
+  5. **EZTV** — TV-focused API via show IMDb id (eztxx.to) — default on
+  6. **AnimeTosho** — anime JSON feed — default on
+  7. **Nyaa** — anime/raw RSS (nyaa.si) — default on
+  8. **LimeTorrents** — public RSS (infohash → magnet) — default on
+  9. **Jackett** — optional self-hosted meta-search — default off
 
-Searches query **all enabled** sources, merge/dedupe by infohash, and rank by preferred resolution + seeders.
+Searches query all enabled sources in parallel, merge/dedupe by infohash, and rank by preferred resolution + seeders. Partial source errors never wipe other results.
 
-## UIndex Cloudflare
-UIndex uses persist:uindex so CF cookies survive restarts. A visible unlock window handles Turnstile. Settings: Unlock UIndex (Cloudflare), Clear UIndex cookies, optional FlareSolverr (parses solution.response HTML directly).
-If unlock still fails: docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+UIndex / FlareSolverr / Cloudflare unlock UI were removed in v1.4.0.
 
 ## Features
 - Manual episode status in store
@@ -25,12 +29,6 @@ If unlock still fails: docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolv
 ## Setup
 
     npm install && npm run dev
-
-## Publishing a Release
-
-Repo: remie1529/TV-Show-Manager
-Bump version, then publish with electron-builder, or draft a Release and upload Torrent-Setup exe, blockmap, latest.yml.
-Clients check on startup and via Settings Check for updates.
 
 ## Build
 

@@ -37,18 +37,26 @@ export function episodeKey(showId: number, season: number, episode: number): str
 }
 
 function migrateTorrentSources(raw: Partial<AppSettings>): AppSettings['torrentSources'] {
+  const base = { ...DEFAULT_SETTINGS.torrentSources };
   if (raw.torrentSources && typeof raw.torrentSources === 'object') {
+    const src = raw.torrentSources as Record<string, unknown>;
     return {
-      apibay: raw.torrentSources.apibay ?? true,
-      uindex: raw.torrentSources.uindex ?? true,
-      jackett: !!raw.torrentSources.jackett,
+      apibay: src.apibay !== false,
+      knaben: src.knaben !== false,
+      yourbittorrent: src.yourbittorrent !== false,
+      torrentscsv: src.torrentscsv !== false,
+      eztv: src.eztv !== false,
+      animetosho: src.animetosho !== false,
+      nyaa: src.nyaa !== false,
+      limetorrents: src.limetorrents !== false,
+      jackett: !!src.jackett,
     };
   }
   // Legacy single-provider dropdown → multi-source defaults
   if (raw.searchProvider === 'jackett') {
-    return { apibay: true, uindex: true, jackett: true };
+    return { ...base, jackett: true };
   }
-  return { ...DEFAULT_SETTINGS.torrentSources };
+  return base;
 }
 
 export function getSettings(): AppSettings {
