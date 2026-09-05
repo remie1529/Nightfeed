@@ -1,9 +1,12 @@
-# Status v1.4.0
+# Status v1.4.1
 
 ## Works
 - Manual episode status overrides in electron-store
 - Add-show older-episode modal
 - Auto-download skips Ignored
+- Download complete → setEpisodeOverride downloaded, remove from queue, torrent.destroy({ destroyStore: false })
+- WebTorrent maxConns default 150; Settings: maxConnections, maxDownloadSpeedKBps, maxUploadSpeedKBps (0 = unlimited via throttleDownload/Upload)
+- Extra public UDP/WSS trackers on magnets; select largest video file early
 - electron-updater + private GitHub via Settings githubToken (PAT)
 - Nav version label from app.getVersion()
 - TVMaze metadata + IMDb id on show for EZTV
@@ -19,4 +22,4 @@
 
 ## Artifacts
 - /workspace/torrent-tv-manager
-- Release v1.4.0 on remie1529/TV-Show-Manager
+- Release v1.4.1 on remie1529/TV-Show-Manager

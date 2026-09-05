@@ -448,6 +448,11 @@ function registerIpc() {
     scheduleRefresh();
     applyLoginItem(!!next.launchOnStartup);
     telegramBot.sync(next);
+    downloadEngine.applySettings({
+      maxConnections: next.maxConnections,
+      maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
+      maxUploadSpeedKBps: next.maxUploadSpeedKBps,
+    });
     // Re-apply private GitHub feed if token present (never log token)
     configureUpdaterFeed();
     return next;
@@ -602,14 +607,26 @@ app.whenReady().then(() => {
   setupAutoUpdater();
   downloadEngine.on('update', () => pushDownloads());
   downloadEngine.on('done', (item) => {
-    pushDownloads();
+    if (item?.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
+      setEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber, 'downloaded');
+      const show = getShows().find((s) => s.tmdbId === item.showId);
+      if (show) {
+        upsertShow(withLocalStatuses(show));
+      }
+    }
     if (item?.name) {
       notify(`Finished: ${item.name}`, 'ok');
     }
+    pushDownloads();
     mainWindow?.webContents.send('library:changed');
   });
   createWindow();
   const settings = getSettings();
+  downloadEngine.applySettings({
+    maxConnections: settings.maxConnections,
+    maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
+    maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
+  });
   applyLoginItem(!!settings.launchOnStartup);
   scheduleRefresh();
 

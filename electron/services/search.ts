@@ -38,6 +38,15 @@ const TRACKERS = [
   'udp://tracker.openbittorrent.com:6969/announce',
   'udp://tracker.torrent.eu.org:451/announce',
   'udp://exodus.desync.com:6969/announce',
+  'udp://tracker.moeking.me:6969/announce',
+  'udp://tracker.dler.org:6969/announce',
+  'udp://explodie.org:6969/announce',
+  'udp://open.demonii.com:1337/announce',
+  'udp://tracker1.bt.moack.co.kr:80/announce',
+  'udp://tracker.theoks.net:6969/announce',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.files.fm:7073/announce',
 ];
 
 function buildMagnet(hash: string, name: string): string {

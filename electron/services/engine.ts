@@ -1,14 +1,31 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
-import { DownloadItem } from '../types';
+import { DownloadItem, Show } from '../types';
 import { buildEpisodePath } from './paths';
-import { Show } from '../types';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const WebTorrent = require('webtorrent') as any;
 
 const VIDEO_EXTS = new Set(['.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.webm']);
+
+/** Extra public trackers appended on add for better peer discovery. */
+export const DEFAULT_ANNOUNCE = [
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.openbittorrent.com:6969/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://exodus.desync.com:6969/announce',
+  'udp://tracker.moeking.me:6969/announce',
+  'udp://tracker.dler.org:6969/announce',
+  'udp://explodie.org:6969/announce',
+  'udp://tracker1.bt.moack.co.kr:80/announce',
+  'udp://tracker.theoks.net:6969/announce',
+  'udp://open.demonii.com:1337/announce',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.files.fm:7073/announce',
+];
 
 function pickVideoFile(files: Array<{ name: string; length: number; path: string }>) {
   const videos = files.filter((f) => VIDEO_EXTS.has(path.extname(f.name).toLowerCase()));
@@ -16,14 +33,54 @@ function pickVideoFile(files: Array<{ name: string; length: number; path: string
   return videos.sort((a, b) => b.length - a.length)[0];
 }
 
+function kbpsToBytesPerSec(kbps: number): number {
+  // WebTorrent throttle* / downloadLimit use bytes/sec; -1 = unlimited
+  if (!kbps || kbps <= 0) return -1;
+  return Math.max(1, Math.round(kbps * 1024));
+}
+
+export interface EngineSettings {
+  maxConnections?: number;
+  maxDownloadSpeedKBps?: number;
+  maxUploadSpeedKBps?: number;
+}
+
 export class DownloadEngine extends EventEmitter {
   private client: any = null;
   private items = new Map<string, DownloadItem>();
   private torrents = new Map<string, any>();
+  private maxConns = 150;
+  private maxDownloadSpeedKBps = 0;
+  private maxUploadSpeedKBps = 0;
+
+  /** Apply connection / speed settings. Safe to call before or after client exists. */
+  applySettings(settings: EngineSettings): void {
+    if (typeof settings.maxConnections === 'number' && settings.maxConnections > 0) {
+      this.maxConns = Math.max(1, Math.floor(settings.maxConnections));
+    }
+    if (typeof settings.maxDownloadSpeedKBps === 'number') {
+      this.maxDownloadSpeedKBps = Math.max(0, Math.floor(settings.maxDownloadSpeedKBps));
+    }
+    if (typeof settings.maxUploadSpeedKBps === 'number') {
+      this.maxUploadSpeedKBps = Math.max(0, Math.floor(settings.maxUploadSpeedKBps));
+    }
+    if (this.client) {
+      this.client.maxConns = this.maxConns;
+      // webtorrent 1.9.7: client.throttleDownload / throttleUpload (bytes/sec, -1 = unlimited)
+      this.client.throttleDownload(kbpsToBytesPerSec(this.maxDownloadSpeedKBps));
+      this.client.throttleUpload(kbpsToBytesPerSec(this.maxUploadSpeedKBps));
+    }
+  }
 
   private getClient() {
     if (!this.client) {
-      this.client = new WebTorrent({ maxConns: 55 });
+      const downloadLimit = kbpsToBytesPerSec(this.maxDownloadSpeedKBps);
+      const uploadLimit = kbpsToBytesPerSec(this.maxUploadSpeedKBps);
+      this.client = new WebTorrent({
+        maxConns: this.maxConns,
+        downloadLimit,
+        uploadLimit,
+      });
       this.client.on('error', (err: Error) => {
         this.emit('engine-error', err.message);
       });
@@ -61,6 +118,38 @@ export class DownloadEngine extends EventEmitter {
       }
     }
     return false;
+  }
+
+  private selectVideoOnly(torrent: any): void {
+    try {
+      const files = torrent.files || [];
+      if (!files.length) return;
+      const mapped = files.map((f: any) => ({
+        name: f.name,
+        length: f.length,
+        path: f.path,
+        ref: f,
+      }));
+      const best = pickVideoFile(mapped);
+      if (!best) return;
+      for (const f of files) {
+        try {
+          f.deselect();
+        } catch {
+          // ignore
+        }
+      }
+      const target = mapped.find((m: any) => m.name === best.name && m.length === best.length)?.ref;
+      if (target) {
+        try {
+          target.select();
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // nice-to-have; never fail the download
+    }
   }
 
   async start(opts: {
@@ -106,15 +195,23 @@ export class DownloadEngine extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       try {
-        const torrent = client.add(opts.magnet, { path: provisional.seasonDir }, (t: any) => {
-          item.infoHash = t.infoHash;
-          item.status = 'downloading';
-          item.name = t.name || item.name;
-          this.emit('update', this.list());
-          resolve(item);
-        });
+        const torrent = client.add(
+          opts.magnet,
+          { path: provisional.seasonDir, announce: DEFAULT_ANNOUNCE },
+          (t: any) => {
+            item.infoHash = t.infoHash;
+            item.status = 'downloading';
+            item.name = t.name || item.name;
+            this.emit('update', this.list());
+            resolve(item);
+          }
+        );
 
         this.torrents.set(id, torrent);
+
+        torrent.on('ready', () => {
+          this.selectVideoOnly(torrent);
+        });
 
         torrent.on('download', () => {
           item.progress = torrent.progress;
@@ -156,8 +253,10 @@ export class DownloadEngine extends EventEmitter {
             item.downloadSpeed = 0;
             item.status = 'done';
             item.savePath = dest;
-            this.emit('update', this.list());
-            this.emit('done', item);
+            // Emit done first so main can set override + toast; then remove from queue / stop seeding
+            const snapshot = { ...item };
+            this.emit('done', snapshot);
+            setImmediate(() => this.remove(id));
           } catch (err) {
             item.status = 'error';
             item.error = err instanceof Error ? err.message : String(err);
@@ -201,11 +300,16 @@ export class DownloadEngine extends EventEmitter {
     }
   }
 
-  cancel(id: string): void {
+  /** Remove from queue and destroy torrent (keep files on disk). */
+  remove(id: string): void {
     const torrent = this.torrents.get(id);
     const item = this.items.get(id);
     if (torrent) {
-      torrent.destroy({ destroyStore: false });
+      try {
+        torrent.destroy({ destroyStore: false });
+      } catch {
+        // already destroyed
+      }
       this.torrents.delete(id);
     }
     if (item) {
@@ -214,12 +318,17 @@ export class DownloadEngine extends EventEmitter {
     }
   }
 
+  cancel(id: string): void {
+    this.remove(id);
+  }
+
   destroy(): void {
     if (this.client) {
       this.client.destroy();
       this.client = null;
     }
     this.torrents.clear();
+    this.items.clear();
   }
 }
 
