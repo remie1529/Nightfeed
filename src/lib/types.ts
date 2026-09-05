@@ -38,6 +38,8 @@ export interface AppSettings {
   telegramAllowedChatIds: string;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
+  flaresolverrUrl: string;
+  useFlareSolverr: boolean;
 }
 
 export interface Episode {
