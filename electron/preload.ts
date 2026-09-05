@@ -36,6 +36,9 @@ const api = {
   resumeDownload: (id: string) => ipcRenderer.invoke('download:resume', id),
   cancelDownload: (id: string) => ipcRenderer.invoke('download:cancel', id),
 
+  unlockUindex: () => ipcRenderer.invoke('uindex:unlock'),
+  clearUindexCookies: () => ipcRenderer.invoke('uindex:clearCookies'),
+
   getTelegramStatus: () => ipcRenderer.invoke('telegram:status'),
   sendTelegramTest: () => ipcRenderer.invoke('telegram:test'),
 

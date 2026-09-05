@@ -49,6 +49,10 @@ export interface AppSettings {
   telegramAllowedChatIds: string;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
+  /** FlareSolverr base URL (optional CF bypass). Default http://127.0.0.1:8191 */
+  flaresolverrUrl: string;
+  /** When true, UIndex uses FlareSolverr /v1 and parses solution.response HTML directly. */
+  useFlareSolverr: boolean;
 }
 
 export interface Episode {
@@ -154,4 +158,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
+  flaresolverrUrl: 'http://127.0.0.1:8191',
+  useFlareSolverr: false,
 };

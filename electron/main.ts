@@ -17,7 +17,11 @@ import {
   ignoreAiredEpisodes,
   searchShows,
 } from './services/tvmaze';
-import { searchEpisodeTorrents } from './services/search';
+import {
+  searchEpisodeTorrents,
+  openUindexUnlockWindow,
+  clearUindexCookies,
+} from './services/search';
 import { downloadEngine } from './services/engine';
 import { telegramBot } from './services/telegram';
 import {
@@ -529,11 +533,11 @@ function registerIpc() {
     if (!show) throw new Error('Show not found');
     const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
     const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred);
-    if (res.error && /cloudflare/i.test(res.error)) {
+    if (res.error && /cloudflare|uindex/i.test(res.error)) {
       notify(
         res.results.length
-          ? 'UIndex blocked by Cloudflare — showing other sources'
-          : 'UIndex blocked by Cloudflare — try again later',
+          ? 'UIndex Cloudflare issue — showing other sources (Settings → Unlock UIndex)'
+          : 'UIndex blocked by Cloudflare — use Settings → Unlock UIndex (Cloudflare)',
         'warn'
       );
     }
@@ -580,6 +584,13 @@ function registerIpc() {
   ipcMain.handle('download:cancel', (_e, id: string) => {
     downloadEngine.cancel(id);
     pushDownloads();
+  });
+
+
+  ipcMain.handle('uindex:unlock', async () => openUindexUnlockWindow());
+  ipcMain.handle('uindex:clearCookies', async () => {
+    await clearUindexCookies();
+    return { ok: true };
   });
 
   ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));

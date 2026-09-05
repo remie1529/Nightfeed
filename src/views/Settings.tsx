@@ -18,6 +18,8 @@ const empty: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
+  flaresolverrUrl: 'http://127.0.0.1:8191',
+  useFlareSolverr: false,
 };
 
 export default function SettingsView() {
@@ -30,6 +32,8 @@ export default function SettingsView() {
   const [appVersion, setAppVersion] = useState('—');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [uindexMsg, setUindexMsg] = useState<string | null>(null);
+  const [uindexBusy, setUindexBusy] = useState(false);
 
   const refreshTg = async () => {
     try {
@@ -110,6 +114,34 @@ export default function SettingsView() {
       });
     } finally {
       setUpdateBusy(false);
+    }
+  };
+
+
+  const unlockUindex = async () => {
+    setUindexBusy(true);
+    setUindexMsg(null);
+    try {
+      await window.torrentAPI.setSettings(settings);
+      const res = (await window.torrentAPI.unlockUindex()) as { ok: boolean; message: string };
+      setUindexMsg(res.message || (res.ok ? 'Unlocked' : 'Failed'));
+    } catch (e) {
+      setUindexMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUindexBusy(false);
+    }
+  };
+
+  const clearUindexCookies = async () => {
+    setUindexBusy(true);
+    setUindexMsg(null);
+    try {
+      await window.torrentAPI.clearUindexCookies();
+      setUindexMsg('UIndex cookies cleared.');
+    } catch (e) {
+      setUindexMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUindexBusy(false);
     }
   };
 
@@ -309,6 +341,60 @@ export default function SettingsView() {
               />
             </div>
           </>
+        )}
+
+
+        <div className="settings-section">UIndex Cloudflare</div>
+
+        <div className="field">
+          <label>Unlock Cloudflare once</label>
+          <div className="hint" style={{ marginBottom: 8 }}>
+            UIndex uses a persistent Chromium session (<code>persist:uindex</code>).
+            If search hits a Turnstile check, a visible window opens so you can complete it.
+            Cookies survive restarts — later searches use session.fetch without a window.
+          </div>
+          <div className="row">
+            <button onClick={unlockUindex} disabled={uindexBusy}>
+              {uindexBusy ? 'Working…' : 'Unlock UIndex (Cloudflare)'}
+            </button>
+            <button onClick={clearUindexCookies} disabled={uindexBusy}>
+              Clear UIndex cookies
+            </button>
+          </div>
+          {uindexMsg && (
+            <div className="hint" style={{ marginTop: 8, color: uindexMsg.toLowerCase().includes('clear') || uindexMsg.toLowerCase().includes('unlock') ? 'var(--ok)' : 'var(--text-dim)' }}>
+              {uindexMsg}
+            </div>
+          )}
+        </div>
+
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.useFlareSolverr}
+              onChange={(e) => setLocal({ ...settings, useFlareSolverr: e.target.checked })}
+            />
+            <span>Use FlareSolverr for UIndex (optional)</span>
+          </label>
+          <div className="hint">
+            If the unlock window still fails, run FlareSolverr locally:
+            <code style={{ display: 'block', marginTop: 4 }}>
+              docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+            </code>
+            When enabled, UIndex POSTs to FlareSolverr and parses <code>solution.response</code> HTML directly (no cookie replay).
+          </div>
+        </div>
+
+        {settings.useFlareSolverr && (
+          <div className="field">
+            <label>FlareSolverr URL</label>
+            <input
+              value={settings.flaresolverrUrl || 'http://127.0.0.1:8191'}
+              onChange={(e) => setLocal({ ...settings, flaresolverrUrl: e.target.value })}
+              placeholder="http://127.0.0.1:8191"
+            />
+          </div>
         )}
 
         <div className="settings-section">Telegram</div>

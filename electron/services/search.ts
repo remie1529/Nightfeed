@@ -105,8 +105,16 @@ function isCloudflareChallenge(status: number, html: string): boolean {
     lower.includes('just a moment') ||
     lower.includes('cf-browser-verification') ||
     lower.includes('challenge-platform') ||
+    lower.includes('cf-turnstile') ||
+    lower.includes('turnstile') ||
     (lower.includes('attention required') && lower.includes('cloudflare'))
   );
+}
+
+function htmlLooksReady(html: string): boolean {
+  if (!html || html.length < 80) return false;
+  if (html.includes('magnet:?')) return true;
+  return !isCloudflareChallenge(200, html);
 }
 
 interface ApibayItem {
@@ -245,37 +253,62 @@ const UINDEX_HEADERS: Record<string, string> = {
   Referer: 'https://uindex.org/',
 };
 
-async function fetchUindexHtmlViaSession(url: string): Promise<{ status: number; html: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
-  try {
-    // Prefer Chromium networking (session cookies / TLS fingerprint) over Node fetch.
-    const res = await session.defaultSession.fetch(url, {
-      headers: UINDEX_HEADERS,
-      signal: controller.signal,
-    });
-    const html = await res.text();
-    return { status: res.status, html };
-  } finally {
-    clearTimeout(timer);
-  }
+const UINDEX_PARTITION = 'persist:uindex';
+
+/** Persistent Chromium session so CF cookies survive app restarts. */
+export function getUindexSession() {
+  return session.fromPartition(UINDEX_PARTITION);
 }
 
-/** Hidden BrowserWindow fallback when Cloudflare challenges session.fetch. */
-function fetchUindexHtmlViaBrowserWindow(url: string, timeoutMs = 25000): Promise<string> {
+export async function clearUindexCookies(): Promise<void> {
+  const ses = getUindexSession();
+  await ses.clearStorageData({
+    storages: ['cookies', 'localstorage', 'cachestorage', 'indexdb', 'websql', 'serviceworkers'],
+  });
+}
+
+let unlockWindow: BrowserWindow | null = null;
+
+/**
+ * Visible BrowserWindow on persist:uindex so the user can complete Turnstile.
+ * Polls until magnets appear or CF challenge clears (up to timeoutMs).
+ */
+export function fetchUindexHtmlViaUnlockWindow(
+  url: string,
+  timeoutMs = 120_000
+): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
+
+    // Reuse / replace any prior unlock window
+    if (unlockWindow && !unlockWindow.isDestroyed()) {
+      try {
+        unlockWindow.destroy();
+      } catch {
+        // ignore
+      }
+      unlockWindow = null;
+    }
+
     const win = new BrowserWindow({
-      show: false,
-      width: 1280,
-      height: 900,
+      show: true,
+      width: 1100,
+      height: 800,
+      minWidth: 640,
+      minHeight: 480,
+      title: 'UIndex — waiting for Cloudflare…',
+      alwaysOnTop: true,
+      autoHideMenuBar: true,
+      backgroundColor: '#1a1a1a',
       webPreferences: {
+        partition: UINDEX_PARTITION,
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
         backgroundThrottling: false,
       },
     });
+    unlockWindow = win;
 
     const settle = (fn: () => void) => {
       if (settled) return;
@@ -287,6 +320,7 @@ function fetchUindexHtmlViaBrowserWindow(url: string, timeoutMs = 25000): Promis
       } catch {
         // ignore
       }
+      if (unlockWindow === win) unlockWindow = null;
       fn();
     };
 
@@ -297,22 +331,38 @@ function fetchUindexHtmlViaBrowserWindow(url: string, timeoutMs = 25000): Promis
       )) as string;
     };
 
+    const updateTitle = (html: string) => {
+      if (win.isDestroyed()) return;
+      if (html.includes('magnet:?')) {
+        win.setTitle('UIndex — challenge cleared');
+      } else if (isCloudflareChallenge(200, html)) {
+        win.setTitle('UIndex — waiting for Cloudflare… (complete check if shown)');
+      } else {
+        win.setTitle('UIndex — loading results…');
+      }
+    };
+
     const pollTimer = setInterval(() => {
       void readHtml()
         .then((html) => {
-          if (html && html.includes('magnet:?')) {
-            settle(() => resolve(html));
+          if (!html) return;
+          updateTitle(html);
+          if (html.includes('magnet:?') || htmlLooksReady(html)) {
+            // Prefer magnet pages; also accept cleared CF with empty results
+            if (html.includes('magnet:?') || !isCloudflareChallenge(200, html)) {
+              settle(() => resolve(html));
+            }
           }
         })
         .catch(() => undefined);
-    }, 400);
+    }, 500);
 
     const hardTimeout = setTimeout(() => {
       void readHtml()
         .then((html) => {
           if (!html) {
             settle(() =>
-              reject(new Error('UIndex browser fallback timed out with an empty page.'))
+              reject(new Error('UIndex Cloudflare unlock timed out with an empty page.'))
             );
             return;
           }
@@ -320,7 +370,7 @@ function fetchUindexHtmlViaBrowserWindow(url: string, timeoutMs = 25000): Promis
             settle(() =>
               reject(
                 new Error(
-                  'UIndex Cloudflare challenge did not clear. Keep Apibay enabled or try again later.'
+                  'UIndex Cloudflare challenge did not clear within 120s. Use Settings → Unlock UIndex, or enable FlareSolverr (docker run -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest).'
                 )
               )
             );
@@ -332,6 +382,16 @@ function fetchUindexHtmlViaBrowserWindow(url: string, timeoutMs = 25000): Promis
           settle(() => reject(err instanceof Error ? err : new Error(String(err))))
         );
     }, timeoutMs);
+
+    win.on('closed', () => {
+      if (unlockWindow === win) unlockWindow = null;
+      if (!settled) {
+        settled = true;
+        clearInterval(pollTimer);
+        clearTimeout(hardTimeout);
+        reject(new Error('UIndex unlock window was closed before Cloudflare cleared.'));
+      }
+    });
 
     // CF Turnstile iframes often abort (ERR_ABORTED / -3); ignore non-main-frame noise.
     win.webContents.on(
@@ -358,7 +418,80 @@ function fetchUindexHtmlViaBrowserWindow(url: string, timeoutMs = 25000): Promis
   });
 }
 
-async function loadUindexHtml(url: string): Promise<string> {
+/** Open homepage in visible unlock window so user can clear CF without searching. */
+export async function openUindexUnlockWindow(): Promise<{ ok: boolean; message: string }> {
+  try {
+    const html = await fetchUindexHtmlViaUnlockWindow('https://uindex.org/', 120_000);
+    if (isCloudflareChallenge(200, html) && !html.includes('magnet:?') && !htmlLooksReady(html)) {
+      return { ok: false, message: 'Cloudflare challenge did not clear.' };
+    }
+    return { ok: true, message: 'UIndex unlocked — cookies saved for future searches.' };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function fetchUindexHtmlViaSession(url: string): Promise<{ status: number; html: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const res = await getUindexSession().fetch(url, {
+      headers: UINDEX_HEADERS,
+      signal: controller.signal,
+    });
+    const html = await res.text();
+    return { status: res.status, html };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * FlareSolverr: POST /v1 request.get, then parse solution.response HTML directly.
+ * Do NOT cookie-replay to uindex — CF detects replay.
+ */
+async function fetchUindexHtmlViaFlareSolverr(
+  settings: AppSettings,
+  url: string
+): Promise<string> {
+  const base = (settings.flaresolverrUrl || 'http://127.0.0.1:8191').replace(/\/$/, '');
+  const endpoint = `${base}/v1`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90_000);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        cmd: 'request.get',
+        url,
+        maxTimeout: 60000,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`FlareSolverr HTTP ${res.status}`);
+    }
+    const data = (await res.json()) as {
+      status?: string;
+      message?: string;
+      solution?: { response?: string; status?: number };
+    };
+    if (data.status !== 'ok' || !data.solution?.response) {
+      throw new Error(data.message || 'FlareSolverr did not return a solution.response');
+    }
+    return data.solution.response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadUindexHtml(settings: AppSettings, url: string): Promise<string> {
+  // 1) session.fetch with persist:uindex (cookies from prior unlock)
+  let sessionHitCf = false;
   try {
     const { status, html } = await fetchUindexHtmlViaSession(url);
     if (!isCloudflareChallenge(status, html)) {
@@ -366,29 +499,48 @@ async function loadUindexHtml(url: string): Promise<string> {
       if (!html || html.length < 200) throw new Error('UIndex returned an empty page.');
       return html;
     }
+    sessionHitCf = true;
   } catch (err) {
     if (err instanceof Error && /^UIndex HTTP \d+/.test(err.message)) throw err;
     if (err instanceof Error && err.message.includes('empty page')) throw err;
-    // Network/abort/CF → BrowserWindow fallback below
+    sessionHitCf = true;
   }
-  return fetchUindexHtmlViaBrowserWindow(url);
+
+  // 2) Optional FlareSolverr — parse solution.response directly (no cookie replay)
+  if (settings.useFlareSolverr) {
+    try {
+      const html = await fetchUindexHtmlViaFlareSolverr(settings, url);
+      if (html && !(isCloudflareChallenge(200, html) && !html.includes('magnet:?'))) {
+        return html;
+      }
+    } catch (err) {
+      // Fall through to visible unlock window
+      if (!sessionHitCf) {
+        // still try unlock
+      }
+      void err;
+    }
+  }
+
+  // 3) Visible unlock BrowserWindow (primary path for Turnstile on Windows)
+  return fetchUindexHtmlViaUnlockWindow(url, 120_000);
 }
 
-async function searchUindex(query: string): Promise<SearchResult[]> {
+async function searchUindex(settings: AppSettings, query: string): Promise<SearchResult[]> {
   // TV category c=2 — also try uncategorized if that returns empty after a real page load
   const withCat = `https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=2`;
   const noCat = `https://uindex.org/search.php?search=${encodeURIComponent(query)}`;
 
-  const html = await loadUindexHtml(withCat);
+  const html = await loadUindexHtml(settings, withCat);
   if (isCloudflareChallenge(200, html) && !html.includes('magnet:?')) {
     throw new Error(
-      'UIndex is temporarily blocked by Cloudflare bot protection. Results from other sources are still shown when available.'
+      'UIndex is blocked by Cloudflare. Open Settings → Unlock UIndex (Cloudflare), or enable FlareSolverr.'
     );
   }
   let results = parseUindexHtml(html);
   if (results.length === 0) {
     try {
-      const htmlAll = await loadUindexHtml(noCat);
+      const htmlAll = await loadUindexHtml(settings, noCat);
       if (!(isCloudflareChallenge(200, htmlAll) && !htmlAll.includes('magnet:?'))) {
         results = parseUindexHtml(htmlAll);
       }
@@ -504,7 +656,7 @@ export async function searchEpisodeTorrents(
   }
   if (sources.includes('uindex')) {
     runners.push(
-      searchUindex(query)
+      searchUindex(settings, query)
         .then((r) => {
           groups.push(r);
         })
@@ -529,7 +681,7 @@ export async function searchEpisodeTorrents(
 
   const merged = mergeByInfoHash(groups);
   const ranked = rankResults(merged, preferred);
-  // Surface partial source failures (e.g. UIndex Cloudflare) without wiping other results
+  // Only surface errors that are still actionable (all paths failed for that source)
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
   return { results: ranked, query, error };
