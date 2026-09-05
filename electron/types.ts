@@ -13,13 +13,26 @@ export type EpisodeOverrideStatus = 'upcoming' | 'downloaded' | 'missing' | 'ign
 
 export type AddShowPolicy = 'all' | 'future' | 'manual';
 
+export type TorrentSourceId = 'apibay' | 'uindex' | 'jackett';
+
+export interface TorrentSources {
+  apibay: boolean;
+  uindex: boolean;
+  jackett: boolean;
+}
+
 export interface AppSettings {
   /** Deprecated / unused — metadata is TVMaze (no key). Kept so old stores don't break. */
   tmdbApiKey: string;
   libraryRoot: string;
   defaultResolution: Resolution;
   refreshIntervalMinutes: number;
-  searchProvider: 'apibay' | 'jackett';
+  /**
+   * @deprecated Use torrentSources. Kept so older electron-store data still loads.
+   */
+  searchProvider?: 'apibay' | 'jackett';
+  /** Which free/optional torrent indexes to query (all enabled are searched & merged). */
+  torrentSources: TorrentSources;
   jackettUrl: string;
   jackettApiKey: string;
   /** Automatically search + download missing/aired episodes after each refresh. */
@@ -128,6 +141,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   libraryRoot: '',
   defaultResolution: '1080p',
   refreshIntervalMinutes: 60,
+  torrentSources: { apibay: true, uindex: true, jackett: false },
   searchProvider: 'apibay',
   jackettUrl: 'http://127.0.0.1:9117',
   jackettApiKey: '',

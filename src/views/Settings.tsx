@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, Resolution, TelegramStatus, UpdateStatus } from '../lib/types';
+import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus } from '../lib/types';
+
+const defaultSources: TorrentSources = { apibay: true, uindex: true, jackett: false };
 
 const empty: AppSettings = {
   tmdbApiKey: '',
   libraryRoot: '',
   defaultResolution: '1080p',
   refreshIntervalMinutes: 60,
-  searchProvider: 'apibay',
+  torrentSources: { ...defaultSources },
   jackettUrl: 'http://127.0.0.1:9117',
   jackettApiKey: '',
   autoDownload: true,
@@ -38,7 +40,14 @@ export default function SettingsView() {
   };
 
   useEffect(() => {
-    window.torrentAPI.getSettings().then((s) => setLocal({ ...empty, ...(s as AppSettings) }));
+    window.torrentAPI.getSettings().then((s) => {
+      const loaded = { ...empty, ...(s as AppSettings) };
+      loaded.torrentSources = {
+        ...defaultSources,
+        ...(loaded.torrentSources || {}),
+      };
+      setLocal(loaded);
+    });
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || '—'))).catch(() => undefined);
     window.torrentAPI.getUpdateStatus?.().then((s) => setUpdateStatus(s as UpdateStatus)).catch(() => undefined);
     refreshTg();
@@ -233,23 +242,55 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
-          <label>Search provider</label>
-          <select
-            value={settings.searchProvider}
-            onChange={(e) =>
-              setLocal({
-                ...settings,
-                searchProvider: e.target.value as AppSettings['searchProvider'],
-              })
-            }
-          >
-            <option value="apibay">Apibay (public, no key)</option>
-            <option value="jackett">Jackett (self-hosted, optional)</option>
-          </select>
-          <div className="hint">Default path needs no paid subscriptions. Jackett is optional for more indexers.</div>
+          <label>Torrent sources</label>
+          <div className="hint" style={{ marginBottom: 8 }}>
+            Enable one or more free indexes. Searches query all enabled sources, then merge by infohash and rank by resolution + seeders.
+          </div>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.torrentSources?.apibay}
+              onChange={(e) =>
+                setLocal({
+                  ...settings,
+                  torrentSources: { ...defaultSources, ...settings.torrentSources, apibay: e.target.checked },
+                })
+              }
+            />
+            <span>Apibay — public Pirate Bay API mirror (no key)</span>
+          </label>
+          <label className="toggle-row" style={{ marginTop: 6 }}>
+            <input
+              type="checkbox"
+              checked={!!settings.torrentSources?.uindex}
+              onChange={(e) =>
+                setLocal({
+                  ...settings,
+                  torrentSources: { ...defaultSources, ...settings.torrentSources, uindex: e.target.checked },
+                })
+              }
+            />
+            <span>UIndex — public torrent index at uindex.org (no key)</span>
+          </label>
+          <label className="toggle-row" style={{ marginTop: 6 }}>
+            <input
+              type="checkbox"
+              checked={!!settings.torrentSources?.jackett}
+              onChange={(e) =>
+                setLocal({
+                  ...settings,
+                  torrentSources: { ...defaultSources, ...settings.torrentSources, jackett: e.target.checked },
+                })
+              }
+            />
+            <span>Jackett — optional self-hosted meta-search (needs your own server)</span>
+          </label>
+          <div className="hint" style={{ marginTop: 8 }}>
+            Default: Apibay + UIndex. No paid subscriptions required.
+          </div>
         </div>
 
-        {settings.searchProvider === 'jackett' && (
+        {settings.torrentSources?.jackett && (
           <>
             <div className="field">
               <label>Jackett URL</label>
