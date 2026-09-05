@@ -64,6 +64,12 @@ export interface AppSettings {
   telegramAllowedChatIds: string;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
+  /** Max WebTorrent peer connections (default 150). */
+  maxConnections: number;
+  /** Download speed cap in KiB/s; 0 = unlimited. */
+  maxDownloadSpeedKBps: number;
+  /** Upload speed cap in KiB/s; 0 = unlimited. */
+  maxUploadSpeedKBps: number;
 }
 
 export interface Episode {
@@ -183,4 +189,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
+  maxConnections: 150,
+  maxDownloadSpeedKBps: 0,
+  maxUploadSpeedKBps: 0,
 };

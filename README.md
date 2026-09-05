@@ -1,6 +1,6 @@
 # Torrent – TV Show Manager
 
-Desktop TV show / episode manager (Electron + Vite + React). **v1.4.0**
+Desktop TV show / episode manager (Electron + Vite + React). **v1.4.1**
 
 ## Free by default
 - Metadata: **TVMaze** — show info, episode air dates, and IMDb ids (for EZTV). No API key.
@@ -23,6 +23,9 @@ UIndex / FlareSolverr / Cloudflare unlock UI were removed in v1.4.0.
 - Manual episode status in store
 - Add-show older episode modal
 - Auto-download skips ignored
+- On download complete: status → Downloaded, item leaves Downloads queue, torrent destroyed (no seeding by default)
+- WebTorrent settings: max connections (default 150), optional download/upload KiB/s caps (0 = unlimited)
+- Extra public trackers on magnets for peer discovery
 - Telegram and startup
 - Auto update from private GitHub Releases (paste a PAT in Settings after installing)
 

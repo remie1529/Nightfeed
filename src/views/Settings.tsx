@@ -31,6 +31,9 @@ const empty: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
+  maxConnections: 150,
+  maxDownloadSpeedKBps: 0,
+  maxUploadSpeedKBps: 0,
 };
 
 export default function SettingsView() {
@@ -154,7 +157,7 @@ export default function SettingsView() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <p>Library, auto-download, startup, Telegram, updates</p>
+          <p>Library, downloads, auto-download, startup, Telegram, updates</p>
         </div>
         <div className="toolbar">
           {saved && <span style={{ color: 'var(--ok)' }}>Saved</span>}
@@ -242,6 +245,60 @@ export default function SettingsView() {
             }
           />
           <div className="hint">Optional pause between starting each auto-download. 0 = minimal delay only.</div>
+        </div>
+
+        <div className="settings-section">Downloads (WebTorrent)</div>
+
+        <div className="field">
+          <label>Max peer connections</label>
+          <input
+            type="number"
+            min={10}
+            max={500}
+            value={settings.maxConnections ?? 150}
+            onChange={(e) =>
+              setLocal({
+                ...settings,
+                maxConnections: Math.max(10, parseInt(e.target.value || '150', 10) || 150),
+              })
+            }
+          />
+          <div className="hint">
+            Higher values can improve throughput when many peers are available. Default 150.
+            WebTorrent (built-in) is often slower than qBittorrent; unlimited = 0.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Max download speed (KiB/s)</label>
+          <input
+            type="number"
+            min={0}
+            value={settings.maxDownloadSpeedKBps ?? 0}
+            onChange={(e) =>
+              setLocal({
+                ...settings,
+                maxDownloadSpeedKBps: Math.max(0, parseInt(e.target.value || '0', 10) || 0),
+              })
+            }
+          />
+          <div className="hint">0 = unlimited. Applied via WebTorrent client.throttleDownload (bytes/s).</div>
+        </div>
+
+        <div className="field">
+          <label>Max upload speed (KiB/s)</label>
+          <input
+            type="number"
+            min={0}
+            value={settings.maxUploadSpeedKBps ?? 0}
+            onChange={(e) =>
+              setLocal({
+                ...settings,
+                maxUploadSpeedKBps: Math.max(0, parseInt(e.target.value || '0', 10) || 0),
+              })
+            }
+          />
+          <div className="hint">0 = unlimited. Applied via WebTorrent client.throttleUpload (bytes/s).</div>
         </div>
 
         <div className="settings-section">Startup</div>
