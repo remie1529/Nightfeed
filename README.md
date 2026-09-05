@@ -19,7 +19,7 @@ Desktop TV show / episode manager (Electron + Vite + React). **v1.2.0**
 
 ## Publishing a Release
 
-Repo: remie1529T-TV-Show-Manager
+Repo: remie1529/TV-Show-Manager
 Bump version, then publish with electron-builder, or draft a Release and upload Torrent-Setup exe, blockmap, latest.yml.
 Clients check on startup and via Settings Check for updates.
 
