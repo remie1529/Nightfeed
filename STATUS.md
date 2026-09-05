@@ -1,14 +1,14 @@
-# Status v1.3.0
+# Status v1.3.1
 
 ## Works
 - Manual episode status overrides in electron-store
 - Add-show older-episode modal
 - Auto-download skips Ignored
-- electron-updater + GitHub publish config
+- electron-updater + private GitHub via Settings githubToken (PAT)
+- Nav version label from app.getVersion()
 - TVMaze + Apibay + UIndex free path (multi-source merge)
 - Build + win-unpacked OK
 
 ## Artifacts
 - /workspace/torrent-tv-manager
-- /workspace/tv-manager-delivery.zip
-- /workspace/Torrent-win-unpacked.zip
+- Release v1.3.1 on remie1529/TV-Show-Manager

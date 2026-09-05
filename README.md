@@ -1,6 +1,6 @@
 # Torrent – TV Show Manager
 
-Desktop TV show / episode manager (Electron + Vite + React). **v1.3.0**
+Desktop TV show / episode manager (Electron + Vite + React). **v1.3.1**
 
 ## Free by default
 - Metadata: **TVMaze** — show info and episode air dates, no API key
@@ -16,7 +16,7 @@ Searches query **all enabled** sources, merge/dedupe by infohash, and rank by pr
 - Add-show older episode modal
 - Auto-download skips ignored
 - Telegram and startup
-- Auto update from GitHub Releases (install once from the NSIS Setup.exe)
+- Auto update from private GitHub Releases (paste a PAT in Settings after installing)
 
 ## Setup
 
