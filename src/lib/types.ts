@@ -10,6 +10,8 @@ export type EpisodeStatus =
 
 export type EpisodeOverrideStatus = 'upcoming' | 'downloaded' | 'missing' | 'ignored';
 
+export type MovieStatus = 'missing' | 'downloaded' | 'downloading';
+
 export type AddShowPolicy = 'all' | 'future' | 'manual';
 
 export type TorrentSourceId =
@@ -38,7 +40,9 @@ export interface TorrentSources {
 export interface AppSettings {
   tmdbApiKey: string;
   libraryRoot: string;
+  movieLibraryRoot: string;
   defaultResolution: Resolution;
+  defaultMovieResolution: Resolution;
   refreshIntervalMinutes: number;
   /** @deprecated Use torrentSources */
   searchProvider?: 'apibay' | 'jackett';
@@ -99,6 +103,24 @@ export interface Show {
   lastRefreshedAt?: string;
 }
 
+export interface Movie {
+  id: number;
+  tmdbId: number;
+  title: string;
+  overview: string;
+  posterPath: string | null;
+  backdropPath: string | null;
+  releaseDate: string | null;
+  releaseYear: number | null;
+  runtime: number | null;
+  status: MovieStatus;
+  preferredResolution?: Resolution;
+  libraryPath?: string;
+  localPath?: string;
+  addedAt: string;
+  lastRefreshedAt?: string;
+}
+
 export interface SearchResult {
   title: string;
   magnet: string;
@@ -127,6 +149,8 @@ export interface DownloadItem {
   savePath: string;
   error?: string;
   magnet: string;
+  kind?: 'episode' | 'movie';
+  movieId?: number;
 }
 
 export interface TelegramStatus {
@@ -155,6 +179,16 @@ export interface MazeSearchItem {
   backdropUrl: string | null;
   firstAirDate: string | null;
   status: string;
+}
+
+export interface TmdbMovieSearchItem {
+  id: number;
+  title: string;
+  overview: string;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  releaseDate: string | null;
+  releaseYear: number | null;
 }
 
 export const DEFAULT_TORRENT_SOURCES: TorrentSources = {

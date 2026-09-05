@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Show } from '../types';
+import { Movie, Show } from '../types';
 
 const SEASON_PATTERNS = [
   /^season\s*0*(\d+)$/i,
@@ -141,4 +141,68 @@ export function findLocalEpisode(
     return undefined;
   }
   return undefined;
+}
+
+export function getMovieFolderName(movie: Movie): string {
+  const title = sanitizeName(movie.title || 'Movie');
+  if (movie.releaseYear) return `${title} (${movie.releaseYear})`;
+  return title;
+}
+
+export function getMovieRoot(movie: Movie, movieLibraryRoot: string): string {
+  if (movie.libraryPath && movie.libraryPath.trim()) {
+    return movie.libraryPath.trim();
+  }
+  return path.join(movieLibraryRoot, getMovieFolderName(movie));
+}
+
+/** Resolve / create `{movieLibraryRoot}/{Title} ({Year})/` */
+export function resolveMovieDir(movie: Movie, movieLibraryRoot: string): string {
+  const root = getMovieRoot(movie, movieLibraryRoot);
+  if (!fs.existsSync(root)) {
+    fs.mkdirSync(root, { recursive: true });
+  }
+  return root;
+}
+
+export function buildMovieFilename(movie: Movie, ext: string): string {
+  const cleanExt = ext.startsWith('.') ? ext : `.${ext}`;
+  return `${getMovieFolderName(movie)}${cleanExt}`;
+}
+
+export function buildMoviePath(
+  movie: Movie,
+  movieLibraryRoot: string,
+  ext: string
+): { movieDir: string; filePath: string; fileName: string } {
+  const movieDir = resolveMovieDir(movie, movieLibraryRoot);
+  const fileName = buildMovieFilename(movie, ext);
+  return {
+    movieDir,
+    fileName,
+    filePath: path.join(movieDir, fileName),
+  };
+}
+
+export function findLocalMovie(movie: Movie, movieLibraryRoot: string): string | undefined {
+  const movieRoot = getMovieRoot(movie, movieLibraryRoot);
+  if (!fs.existsSync(movieRoot)) return undefined;
+
+  const folderName = getMovieFolderName(movie).toLowerCase();
+  try {
+    const videos: string[] = [];
+    for (const file of fs.readdirSync(movieRoot)) {
+      const ext = path.extname(file).toLowerCase();
+      if (!VIDEO_EXTS.has(ext)) continue;
+      videos.push(path.join(movieRoot, file));
+    }
+    if (!videos.length) return undefined;
+    const exact = videos.find((v) => {
+      const base = path.basename(v, path.extname(v)).toLowerCase();
+      return base === folderName;
+    });
+    return exact || videos[0];
+  } catch {
+    return undefined;
+  }
 }

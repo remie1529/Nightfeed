@@ -15,8 +15,8 @@ export default function Downloads({ items }: { items: DownloadItem[] }) {
         <div className="empty-state">
           <h2>Nothing in the queue</h2>
           <p>
-            Open a show and Download, or enable auto-download in Settings.
-            Completed files rename to Show - SxxExx - Title in Season folders.
+            Open a show or movie and Download, or enable auto-download for TV in Settings.
+            TV files rename to Show - SxxExx - Title; movies go under the movie library folder.
           </p>
         </div>
       ) : (
@@ -24,7 +24,7 @@ export default function Downloads({ items }: { items: DownloadItem[] }) {
           <table className="dense">
             <thead>
               <tr>
-                <th>Episode</th>
+                <th>Item</th>
                 <th style={{ width: 140 }}>Progress</th>
                 <th style={{ width: 100 }}>Speed</th>
                 <th style={{ width: 70 }}>Peers</th>
@@ -38,12 +38,16 @@ export default function Downloads({ items }: { items: DownloadItem[] }) {
                   <td>
                     <div style={{ fontWeight: 600 }}>
                       {item.showName}{' '}
-                      <span className="mono">
-                        S{pad2(item.seasonNumber)}E{pad2(item.episodeNumber)}
-                      </span>
+                      {item.kind === 'movie' ? (
+                        <span className="mono">Movie</span>
+                      ) : (
+                        <span className="mono">
+                          S{pad2(item.seasonNumber)}E{pad2(item.episodeNumber)}
+                        </span>
+                      )}
                     </div>
                     <div style={{ color: 'var(--text-faint)', fontSize: '0.8rem' }}>
-                      {item.episodeTitle}
+                      {item.kind === 'movie' ? (item.episodeTitle || 'Movie') : item.episodeTitle}
                     </div>
                     <div className="mono" style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>
                       {item.savePath}

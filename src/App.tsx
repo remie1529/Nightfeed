@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import Library from './views/Library';
 import ShowDetail from './views/ShowDetail';
+import Movies from './views/Movies';
+import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import SettingsView from './views/Settings';
-import type { DownloadItem, Show } from './lib/types';
+import type { DownloadItem, Movie, Show } from './lib/types';
 
-type View = 'library' | 'downloads' | 'settings' | 'show';
+type View = 'library' | 'movies' | 'downloads' | 'settings' | 'show' | 'movie';
 
 interface Toast {
   id: number;
@@ -16,8 +18,10 @@ interface Toast {
 export default function App() {
   const [view, setView] = useState<View>('library');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [libraryKey, setLibraryKey] = useState(0);
+  const [moviesKey, setMoviesKey] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [appVersion, setAppVersion] = useState('');
 
@@ -30,6 +34,9 @@ export default function App() {
     const offLib = window.torrentAPI.onLibraryChanged(() => {
       setLibraryKey((k) => k + 1);
     });
+    const offMovies = window.torrentAPI.onMoviesChanged?.(() => {
+      setMoviesKey((k) => k + 1);
+    });
     const offToast = window.torrentAPI.onToast((payload) => {
       const id = Date.now() + Math.random();
       setToasts((prev) => [...prev.slice(-4), { id, message: payload.message, kind: payload.kind || 'info' }]);
@@ -40,6 +47,7 @@ export default function App() {
     return () => {
       offDl();
       offLib();
+      offMovies?.();
       offToast();
     };
   }, []);
@@ -47,6 +55,11 @@ export default function App() {
   const openShow = (show: Show) => {
     setSelectedId(show.tmdbId);
     setView('show');
+  };
+
+  const openMovie = (movie: Movie) => {
+    setSelectedMovieId(movie.tmdbId);
+    setView('movie');
   };
 
   const activeDownloads = downloads.filter(
@@ -58,13 +71,19 @@ export default function App() {
       <nav className="nav">
         <div className="brand">
           <div className="brand-name">Torrent</div>
-          <div className="brand-sub">TV Manager</div>
+          <div className="brand-sub">TV & Movies</div>
         </div>
         <button
           className={`nav-item ${view === 'library' || view === 'show' ? 'active' : ''}`}
           onClick={() => setView('library')}
         >
           Library
+        </button>
+        <button
+          className={`nav-item ${view === 'movies' || view === 'movie' ? 'active' : ''}`}
+          onClick={() => setView('movies')}
+        >
+          Movies
         </button>
         <button
           className={`nav-item ${view === 'downloads' ? 'active' : ''}`}
@@ -99,6 +118,24 @@ export default function App() {
               setSelectedId(null);
               setView('library');
               setLibraryKey((k) => k + 1);
+            }}
+          />
+        )}
+        {view === 'movies' && (
+          <Movies
+            key={moviesKey}
+            onOpenMovie={openMovie}
+            onRefreshDone={() => setMoviesKey((k) => k + 1)}
+          />
+        )}
+        {view === 'movie' && selectedMovieId != null && (
+          <MovieDetail
+            tmdbId={selectedMovieId}
+            onBack={() => setView('movies')}
+            onRemoved={() => {
+              setSelectedMovieId(null);
+              setView('movies');
+              setMoviesKey((k) => k + 1);
             }}
           />
         )}

@@ -1,6 +1,6 @@
-import type { EpisodeStatus } from '../lib/types';
+import type { EpisodeStatus, MovieStatus } from '../lib/types';
 
-const labels: Record<EpisodeStatus, string> = {
+const labels: Record<string, string> = {
   upcoming: 'Upcoming',
   aired: 'Aired',
   downloaded: 'Downloaded',
@@ -9,6 +9,6 @@ const labels: Record<EpisodeStatus, string> = {
   ignored: 'Ignored',
 };
 
-export default function StatusBadge({ status }: { status: EpisodeStatus }) {
+export default function StatusBadge({ status }: { status: EpisodeStatus | MovieStatus }) {
   return <span className={`badge ${status}`}>{labels[status] || status}</span>;
 }

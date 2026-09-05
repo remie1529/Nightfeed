@@ -11,6 +11,8 @@ export type EpisodeStatus =
 /** Manual statuses persisted across metadata refresh (downloading is always derived). */
 export type EpisodeOverrideStatus = 'upcoming' | 'downloaded' | 'missing' | 'ignored';
 
+export type MovieStatus = 'missing' | 'downloaded' | 'downloading';
+
 export type AddShowPolicy = 'all' | 'future' | 'manual';
 
 export type TorrentSourceId =
@@ -37,10 +39,14 @@ export interface TorrentSources {
 }
 
 export interface AppSettings {
-  /** Deprecated / unused — metadata is TVMaze (no key). Kept so old stores don't break. */
+  /** TMDB API key — used for movie metadata only. TV uses TVMaze (no key). */
   tmdbApiKey: string;
   libraryRoot: string;
+  /** Separate root for movies — never mix with TV libraryRoot. */
+  movieLibraryRoot: string;
   defaultResolution: Resolution;
+  /** Global preferred resolution for movies (per-movie override on Movie). */
+  defaultMovieResolution: Resolution;
   refreshIntervalMinutes: number;
   /**
    * @deprecated Use torrentSources. Kept so older electron-store data still loads.
@@ -113,6 +119,26 @@ export interface Show {
   lastRefreshedAt?: string;
 }
 
+export interface Movie {
+  id: number;
+  tmdbId: number;
+  title: string;
+  overview: string;
+  /** Absolute TMDB image URL */
+  posterPath: string | null;
+  backdropPath: string | null;
+  releaseDate: string | null;
+  releaseYear: number | null;
+  /** Runtime in minutes if available */
+  runtime: number | null;
+  status: MovieStatus;
+  preferredResolution?: Resolution;
+  libraryPath?: string;
+  localPath?: string;
+  addedAt: string;
+  lastRefreshedAt?: string;
+}
+
 export interface SearchResult {
   title: string;
   magnet: string;
@@ -141,6 +167,9 @@ export interface DownloadItem {
   savePath: string;
   error?: string;
   magnet: string;
+  /** 'movie' for movie downloads; omitted/episode for TV (backwards compatible). */
+  kind?: 'episode' | 'movie';
+  movieId?: number;
 }
 
 export interface TelegramStatus {
@@ -176,7 +205,9 @@ export const DEFAULT_TORRENT_SOURCES: TorrentSources = {
 export const DEFAULT_SETTINGS: AppSettings = {
   tmdbApiKey: '',
   libraryRoot: '',
+  movieLibraryRoot: '',
   defaultResolution: '1080p',
+  defaultMovieResolution: '1080p',
   refreshIntervalMinutes: 60,
   torrentSources: { ...DEFAULT_TORRENT_SOURCES },
   searchProvider: 'apibay',

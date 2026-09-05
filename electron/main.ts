@@ -2,13 +2,16 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import {
+  getMovies,
   getSettings,
   getShows,
+  removeMovie,
   removeShow,
   saveDownloads,
   setEpisodeOverride,
   setEpisodeOverridesBulk,
   setSettings,
+  upsertMovie,
   upsertShow,
 } from './services/store';
 import {
@@ -17,7 +20,12 @@ import {
   ignoreAiredEpisodes,
   searchShows,
 } from './services/tvmaze';
-import { searchEpisodeTorrents } from './services/search';
+import { searchEpisodeTorrents, searchMovieTorrents } from './services/search';
+import {
+  applyMovieLocalStatus,
+  fetchMovieDetail,
+  searchMovies,
+} from './services/tmdb';
 import { downloadEngine } from './services/engine';
 import { telegramBot } from './services/telegram';
 import {
@@ -25,6 +33,7 @@ import {
   AppSettings,
   Episode,
   EpisodeOverrideStatus,
+  Movie,
   Resolution,
   Show,
   UpdateStatus,
@@ -89,6 +98,16 @@ function pushUpdateStatus() {
 function downloadingKeys(): Set<string> {
   return downloadEngine.getDownloadingKeys();
 }
+
+function downloadingMovieIds(): Set<number> {
+  return downloadEngine.getDownloadingMovieIds();
+}
+
+function withMovieLocalStatus(movie: Movie): Movie {
+  return applyMovieLocalStatus(movie, getSettings().movieLibraryRoot, downloadingMovieIds());
+}
+
+
 
 function applyLoginItem(enabled: boolean) {
   try {
@@ -352,6 +371,7 @@ function wireTelegram() {
           'Torrent TV Manager bot',
           '/status — library + active downloads',
           '/shows — tracked shows',
+          '/movies — tracked movies',
           '/check — refresh metadata (+ auto-download if enabled)',
           '/downloads — download progress',
           '/add <query> — search TVMaze and add best match',
@@ -378,11 +398,13 @@ function wireTelegram() {
         chatId,
         [
           `Shows: ${shows.length}`,
+          `Movies: ${getMovies().length}`,
           `Missing/aired episodes: ${missing}`,
           `Active downloads: ${active.length}`,
           `Auto-download: ${settings.autoDownload ? 'on' : 'off'}`,
           `Refresh every: ${settings.refreshIntervalMinutes} min`,
-          `Library: ${settings.libraryRoot || '(not set)'}`,
+          `TV library: ${settings.libraryRoot || '(not set)'}`,
+          `Movie library: ${settings.movieLibraryRoot || '(not set)'}`,
         ].join('\n')
       );
     },
@@ -393,6 +415,18 @@ function wireTelegram() {
         return;
       }
       const lines = shows.map((s, i) => `${i + 1}. ${s.name} (${s.status || '—'})`);
+      await reply(chatId, lines.join('\n'));
+    },
+    async movies(chatId, _args, reply) {
+      const movies = getMovies().map((m) => withMovieLocalStatus(m));
+      if (!movies.length) {
+        await reply(chatId, 'No tracked movies.');
+        return;
+      }
+      const lines = movies.map((m, i) => {
+        const year = m.releaseYear ? ` (${m.releaseYear})` : '';
+        return `${i + 1}. ${m.title}${year} — ${m.status}`;
+      });
       await reply(chatId, lines.join('\n'));
     },
     async check(chatId, _args, reply) {
@@ -408,7 +442,11 @@ function wireTelegram() {
       }
       const lines = items.slice(0, 25).map((d) => {
         const pct = Math.round((d.progress || 0) * 100);
-        return `${d.showName} S${pad2(d.seasonNumber)}E${pad2(d.episodeNumber)} — ${d.status} ${pct}% ${formatSpeed(d.downloadSpeed)}`;
+        const label =
+          d.kind === 'movie'
+            ? `${d.showName} (movie)`
+            : `${d.showName} S${pad2(d.seasonNumber)}E${pad2(d.episodeNumber)}`;
+        return `${label} — ${d.status} ${pct}% ${formatSpeed(d.downloadSpeed)}`;
       });
       await reply(chatId, lines.join('\n'));
     },
@@ -588,6 +626,127 @@ function registerIpc() {
   });
 
 
+
+  ipcMain.handle('tmdb:searchMovies', async (_e, query: string) => {
+    const settings = getSettings();
+    return searchMovies(settings.tmdbApiKey, query);
+  });
+
+  ipcMain.handle('movies:list', () => {
+    return getMovies().map((m) => withMovieLocalStatus(m));
+  });
+
+  ipcMain.handle('movies:get', (_e, tmdbId: number) => {
+    const movie = getMovies().find((m) => m.tmdbId === tmdbId);
+    if (!movie) return null;
+    return withMovieLocalStatus(movie);
+  });
+
+  ipcMain.handle('movies:add', async (_e, tmdbId: number) => {
+    const settings = getSettings();
+    if (!(settings.tmdbApiKey || '').trim()) {
+      throw new Error('Add a free TMDB API key in Settings to search movies');
+    }
+    if (!(settings.movieLibraryRoot || '').trim()) {
+      throw new Error('Set a movie library folder in Settings before adding movies');
+    }
+    const existing = getMovies().find((m) => m.tmdbId === tmdbId);
+    const movie = await fetchMovieDetail(
+      settings.tmdbApiKey,
+      tmdbId,
+      settings.movieLibraryRoot,
+      existing,
+      downloadingMovieIds()
+    );
+    upsertMovie(movie);
+    mainWindow?.webContents.send('movies:changed');
+    return withMovieLocalStatus(movie);
+  });
+
+  ipcMain.handle('movies:remove', (_e, tmdbId: number) => {
+    removeMovie(tmdbId);
+    mainWindow?.webContents.send('movies:changed');
+    return getMovies().map((m) => withMovieLocalStatus(m));
+  });
+
+  ipcMain.handle('movies:update', (_e, tmdbId: number, partial: Partial<Movie>) => {
+    const movies = getMovies();
+    const idx = movies.findIndex((m) => m.tmdbId === tmdbId);
+    if (idx < 0) throw new Error('Movie not found');
+    movies[idx] = { ...movies[idx], ...partial, tmdbId };
+    upsertMovie(movies[idx]);
+    mainWindow?.webContents.send('movies:changed');
+    return withMovieLocalStatus(movies[idx]);
+  });
+
+  ipcMain.handle('movies:refresh', async (_e, tmdbId: number) => {
+    const settings = getSettings();
+    const existing = getMovies().find((m) => m.tmdbId === tmdbId);
+    if (!existing) throw new Error('Movie not found');
+    let movie: Movie;
+    if ((settings.tmdbApiKey || '').trim()) {
+      movie = await fetchMovieDetail(
+        settings.tmdbApiKey,
+        tmdbId,
+        settings.movieLibraryRoot,
+        existing,
+        downloadingMovieIds()
+      );
+    } else {
+      movie = withMovieLocalStatus(existing);
+    }
+    upsertMovie(movie);
+    mainWindow?.webContents.send('movies:changed');
+    return movie;
+  });
+
+  ipcMain.handle('search:movie', async (_e, tmdbId: number) => {
+    const settings = getSettings();
+    const movie = getMovies().find((m) => m.tmdbId === tmdbId);
+    if (!movie) throw new Error('Movie not found');
+    const preferred = (movie.preferredResolution ||
+      settings.defaultMovieResolution ||
+      settings.defaultResolution) as Resolution;
+    const res = await searchMovieTorrents(
+      settings,
+      movie.title,
+      movie.releaseYear,
+      preferred
+    );
+    if (res.error && !res.results.length) {
+      notify(res.error, 'warn');
+    }
+    return res;
+  });
+
+  ipcMain.handle(
+    'download:startMovie',
+    async (
+      _e,
+      payload: {
+        tmdbId: number;
+        magnet: string;
+      }
+    ) => {
+      const settings = getSettings();
+      const movie = getMovies().find((m) => m.tmdbId === payload.tmdbId);
+      if (!movie) throw new Error('Movie not found');
+      if (!(settings.movieLibraryRoot || '').trim()) {
+        throw new Error('Set a movie library folder in Settings');
+      }
+      const item = await downloadEngine.startMovie({
+        magnet: payload.magnet,
+        movie,
+        movieLibraryRoot: settings.movieLibraryRoot,
+      });
+      // Mark downloading in store for UI
+      upsertMovie(withMovieLocalStatus(movie));
+      pushDownloads();
+      mainWindow?.webContents.send('movies:changed');
+      return item;
+    }
+  );
+
   ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
   ipcMain.handle('telegram:test', async () => telegramBot.sendTest(getSettings()));
 
@@ -607,18 +766,26 @@ app.whenReady().then(() => {
   setupAutoUpdater();
   downloadEngine.on('update', () => pushDownloads());
   downloadEngine.on('done', (item) => {
-    if (item?.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
+    if (item?.kind === 'movie' && item.movieId != null) {
+      const movie = getMovies().find((m) => m.tmdbId === item.movieId);
+      if (movie) {
+        movie.status = 'downloaded';
+        movie.localPath = item.savePath || movie.localPath;
+        upsertMovie(withMovieLocalStatus(movie));
+      }
+      mainWindow?.webContents.send('movies:changed');
+    } else if (item?.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
       setEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber, 'downloaded');
       const show = getShows().find((s) => s.tmdbId === item.showId);
       if (show) {
         upsertShow(withLocalStatuses(show));
       }
+      mainWindow?.webContents.send('library:changed');
     }
     if (item?.name) {
       notify(`Finished: ${item.name}`, 'ok');
     }
     pushDownloads();
-    mainWindow?.webContents.send('library:changed');
   });
   createWindow();
   const settings = getSettings();

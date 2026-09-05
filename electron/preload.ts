@@ -36,6 +36,19 @@ const api = {
   resumeDownload: (id: string) => ipcRenderer.invoke('download:resume', id),
   cancelDownload: (id: string) => ipcRenderer.invoke('download:cancel', id),
 
+  // Movies (TMDB)
+  searchMovies: (query: string) => ipcRenderer.invoke('tmdb:searchMovies', query),
+  getMovies: () => ipcRenderer.invoke('movies:list'),
+  getMovie: (tmdbId: number) => ipcRenderer.invoke('movies:get', tmdbId),
+  addMovie: (tmdbId: number) => ipcRenderer.invoke('movies:add', tmdbId),
+  removeMovie: (tmdbId: number) => ipcRenderer.invoke('movies:remove', tmdbId),
+  updateMovie: (tmdbId: number, partial: Record<string, unknown>) =>
+    ipcRenderer.invoke('movies:update', tmdbId, partial),
+  refreshMovie: (tmdbId: number) => ipcRenderer.invoke('movies:refresh', tmdbId),
+  searchMovieTorrents: (tmdbId: number) => ipcRenderer.invoke('search:movie', tmdbId),
+  startMovieDownload: (payload: { tmdbId: number; magnet: string }) =>
+    ipcRenderer.invoke('download:startMovie', payload),
+
   getTelegramStatus: () => ipcRenderer.invoke('telegram:status'),
   sendTelegramTest: () => ipcRenderer.invoke('telegram:test'),
 
@@ -54,6 +67,12 @@ const api = {
     const listener = () => cb();
     ipcRenderer.on('library:changed', listener);
     return () => ipcRenderer.removeListener('library:changed', listener);
+  },
+
+  onMoviesChanged: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('movies:changed', listener);
+    return () => ipcRenderer.removeListener('movies:changed', listener);
   },
 
   onToast: (cb: (payload: { message: string; kind?: string }) => void) => {
