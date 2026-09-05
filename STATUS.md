@@ -1,20 +1,15 @@
-# Status — v1.2.0
+# Status v1.2.0
 
 ## Works
-- TVMaze + Apibay
-- Manual episode status (ignored/downloaded/missing/upcoming) in electron-store
-- Add-show modal: all missing / future only / manual
+- Manual episode status overrides in electron-store
+- Add-show older-episode modal
 - Auto-download skips Ignored
-- electron-updater + GitHub remie1529/TV-Show-Manager
-- Telegram, startup, NSIS
-
-## Limits
-- Season 0 skipped; auto-update packaged only
+- electron-updater + GitHub publish config
+- TVMaze + Apibay free path
+- Build + win-unpacked OK
+- Pushed main (cf30344) to remie1529 TV-Show-Manager
 
 ## Artifacts
-- /workspace/torrent-tv-manager (mirror show-manager)
+- /workspace/torrent-tv-manager
 - /workspace/tv-manager-delivery.zip
 - /workspace/Torrent-win-unpacked.zip
-
-## Defaults
-autoDownload true; free TVMaze+Apibay; no paid APIs.
