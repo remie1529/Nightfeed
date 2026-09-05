@@ -1,3 +1,4 @@
+import { BrowserWindow, session } from 'electron';
 import { AppSettings, Resolution, SearchResult, TorrentSourceId } from '../types';
 
 function pad2(n: number): string {
@@ -233,36 +234,169 @@ export function parseUindexHtml(html: string): SearchResult[] {
   return results;
 }
 
-async function searchUindex(query: string): Promise<SearchResult[]> {
-  // TV category c=2 — stable search endpoint used by FlexGet / qBittorrent plugins
-  const url = `https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=2`;
+const UINDEX_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+const UINDEX_HEADERS: Record<string, string> = {
+  'User-Agent': UINDEX_UA,
+  Accept:
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  Referer: 'https://uindex.org/',
+};
+
+async function fetchUindexHtmlViaSession(url: string): Promise<{ status: number; html: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
   try {
-    const res = await fetch(url, {
+    // Prefer Chromium networking (session cookies / TLS fingerprint) over Node fetch.
+    const res = await session.defaultSession.fetch(url, {
+      headers: UINDEX_HEADERS,
       signal: controller.signal,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        Referer: 'https://uindex.org/',
-      },
     });
     const html = await res.text();
-    if (isCloudflareChallenge(res.status, html)) {
-      throw new Error(
-        'UIndex is temporarily blocked by Cloudflare bot protection. Try again later, or keep Apibay enabled.'
-      );
-    }
-    if (!res.ok) throw new Error(`UIndex HTTP ${res.status}`);
-    if (!html || html.length < 200) {
-      throw new Error('UIndex returned an empty page.');
-    }
-    return parseUindexHtml(html);
+    return { status: res.status, html };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Hidden BrowserWindow fallback when Cloudflare challenges session.fetch. */
+function fetchUindexHtmlViaBrowserWindow(url: string, timeoutMs = 25000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const win = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 900,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        backgroundThrottling: false,
+      },
+    });
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(pollTimer);
+      clearTimeout(hardTimeout);
+      try {
+        if (!win.isDestroyed()) win.destroy();
+      } catch {
+        // ignore
+      }
+      fn();
+    };
+
+    const readHtml = async (): Promise<string> => {
+      if (win.isDestroyed()) return '';
+      return (await win.webContents.executeJavaScript(
+        'document.documentElement.outerHTML'
+      )) as string;
+    };
+
+    const pollTimer = setInterval(() => {
+      void readHtml()
+        .then((html) => {
+          if (html && html.includes('magnet:?')) {
+            settle(() => resolve(html));
+          }
+        })
+        .catch(() => undefined);
+    }, 400);
+
+    const hardTimeout = setTimeout(() => {
+      void readHtml()
+        .then((html) => {
+          if (!html) {
+            settle(() =>
+              reject(new Error('UIndex browser fallback timed out with an empty page.'))
+            );
+            return;
+          }
+          if (isCloudflareChallenge(200, html) && !html.includes('magnet:?')) {
+            settle(() =>
+              reject(
+                new Error(
+                  'UIndex Cloudflare challenge did not clear. Keep Apibay enabled or try again later.'
+                )
+              )
+            );
+            return;
+          }
+          settle(() => resolve(html));
+        })
+        .catch((err) =>
+          settle(() => reject(err instanceof Error ? err : new Error(String(err))))
+        );
+    }, timeoutMs);
+
+    // CF Turnstile iframes often abort (ERR_ABORTED / -3); ignore non-main-frame noise.
+    win.webContents.on(
+      'did-fail-load',
+      (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+        if (!isMainFrame) return;
+        if (errorCode === -3) return;
+        settle(() =>
+          reject(new Error(`UIndex page failed to load (${errorCode}): ${errorDescription}`))
+        );
+      }
+    );
+
+    void win
+      .loadURL(url, {
+        userAgent: UINDEX_UA,
+        httpReferrer: 'https://uindex.org/',
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/ERR_ABORTED|-3/i.test(msg)) return;
+        settle(() => reject(err instanceof Error ? err : new Error(msg)));
+      });
+  });
+}
+
+async function loadUindexHtml(url: string): Promise<string> {
+  try {
+    const { status, html } = await fetchUindexHtmlViaSession(url);
+    if (!isCloudflareChallenge(status, html)) {
+      if (status >= 400) throw new Error(`UIndex HTTP ${status}`);
+      if (!html || html.length < 200) throw new Error('UIndex returned an empty page.');
+      return html;
+    }
+  } catch (err) {
+    if (err instanceof Error && /^UIndex HTTP \d+/.test(err.message)) throw err;
+    if (err instanceof Error && err.message.includes('empty page')) throw err;
+    // Network/abort/CF → BrowserWindow fallback below
+  }
+  return fetchUindexHtmlViaBrowserWindow(url);
+}
+
+async function searchUindex(query: string): Promise<SearchResult[]> {
+  // TV category c=2 — also try uncategorized if that returns empty after a real page load
+  const withCat = `https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=2`;
+  const noCat = `https://uindex.org/search.php?search=${encodeURIComponent(query)}`;
+
+  const html = await loadUindexHtml(withCat);
+  if (isCloudflareChallenge(200, html) && !html.includes('magnet:?')) {
+    throw new Error(
+      'UIndex is temporarily blocked by Cloudflare bot protection. Results from other sources are still shown when available.'
+    );
+  }
+  let results = parseUindexHtml(html);
+  if (results.length === 0) {
+    try {
+      const htmlAll = await loadUindexHtml(noCat);
+      if (!(isCloudflareChallenge(200, htmlAll) && !htmlAll.includes('magnet:?'))) {
+        results = parseUindexHtml(htmlAll);
+      }
+    } catch {
+      // Keep empty results from the TV-category attempt
+    }
+  }
+  return results;
 }
 
 async function searchJackett(settings: AppSettings, query: string): Promise<SearchResult[]> {
@@ -395,10 +529,8 @@ export async function searchEpisodeTorrents(
 
   const merged = mergeByInfoHash(groups);
   const ranked = rankResults(merged, preferred);
-  const error =
-    ranked.length === 0 && errors.length > 0
-      ? errors.join(' | ')
-      : undefined;
+  // Surface partial source failures (e.g. UIndex Cloudflare) without wiping other results
+  const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
   return { results: ranked, query, error };
 }
