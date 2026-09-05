@@ -1,21 +1,26 @@
-# Torrent — TV Show Manager
+# Torrent – TV Show Manager
 
-Desktop TV show / episode manager (Electron + Vite + React). **v1.2.0**
+Desktop TV show / episode manager (Electron + Vite + React). **v1.3.0**
 
 ## Free by default
-- Metadata: TVMaze — no API key
-- Search: Apibay — no key; optional Jackett
+- Metadata: **TVMaze** — show info and episode air dates, no API key
+- Torrent sources (enable any combination in Settings):
+  - **Apibay** — public Pirate Bay JSON API miror; no key
+  - **UIndex** — public torrent index at uindex.org; no key
+  - **Jackett** — optional self-hosted meta-search if you run Jackett yourself
+
+Searches query **all enabled** sources, merge/dedupe by infohash, and rank by preferred resolution + seeders.
 
 ## Features
 - Manual episode status in store
 - Add-show older episode modal
 - Auto-download skips ignored
 - Telegram and startup
-- Auto update from GitHub
+- Auto update from GitHub Releases (install once from the NSIS Setup.exe)
 
 ## Setup
 
-*** npm install && npm run dev
+    npm install && npm run dev
 
 ## Publishing a Release
 

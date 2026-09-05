@@ -36,8 +36,26 @@ export function episodeKey(showId: number, season: number, episode: number): str
   return `${showId}:${season}:${episode}`;
 }
 
+function migrateTorrentSources(raw: Partial<AppSettings>): AppSettings['torrentSources'] {
+  if (raw.torrentSources && typeof raw.torrentSources === 'object') {
+    return {
+      apibay: raw.torrentSources.apibay ?? true,
+      uindex: raw.torrentSources.uindex ?? true,
+      jackett: !!raw.torrentSources.jackett,
+    };
+  }
+  // Legacy single-provider dropdown → multi-source defaults
+  if (raw.searchProvider === 'jackett') {
+    return { apibay: true, uindex: true, jackett: true };
+  }
+  return { ...DEFAULT_SETTINGS.torrentSources };
+}
+
 export function getSettings(): AppSettings {
-  return { ...DEFAULT_SETTINGS, ...store.get('settings') };
+  const raw = store.get('settings') || {};
+  const merged: AppSettings = { ...DEFAULT_SETTINGS, ...raw };
+  merged.torrentSources = migrateTorrentSources(raw as Partial<AppSettings>);
+  return merged;
 }
 
 export function setSettings(partial: Partial<AppSettings>): AppSettings {

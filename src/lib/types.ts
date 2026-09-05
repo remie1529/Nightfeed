@@ -12,12 +12,22 @@ export type EpisodeOverrideStatus = 'upcoming' | 'downloaded' | 'missing' | 'ign
 
 export type AddShowPolicy = 'all' | 'future' | 'manual';
 
+export type TorrentSourceId = 'apibay' | 'uindex' | 'jackett';
+
+export interface TorrentSources {
+  apibay: boolean;
+  uindex: boolean;
+  jackett: boolean;
+}
+
 export interface AppSettings {
   tmdbApiKey: string;
   libraryRoot: string;
   defaultResolution: Resolution;
   refreshIntervalMinutes: number;
-  searchProvider: 'apibay' | 'jackett';
+  /** @deprecated Use torrentSources */
+  searchProvider?: 'apibay' | 'jackett';
+  torrentSources: TorrentSources;
   jackettUrl: string;
   jackettApiKey: string;
   autoDownload: boolean;
