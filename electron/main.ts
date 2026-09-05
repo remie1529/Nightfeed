@@ -149,14 +149,14 @@ async function autoDownloadForShows(shows: Show[]): Promise<number> {
           continue;
         }
         try {
-          const { results, error } = await searchEpisodeTorrents(
+          const { results } = await searchEpisodeTorrents(
             settings,
             show.name,
             ep.seasonNumber,
             ep.episodeNumber,
             preferred
           );
-          if (error || !results.length) {
+          if (!results.length) {
             continue;
           }
           const best = results[0];
@@ -528,7 +528,16 @@ function registerIpc() {
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) throw new Error('Show not found');
     const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
-    return searchEpisodeTorrents(settings, show.name, season, episode, preferred);
+    const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred);
+    if (res.error && /cloudflare/i.test(res.error)) {
+      notify(
+        res.results.length
+          ? 'UIndex blocked by Cloudflare — showing other sources'
+          : 'UIndex blocked by Cloudflare — try again later',
+        'warn'
+      );
+    }
+    return res;
   });
 
   ipcMain.handle(
