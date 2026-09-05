@@ -12,11 +12,26 @@ export type EpisodeOverrideStatus = 'upcoming' | 'downloaded' | 'missing' | 'ign
 
 export type AddShowPolicy = 'all' | 'future' | 'manual';
 
-export type TorrentSourceId = 'apibay' | 'uindex' | 'jackett';
+export type TorrentSourceId =
+  | 'apibay'
+  | 'knaben'
+  | 'yourbittorrent'
+  | 'torrentscsv'
+  | 'eztv'
+  | 'animetosho'
+  | 'nyaa'
+  | 'limetorrents'
+  | 'jackett';
 
 export interface TorrentSources {
   apibay: boolean;
-  uindex: boolean;
+  knaben: boolean;
+  yourbittorrent: boolean;
+  torrentscsv: boolean;
+  eztv: boolean;
+  animetosho: boolean;
+  nyaa: boolean;
+  limetorrents: boolean;
   jackett: boolean;
 }
 
@@ -38,8 +53,6 @@ export interface AppSettings {
   telegramAllowedChatIds: string;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
-  flaresolverrUrl: string;
-  useFlareSolverr: boolean;
 }
 
 export interface Episode {
@@ -72,6 +85,7 @@ export interface Show {
   backdropPath: string | null;
   firstAirDate: string | null;
   status: string;
+  imdbId?: string | null;
   preferredResolution?: Resolution;
   libraryPath?: string;
   seasons: Season[];
@@ -136,3 +150,15 @@ export interface MazeSearchItem {
   firstAirDate: string | null;
   status: string;
 }
+
+export const DEFAULT_TORRENT_SOURCES: TorrentSources = {
+  apibay: true,
+  knaben: true,
+  yourbittorrent: true,
+  torrentscsv: true,
+  eztv: true,
+  animetosho: true,
+  nyaa: true,
+  limetorrents: true,
+  jackett: false,
+};

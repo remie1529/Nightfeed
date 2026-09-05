@@ -64,6 +64,7 @@ interface MazeShow {
   status: string;
   premiered: string | null;
   image: { medium: string | null; original: string | null } | null;
+  externals?: { tvrage?: number | null; thetvdb?: number | null; imdb?: string | null } | null;
 }
 
 interface MazeEpisode {
@@ -115,6 +116,7 @@ function emptyShowShell(
     backdropPath: null,
     firstAirDate: null,
     status: '',
+    imdbId: existing?.imdbId ?? null,
     libraryPath: existing?.libraryPath,
     seasons: [],
     addedAt: existing?.addedAt || new Date().toISOString(),
@@ -140,6 +142,7 @@ export async function fetchShowDetail(
   shell.backdropPath = detail.image?.original || detail.image?.medium || null;
   shell.firstAirDate = detail.premiered;
   shell.status = detail.status || '';
+  shell.imdbId = detail.externals?.imdb || existing?.imdbId || null;
 
   const overrides = getEpisodeOverrides();
 
