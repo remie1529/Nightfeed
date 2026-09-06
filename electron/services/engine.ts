@@ -13,7 +13,7 @@ const VALID_VIDEO_EXTS = new Set(['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.ts',
 /** Also accepted when selecting the largest video from a torrent (legacy extras). */
 const SELECT_VIDEO_EXTS = new Set([...VALID_VIDEO_EXTS, '.webm']);
 
-const PROGRESS_THROTTLE_MS = 350;
+const PROGRESS_THROTTLE_MS = 1000;
 
 /** Extra public trackers appended on add for better peer discovery. */
 export const DEFAULT_ANNOUNCE = [

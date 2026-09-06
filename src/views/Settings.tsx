@@ -57,10 +57,13 @@ export default function SettingsView() {
   const [threadInfo, setThreadInfo] = useState<{
     searchWorkers?: number;
     searchUsingWorkers?: boolean;
+    metadataWorker?: boolean;
     cpus?: number;
     torrentMode?: string;
     torrentDetail?: string;
   } | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
 
   const refreshTg = async () => {
     try {
@@ -114,6 +117,66 @@ export default function SettingsView() {
   const pickMovieRoot = async () => {
     const folder = await window.torrentAPI.pickLibraryFolder();
     if (folder) setLocal({ ...settings, movieLibraryRoot: folder });
+  };
+
+  const exportBackup = async () => {
+    setBackupBusy(true);
+    setBackupMsg(null);
+    setError(null);
+    try {
+      const res = (await window.torrentAPI.exportBackup()) as {
+        ok?: boolean;
+        canceled?: boolean;
+        path?: string;
+      };
+      if (res?.canceled) {
+        setBackupMsg(null);
+        return;
+      }
+      if (res?.ok) setBackupMsg(`Backup exported to ${res.path}`);
+      else setBackupMsg('Export failed');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const importBackup = async () => {
+    const ok = window.confirm(
+      'Replace ALL Nightfeed data with this backup?\n\n' +
+        'This overwrites settings, TV shows, movies, episode overrides, and download queue state.\n' +
+        'The backup file may contain secrets (GitHub token, Telegram token, FTP password).\n\n' +
+        'This cannot be undone unless you export a backup first.'
+    );
+    if (!ok) return;
+    setBackupBusy(true);
+    setBackupMsg(null);
+    setError(null);
+    try {
+      const res = (await window.torrentAPI.importBackup()) as {
+        ok?: boolean;
+        canceled?: boolean;
+        shows?: number;
+        movies?: number;
+        path?: string;
+      };
+      if (res?.canceled) return;
+      if (res?.ok) {
+        setBackupMsg(
+          `Backup imported (${res.shows ?? 0} shows, ${res.movies ?? 0} movies). Reloading settings…`
+        );
+        const s = (await window.torrentAPI.getSettings()) as AppSettings;
+        setLocal({ ...empty, ...s, torrentSources: { ...defaultSources, ...(s.torrentSources || {}) } });
+        await refreshTg();
+      } else {
+        setBackupMsg('Import failed');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBackupBusy(false);
+    }
   };
 
   const setSource = (id: keyof TorrentSources, checked: boolean) => {
@@ -319,7 +382,7 @@ export default function SettingsView() {
             WebTorrent peer I/O uses many connections; piece hashing and peer churn run in an
             Electron <code>utilityProcess</code> when available (separate from the UI process).
             Torrent search merge/dedupe/ranking runs on a <code>worker_threads</code> pool
-            (up to 4 workers / CPU cores). Progress IPC is throttled.
+            (up to 4 workers / CPU cores). Progress IPC is throttled (~1s); download store writes are debounced so Library search stays responsive.
           </div>
         </div>
 
@@ -611,6 +674,26 @@ export default function SettingsView() {
         </div>
       </div>
 
+      <div className="settings-section">Backup</div>
+
+      <div className="field" style={{ maxWidth: 760 }}>
+        <label>Export / import library &amp; settings</label>
+        <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" onClick={() => void exportBackup()} disabled={backupBusy}>
+            {backupBusy ? 'Working…' : 'Export backup…'}
+          </button>
+          <button type="button" className="secondary" onClick={() => void importBackup()} disabled={backupBusy}>
+            Import backup…
+          </button>
+        </div>
+        <div className="hint">
+          Exports a JSON file with settings, TV shows, movies, episode overrides, and download queue.
+          The file includes secrets (GitHub PAT, Telegram bot token, FTP password) so you can restore
+          everything — store it privately. Import replaces current data after confirmation.
+        </div>
+        {backupMsg && <div className="hint" style={{ color: 'var(--ok, #6c6)' }}>{backupMsg}</div>}
+      </div>
+
       <div
         style={{
           marginTop: '2rem',
@@ -624,15 +707,18 @@ export default function SettingsView() {
         <div style={{ fontWeight: 650, marginBottom: 6 }}>About Nightfeed</div>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
           Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via IMDb.com scrape (no API key).
-          Multi-core CPU: torrent search (fetch + merge/dedupe by infohash + resolution ranking) runs on a
-          Node <code>worker_threads</code> pool (size = min(4, CPU cores)). WebTorrent (piece verification /
-          hashing and peer churn) prefers an Electron <code>utilityProcess</code> so it does not freeze the
-          BrowserWindow event loop; falls back to the main process if utilityProcess cannot start.
-          Progress updates are throttled; library renames are async. Prefer legal sources and content you have rights to download.
+          Torrent search and library zoekfunctie (TVMaze / IMDb) run on <code>worker_threads</code>.
+          WebTorrent prefers an Electron <code>utilityProcess</code>. Progress IPC is throttled; download
+          persistence is debounced so search stays responsive during active downloads.
+          Prefer legal sources and content you have rights to download.
           {threadInfo && (
             <div style={{ marginTop: 8 }}>
-              Runtime: search workers {threadInfo.searchUsingWorkers ? `on (${threadInfo.searchWorkers}/${threadInfo.cpus} CPUs)` : 'fallback in-process'};
-              torrent engine {threadInfo.torrentMode || '—'}.
+              Runtime: torrent search workers{' '}
+              {threadInfo.searchUsingWorkers
+                ? `on (${threadInfo.searchWorkers}/${threadInfo.cpus} CPUs)`
+                : 'fallback in-process'}
+              ; metadata search {threadInfo.metadataWorker ? 'worker on' : 'in-process'}; torrent engine{' '}
+              {threadInfo.torrentMode || '—'}.
             </div>
           )}
         </div>

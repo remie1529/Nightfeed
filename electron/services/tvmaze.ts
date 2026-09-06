@@ -2,6 +2,8 @@ import { Episode, EpisodeOverrideStatus, EpisodeStatus, Season, Show } from '../
 import { findLocalEpisode } from './paths';
 import { episodeKey, getEpisodeOverrides } from './store';
 
+export { searchShows, type MazeSearchItem } from './tvmaze-search';
+
 const BASE = 'https://api.tvmaze.com';
 
 function stripHtml(html: string | null | undefined): string {
@@ -47,16 +49,6 @@ async function mazeFetch<T>(endpoint: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export interface MazeSearchItem {
-  id: number;
-  name: string;
-  overview: string;
-  posterUrl: string | null;
-  backdropUrl: string | null;
-  firstAirDate: string | null;
-  status: string;
-}
-
 interface MazeShow {
   id: number;
   name: string;
@@ -84,22 +76,6 @@ interface MazeSeason {
   episodeOrder: number | null;
   premiereDate: string | null;
   image: { medium: string | null; original: string | null } | null;
-}
-
-export async function searchShows(query: string): Promise<MazeSearchItem[]> {
-  if (!query.trim()) return [];
-  const data = await mazeFetch<Array<{ show: MazeShow }>>(
-    `/search/shows?q=${encodeURIComponent(query.trim())}`
-  );
-  return (data || []).map(({ show }) => ({
-    id: show.id,
-    name: show.name,
-    overview: stripHtml(show.summary),
-    posterUrl: show.image?.medium || show.image?.original || null,
-    backdropUrl: show.image?.original || show.image?.medium || null,
-    firstAirDate: show.premiered,
-    status: show.status || '',
-  }));
 }
 
 function emptyShowShell(

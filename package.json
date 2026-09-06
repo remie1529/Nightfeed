@@ -1,7 +1,7 @@
 {
   "name": "tv-show-manager",
   "productName": "Nightfeed",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "description": "Desktop TV show and movie manager",
   "main": "dist-electron/main.js",
   "author": "Remco Groothoff",
@@ -78,6 +78,7 @@
     "asarUnpack": [
       "dist-electron/search-worker.js",
       "dist-electron/torrent-utility.js",
+      "dist-electron/metadata-worker.js",
       "**/node_modules/webtorrent/**",
       "**/node_modules/@webtorrent/**"
     ]
