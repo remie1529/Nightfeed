@@ -38,7 +38,8 @@ export interface TorrentSources {
 }
 
 export interface AppSettings {
-  tmdbApiKey: string;
+  /** @deprecated Movies use Wikidata (no key). Kept for older settings files. */
+  tmdbApiKey?: string;
   libraryRoot: string;
   movieLibraryRoot: string;
   defaultResolution: Resolution;

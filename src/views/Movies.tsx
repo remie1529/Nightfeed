@@ -16,11 +16,8 @@ export default function Movies({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
-  const [hasKey, setHasKey] = useState(true);
 
   const load = async () => {
-    const settings = await window.torrentAPI.getSettings();
-    setHasKey(!!((settings as { tmdbApiKey?: string }).tmdbApiKey || '').trim());
     const list = (await window.torrentAPI.getMovies()) as Movie[];
     setMovies(list);
   };
@@ -78,38 +75,25 @@ export default function Movies({
 
       {error && <div className="error-banner">{error}</div>}
 
-      {!hasKey ? (
-        <div className="empty-state" style={{ marginBottom: '1.5rem' }}>
-          <h2>Add a free TMDB API key in Settings to search movies</h2>
-          <p>
-            Movie metadata uses The Movie Database (TMDB). Sign up free at{' '}
-            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">
-              themoviedb.org/settings/api
-            </a>
-            , paste the key in Settings, then come back here. TV shows still use TVMaze and do not need a key.
-          </p>
-        </div>
-      ) : (
-        <div className="toolbar" style={{ marginBottom: '1.25rem' }}>
-          <input
-            style={{ maxWidth: 360 }}
-            placeholder="Search TMDB to add a movie…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && doSearch()}
-          />
-          <button className="primary" onClick={doSearch} disabled={searching || !query.trim()}>
-            {searching ? 'Searching…' : 'Search'}
-          </button>
-          <div style={{ flex: 1 }} />
-          <input
-            style={{ maxWidth: 220 }}
-            placeholder="Filter movies…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        </div>
-      )}
+      <div className="toolbar" style={{ marginBottom: '1.25rem' }}>
+        <input
+          style={{ maxWidth: 360 }}
+          placeholder="Search Wikidata to add a movie…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && doSearch()}
+        />
+        <button className="primary" onClick={doSearch} disabled={searching || !query.trim()}>
+          {searching ? 'Searching…' : 'Search'}
+        </button>
+        <div style={{ flex: 1 }} />
+        <input
+          style={{ maxWidth: 220 }}
+          placeholder="Filter movies…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      </div>
 
       {results.length > 0 && (
         <div className="table-wrap" style={{ marginBottom: '1.5rem' }}>
@@ -160,9 +144,7 @@ export default function Movies({
         <div className="empty-state">
           <h2>No movies yet</h2>
           <p>
-            {hasKey
-              ? 'Search TMDB above to add a movie. Files save under your movie library folder in Settings.'
-              : 'Configure a TMDB API key and movie library folder in Settings first.'}
+            Search Wikidata above to add a movie. Set a movie library folder in Settings first (separate from TV).
           </p>
         </div>
       ) : (

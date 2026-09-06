@@ -39,8 +39,8 @@ export interface TorrentSources {
 }
 
 export interface AppSettings {
-  /** TMDB API key — used for movie metadata only. TV uses TVMaze (no key). */
-  tmdbApiKey: string;
+  /** @deprecated Movies use Wikidata (no key). Kept for older settings files. */
+  tmdbApiKey?: string;
   libraryRoot: string;
   /** Separate root for movies — never mix with TV libraryRoot. */
   movieLibraryRoot: string;

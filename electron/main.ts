@@ -25,7 +25,7 @@ import {
   applyMovieLocalStatus,
   fetchMovieDetail,
   searchMovies,
-} from './services/tmdb';
+} from './services/wikidata';
 import { downloadEngine } from './services/engine';
 import { telegramBot } from './services/telegram';
 import {
@@ -628,8 +628,7 @@ function registerIpc() {
 
 
   ipcMain.handle('tmdb:searchMovies', async (_e, query: string) => {
-    const settings = getSettings();
-    return searchMovies(settings.tmdbApiKey, query);
+    return searchMovies(query);
   });
 
   ipcMain.handle('movies:list', () => {
@@ -644,15 +643,11 @@ function registerIpc() {
 
   ipcMain.handle('movies:add', async (_e, tmdbId: number) => {
     const settings = getSettings();
-    if (!(settings.tmdbApiKey || '').trim()) {
-      throw new Error('Add a free TMDB API key in Settings to search movies');
-    }
     if (!(settings.movieLibraryRoot || '').trim()) {
       throw new Error('Set a movie library folder in Settings before adding movies');
     }
     const existing = getMovies().find((m) => m.tmdbId === tmdbId);
     const movie = await fetchMovieDetail(
-      settings.tmdbApiKey,
       tmdbId,
       settings.movieLibraryRoot,
       existing,
@@ -683,18 +678,12 @@ function registerIpc() {
     const settings = getSettings();
     const existing = getMovies().find((m) => m.tmdbId === tmdbId);
     if (!existing) throw new Error('Movie not found');
-    let movie: Movie;
-    if ((settings.tmdbApiKey || '').trim()) {
-      movie = await fetchMovieDetail(
-        settings.tmdbApiKey,
-        tmdbId,
-        settings.movieLibraryRoot,
-        existing,
-        downloadingMovieIds()
-      );
-    } else {
-      movie = withMovieLocalStatus(existing);
-    }
+    const movie = await fetchMovieDetail(
+      tmdbId,
+      settings.movieLibraryRoot,
+      existing,
+      downloadingMovieIds()
+    );
     upsertMovie(movie);
     mainWindow?.webContents.send('movies:changed');
     return movie;
