@@ -63,7 +63,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     backgroundColor: '#121212',
-    title: 'Torrent',
+    title: 'Nightfeed',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -408,7 +408,7 @@ async function addShowWithPolicy(mazeId: number, policy: AddShowPolicy = 'manual
 const UPDATE_FEED = {
   provider: 'github' as const,
   owner: 'remie1529',
-  repo: 'TV-Show-Manager',
+  repo: 'Nightfeed',
 };
 
 /** Configure electron-updater for private GitHub when a PAT is set. Never log the token. */
@@ -508,7 +508,7 @@ function wireTelegram() {
       await reply(
         chatId,
         [
-          'Torrent TV Manager bot',
+          'Nightfeed bot',
           '/status — library + active downloads',
           '/shows — tracked shows',
           '/movies — tracked movies',

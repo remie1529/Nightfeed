@@ -70,7 +70,7 @@ export default function App() {
     <div className="app-shell">
       <nav className="nav">
         <div className="brand">
-          <div className="brand-name">Torrent</div>
+          <div className="brand-name">Nightfeed</div>
           <div className="brand-sub">TV & Movies</div>
         </div>
         <button

@@ -1,4 +1,4 @@
-# Status v1.5.3
+# Status v1.5.4
 
 ## Works
 - Multi-core CPU: torrent search (fetch + merge/dedupe by infohash + resolution ranking) on `worker_threads` pool (size = min(4, CPUs))
@@ -14,4 +14,4 @@
 
 ## Artifacts
 - /workspace/torrent-tv-manager
-- Release v1.5.3 on remie1529/TV-Show-Manager
+- Release v1.5.4 on remie1529/Nightfeed

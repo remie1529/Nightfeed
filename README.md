@@ -1,6 +1,6 @@
-# Torrent – TV Show & Movie Manager
+# Nightfeed – TV Show & Movie Manager
 
-Desktop TV show / movie manager (Electron + Vite + React). **v1.5.3**
+Desktop TV show / movie manager (Electron + Vite + React). **v1.5.4**
 
 ## Free by default
 - **TV metadata:** **TVMaze** — show info, episode air dates, and IMDb ids (for EZTV). No API key.
