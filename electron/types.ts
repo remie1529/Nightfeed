@@ -84,8 +84,14 @@ export interface AppSettings {
   telegramEnabled: boolean;
   /** Bot token from @BotFather — never log this. */
   telegramBotToken: string;
-  /** Comma-separated allowed chat ids (only these can control the bot). */
+  /**
+   * @deprecated Prefer telegramAdminChatIds. Kept for migration from older installs.
+   */
   telegramAllowedChatIds: string;
+  /** Comma-separated admin chat ids (approvals + full bot commands). */
+  telegramAdminChatIds: string;
+  /** Comma-separated request-only chat ids (can submit movie/TV requests). */
+  telegramRequestChatIds: string;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
   /** Max WebTorrent peer connections (default 150). */
@@ -232,6 +238,30 @@ export interface DownloadItem {
   candidates?: TorrentCandidate[];
   /** Infohashes already attempted for this episode/movie. */
   triedInfoHashes?: string[];
+  /** Telegram requester to notify when this download finishes. */
+  notifyChatId?: number;
+  /** Pending/approved Telegram request id that started this download. */
+  telegramRequestId?: string;
+}
+
+export type TelegramRequestStatus = 'pending' | 'approved' | 'denied';
+
+export type TelegramRequestMediaType = 'show' | 'movie';
+
+export interface TelegramRequest {
+  id: string;
+  mediaType: TelegramRequestMediaType;
+  /** TVMaze show id or IMDb numeric title id (same as Show/Movie.tmdbId). */
+  mediaId: number;
+  title: string;
+  year?: number | null;
+  overview?: string;
+  requesterChatId: number;
+  requesterName?: string;
+  status: TelegramRequestStatus;
+  createdAt: string;
+  resolvedAt?: string;
+  resolvedByChatId?: number;
 }
 
 export interface TelegramStatus {
@@ -281,6 +311,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramEnabled: false,
   telegramBotToken: '',
   telegramAllowedChatIds: '',
+  telegramAdminChatIds: '',
+  telegramRequestChatIds: '',
   githubToken: '',
   maxConnections: 200,
   maxDownloadSpeedKBps: 0,

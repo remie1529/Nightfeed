@@ -25,6 +25,8 @@ type InMsg =
         episodeTitle: string;
         candidates?: TorrentCandidate[];
         triedInfoHashes?: string[];
+        notifyChatId?: number;
+        telegramRequestId?: string;
       };
     }
   | {
@@ -36,6 +38,8 @@ type InMsg =
         movieLibraryRoot: string;
         candidates?: TorrentCandidate[];
         triedInfoHashes?: string[];
+        notifyChatId?: number;
+        telegramRequestId?: string;
       };
     }
   | { type: 'pause'; requestId: number; id: string }

@@ -1,3 +1,7 @@
+## Nightfeed status
+
+**Current:** v1.5.7 — Telegram request workflow (Admin / Requests chat IDs, approve/deny, download notify).
+
 # Status v1.5.6
 
 ## Works

@@ -61,7 +61,10 @@ export interface AppSettings {
   launchOnStartup: boolean;
   telegramEnabled: boolean;
   telegramBotToken: string;
+  /** @deprecated Prefer telegramAdminChatIds */
   telegramAllowedChatIds: string;
+  telegramAdminChatIds: string;
+  telegramRequestChatIds: string;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
   /** Max WebTorrent peer connections (default 150). */
@@ -192,6 +195,26 @@ export interface DownloadItem {
   movieId?: number;
   candidates?: TorrentCandidate[];
   triedInfoHashes?: string[];
+  notifyChatId?: number;
+  telegramRequestId?: string;
+}
+
+export type TelegramRequestStatus = 'pending' | 'approved' | 'denied';
+export type TelegramRequestMediaType = 'show' | 'movie';
+
+export interface TelegramRequest {
+  id: string;
+  mediaType: TelegramRequestMediaType;
+  mediaId: number;
+  title: string;
+  year?: number | null;
+  overview?: string;
+  requesterChatId: number;
+  requesterName?: string;
+  status: TelegramRequestStatus;
+  createdAt: string;
+  resolvedAt?: string;
+  resolvedByChatId?: number;
 }
 
 export interface TelegramStatus {
