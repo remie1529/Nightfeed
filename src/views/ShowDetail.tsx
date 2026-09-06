@@ -137,6 +137,11 @@ export default function ShowDetail({
         episode: searchEp.episodeNumber,
         episodeTitle: searchEp.name,
         magnet: result.magnet,
+        candidates: results.map((r) => ({
+          magnet: r.magnet,
+          infoHash: r.infoHash,
+          title: r.title,
+        })),
       });
       setSearchEp(null);
       await refresh();

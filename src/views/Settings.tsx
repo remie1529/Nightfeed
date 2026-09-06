@@ -33,9 +33,15 @@ const empty: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
-  maxConnections: 150,
+  maxConnections: 200,
   maxDownloadSpeedKBps: 0,
   maxUploadSpeedKBps: 0,
+  ftpEnabled: false,
+  ftpHost: '',
+  ftpPort: 21,
+  ftpUser: '',
+  ftpPassword: '',
+  ftpRemoteBasePath: '',
 };
 
 export default function SettingsView() {
@@ -188,6 +194,7 @@ export default function SettingsView() {
           </div>
           <div className="hint">
             Episodes save as {'{Show}/Season XX/{Show} - SxxExx - Title.ext'}. Existing Season 01 / S01 folders are reused.
+            Supports mapped drives and UNC paths (e.g. \server\share\TV) — type the path or Browse on Windows.
           </div>
         </div>
 
@@ -202,6 +209,7 @@ export default function SettingsView() {
           </div>
           <div className="hint">
             Separate from TV. Movies save as {'{Title} ({Year})/{Title} ({Year}).ext'} under this folder only.
+            Mapped drives and UNC (\\server\share\Movies) are supported via Browse or typed path.
           </div>
         </div>
 
@@ -290,17 +298,18 @@ export default function SettingsView() {
             type="number"
             min={10}
             max={500}
-            value={settings.maxConnections ?? 150}
+            value={settings.maxConnections ?? 200}
             onChange={(e) =>
               setLocal({
                 ...settings,
-                maxConnections: Math.max(10, parseInt(e.target.value || '150', 10) || 150),
+                maxConnections: Math.max(10, parseInt(e.target.value || '200', 10) || 200),
               })
             }
           />
           <div className="hint">
-            Higher values can improve throughput when many peers are available. Default 150.
-            WebTorrent (built-in) is often slower than qBittorrent; unlimited = 0.
+            Higher values can improve throughput when many peers are available. Default 200.
+            Downloads use Node/WebTorrent with multi-connection peer I/O; the UI runs on one thread
+            (progress updates are throttled to reduce freezes).
           </div>
         </div>
 
@@ -335,6 +344,81 @@ export default function SettingsView() {
           />
           <div className="hint">0 = unlimited. Applied via WebTorrent client.throttleUpload (bytes/s).</div>
         </div>
+
+        <div className="settings-section">FTP upload (optional)</div>
+
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.ftpEnabled}
+              onChange={(e) => setLocal({ ...settings, ftpEnabled: e.target.checked })}
+            />
+            <span>Upload finished files to FTP</span>
+          </label>
+          <div className="hint">
+            After a valid video is renamed into the library, upload a copy to your FTP server.
+            Local success is kept even if FTP fails. Password is stored locally and never logged.
+          </div>
+        </div>
+
+        {settings.ftpEnabled && (
+          <>
+            <div className="field">
+              <label>FTP host</label>
+              <input
+                value={settings.ftpHost || ''}
+                onChange={(e) => setLocal({ ...settings, ftpHost: e.target.value })}
+                placeholder="ftp.example.com"
+              />
+            </div>
+            <div className="field">
+              <label>FTP port</label>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={settings.ftpPort ?? 21}
+                onChange={(e) =>
+                  setLocal({
+                    ...settings,
+                    ftpPort: Math.max(1, parseInt(e.target.value || '21', 10) || 21),
+                  })
+                }
+              />
+            </div>
+            <div className="field">
+              <label>FTP username</label>
+              <input
+                value={settings.ftpUser || ''}
+                onChange={(e) => setLocal({ ...settings, ftpUser: e.target.value })}
+                autoComplete="off"
+              />
+            </div>
+            <div className="field">
+              <label>FTP password</label>
+              <input
+                type="password"
+                autoComplete="off"
+                value={settings.ftpPassword || ''}
+                onChange={(e) => setLocal({ ...settings, ftpPassword: e.target.value })}
+              />
+              <div className="hint">Never logged. Stored in local electron-store only.</div>
+            </div>
+            <div className="field">
+              <label>Remote base path</label>
+              <input
+                value={settings.ftpRemoteBasePath || ''}
+                onChange={(e) => setLocal({ ...settings, ftpRemoteBasePath: e.target.value })}
+                placeholder="/media/TV or /media/Movies"
+              />
+              <div className="hint">
+                One base directory for finished files (TV and/or movies). File is uploaded as{' '}
+                {'{base}/{filename}'}.
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="settings-section">Startup</div>
 
@@ -530,7 +614,8 @@ export default function SettingsView() {
         <div style={{ fontWeight: 650, marginBottom: 6 }}>About Torrent</div>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
           Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via free Wikidata (no API key).
-          Prefer legal sources and content you have rights to download.
+          Downloads use Node/WebTorrent (multi-connection); the UI runs on one thread — freezes are reduced by
+          throttling progress updates and using async file moves. Prefer legal sources and content you have rights to download.
         </div>
       </div>
     </div>

@@ -37,6 +37,12 @@ export interface TorrentSources {
   jackett: boolean;
 }
 
+export interface TorrentCandidate {
+  magnet: string;
+  infoHash?: string;
+  title?: string;
+}
+
 export interface AppSettings {
   /** @deprecated Movies use Wikidata (no key). Kept for older settings files. */
   tmdbApiKey?: string;
@@ -64,6 +70,13 @@ export interface AppSettings {
   maxDownloadSpeedKBps: number;
   /** Upload speed cap in KiB/s; 0 = unlimited. */
   maxUploadSpeedKBps: number;
+  ftpEnabled: boolean;
+  ftpHost: string;
+  ftpPort: number;
+  ftpUser: string;
+  /** Never log this value. */
+  ftpPassword: string;
+  ftpRemoteBasePath: string;
 }
 
 export interface Episode {
@@ -152,6 +165,8 @@ export interface DownloadItem {
   magnet: string;
   kind?: 'episode' | 'movie';
   movieId?: number;
+  candidates?: TorrentCandidate[];
+  triedInfoHashes?: string[];
 }
 
 export interface TelegramStatus {
