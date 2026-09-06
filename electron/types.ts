@@ -38,6 +38,24 @@ export interface TorrentSources {
   jackett: boolean;
 }
 
+export interface FtpSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  /** Never log this value. */
+  password: string;
+  /** Remote base directory for finished TV/movie files. */
+  remoteBasePath: string;
+}
+
+/** Ranked magnet candidates for auto-retry after bad payloads (e.g. .exe). */
+export interface TorrentCandidate {
+  magnet: string;
+  infoHash?: string;
+  title?: string;
+}
+
 export interface AppSettings {
   /** @deprecated Movies use Wikidata (no key). Kept for older settings files. */
   tmdbApiKey?: string;
@@ -76,6 +94,15 @@ export interface AppSettings {
   maxDownloadSpeedKBps: number;
   /** Upload speed cap in KiB/s; 0 = unlimited. */
   maxUploadSpeedKBps: number;
+  /** Optional FTP upload of finished library files. */
+  ftpEnabled: boolean;
+  ftpHost: string;
+  ftpPort: number;
+  ftpUser: string;
+  /** Never log this value. */
+  ftpPassword: string;
+  /** Remote base path (TV and/or movies share one base). */
+  ftpRemoteBasePath: string;
 }
 
 export interface Episode {
@@ -170,6 +197,10 @@ export interface DownloadItem {
   /** 'movie' for movie downloads; omitted/episode for TV (backwards compatible). */
   kind?: 'episode' | 'movie';
   movieId?: number;
+  /** Ranked search candidates for .exe auto-retry. */
+  candidates?: TorrentCandidate[];
+  /** Infohashes already attempted for this episode/movie. */
+  triedInfoHashes?: string[];
 }
 
 export interface TelegramStatus {
@@ -220,7 +251,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramBotToken: '',
   telegramAllowedChatIds: '',
   githubToken: '',
-  maxConnections: 150,
+  maxConnections: 200,
   maxDownloadSpeedKBps: 0,
   maxUploadSpeedKBps: 0,
+  ftpEnabled: false,
+  ftpHost: '',
+  ftpPort: 21,
+  ftpUser: '',
+  ftpPassword: '',
+  ftpRemoteBasePath: '',
 };

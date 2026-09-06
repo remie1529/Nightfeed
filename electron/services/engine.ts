@@ -1,13 +1,19 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
-import { DownloadItem, Movie, Show } from '../types';
+import { DownloadItem, Movie, Show, TorrentCandidate } from '../types';
 import { buildEpisodePath, buildMoviePath } from './paths';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const WebTorrent = require('webtorrent') as any;
 
-const VIDEO_EXTS = new Set(['.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.webm']);
+/** Valid playable media extensions (case-insensitive). */
+const VALID_VIDEO_EXTS = new Set(['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.ts', '.mov']);
+/** Also accepted when selecting the largest video from a torrent (legacy extras). */
+const SELECT_VIDEO_EXTS = new Set([...VALID_VIDEO_EXTS, '.webm']);
+
+const PROGRESS_THROTTLE_MS = 350;
 
 /** Extra public trackers appended on add for better peer discovery. */
 export const DEFAULT_ANNOUNCE = [
@@ -28,15 +34,48 @@ export const DEFAULT_ANNOUNCE = [
 ];
 
 function pickVideoFile(files: Array<{ name: string; length: number; path: string }>) {
-  const videos = files.filter((f) => VIDEO_EXTS.has(path.extname(f.name).toLowerCase()));
+  const videos = files.filter((f) => SELECT_VIDEO_EXTS.has(path.extname(f.name).toLowerCase()));
   if (videos.length === 0) return files.sort((a, b) => b.length - a.length)[0];
   return videos.sort((a, b) => b.length - a.length)[0];
+}
+
+function hasValidVideo(files: Array<{ name: string }>): boolean {
+  return files.some((f) => VALID_VIDEO_EXTS.has(path.extname(f.name).toLowerCase()));
+}
+
+/** True when primary file is .exe, or there is no valid video (e.g. exe-only). */
+export function shouldRejectBadPayload(files: Array<{ name: string; length: number; path: string }>): boolean {
+  if (!files.length) return true;
+  if (!hasValidVideo(files)) return true;
+  const best = pickVideoFile(files);
+  if (!best) return true;
+  const ext = path.extname(best.name).toLowerCase();
+  return ext === '.exe' || !VALID_VIDEO_EXTS.has(ext);
 }
 
 function kbpsToBytesPerSec(kbps: number): number {
   // WebTorrent throttle* / downloadLimit use bytes/sec; -1 = unlimited
   if (!kbps || kbps <= 0) return -1;
   return Math.max(1, Math.round(kbps * 1024));
+}
+
+async function moveFileAsync(src: string, dest: string): Promise<void> {
+  try {
+    await fsp.access(dest);
+    await fsp.unlink(dest);
+  } catch {
+    // dest missing — fine
+  }
+  try {
+    await fsp.rename(src, dest);
+  } catch {
+    await fsp.copyFile(src, dest);
+    try {
+      await fsp.unlink(src);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export interface EngineSettings {
@@ -49,9 +88,11 @@ export class DownloadEngine extends EventEmitter {
   private client: any = null;
   private items = new Map<string, DownloadItem>();
   private torrents = new Map<string, any>();
-  private maxConns = 150;
+  private maxConns = 200;
   private maxDownloadSpeedKBps = 0;
   private maxUploadSpeedKBps = 0;
+  private lastProgressEmit = 0;
+  private progressEmitTimer: NodeJS.Timeout | null = null;
 
   /** Apply connection / speed settings. Safe to call before or after client exists. */
   applySettings(settings: EngineSettings): void {
@@ -86,6 +127,38 @@ export class DownloadEngine extends EventEmitter {
       });
     }
     return this.client;
+  }
+
+  /** Throttle progress IPC so the renderer is not flooded every piece. */
+  private emitProgressThrottled(): void {
+    const now = Date.now();
+    const due = now - this.lastProgressEmit >= PROGRESS_THROTTLE_MS;
+    if (due) {
+      this.lastProgressEmit = now;
+      if (this.progressEmitTimer) {
+        clearTimeout(this.progressEmitTimer);
+        this.progressEmitTimer = null;
+      }
+      this.emit('update', this.list());
+      return;
+    }
+    if (!this.progressEmitTimer) {
+      const wait = PROGRESS_THROTTLE_MS - (now - this.lastProgressEmit);
+      this.progressEmitTimer = setTimeout(() => {
+        this.progressEmitTimer = null;
+        this.lastProgressEmit = Date.now();
+        this.emit('update', this.list());
+      }, Math.max(50, wait));
+    }
+  }
+
+  private emitUpdateNow(): void {
+    if (this.progressEmitTimer) {
+      clearTimeout(this.progressEmitTimer);
+      this.progressEmitTimer = null;
+    }
+    this.lastProgressEmit = Date.now();
+    this.emit('update', this.list());
   }
 
   list(): DownloadItem[] {
@@ -152,6 +225,122 @@ export class DownloadEngine extends EventEmitter {
     }
   }
 
+  private async handleRejectExe(id: string, item: DownloadItem, torrent: any): Promise<void> {
+    const tried = new Set((item.triedInfoHashes || []).map((h) => h.toLowerCase()));
+    if (item.infoHash) tried.add(item.infoHash.toLowerCase());
+    const snapshot: DownloadItem = {
+      ...item,
+      status: 'error',
+      error: 'Rejected .exe / non-video payload',
+      triedInfoHashes: Array.from(tried),
+    };
+    // Destroy torrent and delete downloaded files — do NOT mark Downloaded
+    try {
+      torrent.destroy({ destroyStore: true });
+    } catch {
+      try {
+        torrent.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    this.torrents.delete(id);
+    this.items.delete(id);
+    this.emitUpdateNow();
+    this.emit('reject-exe', snapshot);
+  }
+
+  private async finalizeEpisodeDone(
+    id: string,
+    item: DownloadItem,
+    torrent: any,
+    opts: {
+      show: Show;
+      libraryRoot: string;
+      seasonNumber: number;
+      episodeNumber: number;
+      episodeTitle: string;
+    }
+  ): Promise<void> {
+    const files = torrent.files.map((f: any) => ({
+      name: f.name,
+      length: f.length,
+      path: path.join(torrent.path, f.path),
+    }));
+
+    if (shouldRejectBadPayload(files)) {
+      await this.handleRejectExe(id, item, torrent);
+      return;
+    }
+
+    const best = pickVideoFile(files);
+    const ext = path.extname(best.name) || '.mkv';
+    const finalPaths = buildEpisodePath(
+      opts.show,
+      opts.libraryRoot,
+      opts.seasonNumber,
+      opts.episodeNumber,
+      opts.episodeTitle,
+      ext
+    );
+    const src = best.path;
+    const dest = finalPaths.filePath;
+    if (src !== dest) {
+      try {
+        await fsp.access(src);
+        await moveFileAsync(src, dest);
+      } catch {
+        // if move fails, keep original path
+      }
+    }
+    item.progress = 1;
+    item.downloadSpeed = 0;
+    item.status = 'done';
+    item.savePath = dest;
+    const snapshot = { ...item };
+    this.emit('done', snapshot);
+    setImmediate(() => this.remove(id));
+  }
+
+  private async finalizeMovieDone(
+    id: string,
+    item: DownloadItem,
+    torrent: any,
+    opts: { movie: Movie; movieLibraryRoot: string }
+  ): Promise<void> {
+    const files = torrent.files.map((f: any) => ({
+      name: f.name,
+      length: f.length,
+      path: path.join(torrent.path, f.path),
+    }));
+
+    if (shouldRejectBadPayload(files)) {
+      await this.handleRejectExe(id, item, torrent);
+      return;
+    }
+
+    const best = pickVideoFile(files);
+    const ext = path.extname(best.name) || '.mkv';
+    const finalPaths = buildMoviePath(opts.movie, opts.movieLibraryRoot, ext);
+    const src = best.path;
+    const dest = finalPaths.filePath;
+    if (src !== dest) {
+      try {
+        await fsp.access(src);
+        await moveFileAsync(src, dest);
+      } catch {
+        // keep original
+      }
+    }
+    item.progress = 1;
+    item.downloadSpeed = 0;
+    item.status = 'done';
+    item.savePath = dest;
+    const snapshot = { ...item };
+    this.emit('done', snapshot);
+    setImmediate(() => this.remove(id));
+  }
+
   async start(opts: {
     magnet: string;
     show: Show;
@@ -159,6 +348,8 @@ export class DownloadEngine extends EventEmitter {
     seasonNumber: number;
     episodeNumber: number;
     episodeTitle: string;
+    candidates?: TorrentCandidate[];
+    triedInfoHashes?: string[];
   }): Promise<DownloadItem> {
     const client = this.getClient();
     const id = `${opts.show.tmdbId}-S${opts.seasonNumber}E${opts.episodeNumber}-${Date.now()}`;
@@ -189,9 +380,11 @@ export class DownloadEngine extends EventEmitter {
       status: 'queued',
       savePath: provisional.seasonDir,
       magnet: opts.magnet,
+      candidates: opts.candidates,
+      triedInfoHashes: opts.triedInfoHashes ? [...opts.triedInfoHashes] : [],
     };
     this.items.set(id, item);
-    this.emit('update', this.list());
+    this.emitUpdateNow();
 
     return new Promise((resolve, reject) => {
       try {
@@ -202,7 +395,7 @@ export class DownloadEngine extends EventEmitter {
             item.infoHash = t.infoHash;
             item.status = 'downloading';
             item.name = t.name || item.name;
-            this.emit('update', this.list());
+            this.emitUpdateNow();
             resolve(item);
           }
         );
@@ -210,6 +403,15 @@ export class DownloadEngine extends EventEmitter {
         this.torrents.set(id, torrent);
 
         torrent.on('ready', () => {
+          const mapped = (torrent.files || []).map((f: any) => ({
+            name: f.name,
+            length: f.length,
+            path: path.join(torrent.path, f.path),
+          }));
+          if (mapped.length && shouldRejectBadPayload(mapped)) {
+            void this.handleRejectExe(id, item, torrent);
+            return;
+          }
           this.selectVideoOnly(torrent);
         });
 
@@ -219,61 +421,27 @@ export class DownloadEngine extends EventEmitter {
           item.uploadSpeed = torrent.uploadSpeed;
           item.numPeers = torrent.numPeers;
           item.status = 'downloading';
-          this.emit('update', this.list());
+          this.emitProgressThrottled();
         });
 
-        torrent.on('done', async () => {
-          try {
-            const files = torrent.files.map((f: any) => ({
-              name: f.name,
-              length: f.length,
-              path: path.join(torrent.path, f.path),
-            }));
-            const best = pickVideoFile(files);
-            const ext = path.extname(best.name) || '.mkv';
-            const finalPaths = buildEpisodePath(
-              opts.show,
-              opts.libraryRoot,
-              opts.seasonNumber,
-              opts.episodeNumber,
-              opts.episodeTitle,
-              ext
-            );
-            const src = best.path;
-            const dest = finalPaths.filePath;
-            if (src !== dest && fs.existsSync(src)) {
-              try {
-                if (fs.existsSync(dest)) fs.unlinkSync(dest);
-                fs.renameSync(src, dest);
-              } catch {
-                fs.copyFileSync(src, dest);
-              }
-            }
-            item.progress = 1;
-            item.downloadSpeed = 0;
-            item.status = 'done';
-            item.savePath = dest;
-            // Emit done first so main can set override + toast; then remove from queue / stop seeding
-            const snapshot = { ...item };
-            this.emit('done', snapshot);
-            setImmediate(() => this.remove(id));
-          } catch (err) {
+        torrent.on('done', () => {
+          void this.finalizeEpisodeDone(id, item, torrent, opts).catch((err) => {
             item.status = 'error';
             item.error = err instanceof Error ? err.message : String(err);
-            this.emit('update', this.list());
-          }
+            this.emitUpdateNow();
+          });
         });
 
         torrent.on('error', (err: Error) => {
           item.status = 'error';
           item.error = err.message;
-          this.emit('update', this.list());
+          this.emitUpdateNow();
           reject(err);
         });
       } catch (err) {
         item.status = 'error';
         item.error = err instanceof Error ? err.message : String(err);
-        this.emit('update', this.list());
+        this.emitUpdateNow();
         reject(err);
       }
     });
@@ -314,6 +482,8 @@ export class DownloadEngine extends EventEmitter {
     magnet: string;
     movie: Movie;
     movieLibraryRoot: string;
+    candidates?: TorrentCandidate[];
+    triedInfoHashes?: string[];
   }): Promise<DownloadItem> {
     const client = this.getClient();
     const id = `movie-${opts.movie.tmdbId}-${Date.now()}`;
@@ -338,9 +508,11 @@ export class DownloadEngine extends EventEmitter {
       magnet: opts.magnet,
       kind: 'movie',
       movieId: opts.movie.tmdbId,
+      candidates: opts.candidates,
+      triedInfoHashes: opts.triedInfoHashes ? [...opts.triedInfoHashes] : [],
     };
     this.items.set(id, item);
-    this.emit('update', this.list());
+    this.emitUpdateNow();
 
     return new Promise((resolve, reject) => {
       try {
@@ -351,7 +523,7 @@ export class DownloadEngine extends EventEmitter {
             item.infoHash = t.infoHash;
             item.status = 'downloading';
             item.name = t.name || item.name;
-            this.emit('update', this.list());
+            this.emitUpdateNow();
             resolve(item);
           }
         );
@@ -359,6 +531,15 @@ export class DownloadEngine extends EventEmitter {
         this.torrents.set(id, torrent);
 
         torrent.on('ready', () => {
+          const mapped = (torrent.files || []).map((f: any) => ({
+            name: f.name,
+            length: f.length,
+            path: path.join(torrent.path, f.path),
+          }));
+          if (mapped.length && shouldRejectBadPayload(mapped)) {
+            void this.handleRejectExe(id, item, torrent);
+            return;
+          }
           this.selectVideoOnly(torrent);
         });
 
@@ -368,53 +549,27 @@ export class DownloadEngine extends EventEmitter {
           item.uploadSpeed = torrent.uploadSpeed;
           item.numPeers = torrent.numPeers;
           item.status = 'downloading';
-          this.emit('update', this.list());
+          this.emitProgressThrottled();
         });
 
-        torrent.on('done', async () => {
-          try {
-            const files = torrent.files.map((f: any) => ({
-              name: f.name,
-              length: f.length,
-              path: path.join(torrent.path, f.path),
-            }));
-            const best = pickVideoFile(files);
-            const ext = path.extname(best.name) || '.mkv';
-            const finalPaths = buildMoviePath(opts.movie, opts.movieLibraryRoot, ext);
-            const src = best.path;
-            const dest = finalPaths.filePath;
-            if (src !== dest && fs.existsSync(src)) {
-              try {
-                if (fs.existsSync(dest)) fs.unlinkSync(dest);
-                fs.renameSync(src, dest);
-              } catch {
-                fs.copyFileSync(src, dest);
-              }
-            }
-            item.progress = 1;
-            item.downloadSpeed = 0;
-            item.status = 'done';
-            item.savePath = dest;
-            const snapshot = { ...item };
-            this.emit('done', snapshot);
-            setImmediate(() => this.remove(id));
-          } catch (err) {
+        torrent.on('done', () => {
+          void this.finalizeMovieDone(id, item, torrent, opts).catch((err) => {
             item.status = 'error';
             item.error = err instanceof Error ? err.message : String(err);
-            this.emit('update', this.list());
-          }
+            this.emitUpdateNow();
+          });
         });
 
         torrent.on('error', (err: Error) => {
           item.status = 'error';
           item.error = err.message;
-          this.emit('update', this.list());
+          this.emitUpdateNow();
           reject(err);
         });
       } catch (err) {
         item.status = 'error';
         item.error = err instanceof Error ? err.message : String(err);
-        this.emit('update', this.list());
+        this.emitUpdateNow();
         reject(err);
       }
     });
@@ -427,7 +582,7 @@ export class DownloadEngine extends EventEmitter {
       torrent.pause();
       item.status = 'paused';
       item.downloadSpeed = 0;
-      this.emit('update', this.list());
+      this.emitUpdateNow();
     }
   }
 
@@ -437,7 +592,7 @@ export class DownloadEngine extends EventEmitter {
     if (torrent && item) {
       torrent.resume();
       item.status = 'downloading';
-      this.emit('update', this.list());
+      this.emitUpdateNow();
     }
   }
 
@@ -455,7 +610,7 @@ export class DownloadEngine extends EventEmitter {
     }
     if (item) {
       this.items.delete(id);
-      this.emit('update', this.list());
+      this.emitUpdateNow();
     }
   }
 
@@ -464,6 +619,10 @@ export class DownloadEngine extends EventEmitter {
   }
 
   destroy(): void {
+    if (this.progressEmitTimer) {
+      clearTimeout(this.progressEmitTimer);
+      this.progressEmitTimer = null;
+    }
     if (this.client) {
       this.client.destroy();
       this.client = null;

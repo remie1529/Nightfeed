@@ -75,6 +75,13 @@ export function getSettings(): AppSettings {
   if (!merged.defaultMovieResolution) {
     merged.defaultMovieResolution = merged.defaultResolution || '1080p';
   }
+  if (typeof merged.ftpEnabled !== 'boolean') merged.ftpEnabled = false;
+  if (merged.ftpHost == null) merged.ftpHost = '';
+  if (!merged.ftpPort || merged.ftpPort < 1) merged.ftpPort = 21;
+  if (merged.ftpUser == null) merged.ftpUser = '';
+  if (merged.ftpPassword == null) merged.ftpPassword = '';
+  if (merged.ftpRemoteBasePath == null) merged.ftpRemoteBasePath = '';
+  if (!merged.maxConnections || merged.maxConnections < 1) merged.maxConnections = 200;
   return merged;
 }
 

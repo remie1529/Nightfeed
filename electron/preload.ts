@@ -30,6 +30,7 @@ const api = {
     episode: number;
     episodeTitle: string;
     magnet: string;
+    candidates?: Array<{ magnet: string; infoHash?: string; title?: string }>;
   }) => ipcRenderer.invoke('download:start', payload),
   getDownloads: () => ipcRenderer.invoke('download:list'),
   pauseDownload: (id: string) => ipcRenderer.invoke('download:pause', id),
@@ -46,8 +47,11 @@ const api = {
     ipcRenderer.invoke('movies:update', tmdbId, partial),
   refreshMovie: (tmdbId: number) => ipcRenderer.invoke('movies:refresh', tmdbId),
   searchMovieTorrents: (tmdbId: number) => ipcRenderer.invoke('search:movie', tmdbId),
-  startMovieDownload: (payload: { tmdbId: number; magnet: string }) =>
-    ipcRenderer.invoke('download:startMovie', payload),
+  startMovieDownload: (payload: {
+    tmdbId: number;
+    magnet: string;
+    candidates?: Array<{ magnet: string; infoHash?: string; title?: string }>;
+  }) => ipcRenderer.invoke('download:startMovie', payload),
 
   getTelegramStatus: () => ipcRenderer.invoke('telegram:status'),
   sendTelegramTest: () => ipcRenderer.invoke('telegram:test'),

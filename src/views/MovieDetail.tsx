@@ -80,6 +80,11 @@ export default function MovieDetail({
       await window.torrentAPI.startMovieDownload({
         tmdbId,
         magnet: result.magnet,
+        candidates: results.map((r) => ({
+          magnet: r.magnet,
+          infoHash: r.infoHash,
+          title: r.title,
+        })),
       });
       setShowSearch(false);
       await refresh();
@@ -106,6 +111,11 @@ export default function MovieDetail({
       await window.torrentAPI.startMovieDownload({
         tmdbId,
         magnet: res.results[0].magnet,
+        candidates: res.results.map((r) => ({
+          magnet: r.magnet,
+          infoHash: r.infoHash,
+          title: r.title,
+        })),
       });
       await refresh();
     } catch (e) {

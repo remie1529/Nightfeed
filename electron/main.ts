@@ -20,7 +20,7 @@ import {
   ignoreAiredEpisodes,
   searchShows,
 } from './services/tvmaze';
-import { searchEpisodeTorrents, searchMovieTorrents } from './services/search';
+import { extractInfoHash, searchEpisodeTorrents, searchMovieTorrents } from './services/search';
 import {
   applyMovieLocalStatus,
   fetchMovieDetail,
@@ -28,14 +28,17 @@ import {
 } from './services/wikidata';
 import { downloadEngine } from './services/engine';
 import { telegramBot } from './services/telegram';
+import { uploadFinishedFile } from './services/ftp';
 import {
   AddShowPolicy,
   AppSettings,
+  DownloadItem,
   Episode,
   EpisodeOverrideStatus,
   Movie,
   Resolution,
   Show,
+  TorrentCandidate,
   UpdateStatus,
 } from './types';
 
@@ -125,6 +128,139 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+function toCandidates(results: Array<{ magnet: string; infoHash?: string; title?: string }>): TorrentCandidate[] {
+  return (results || [])
+    .filter((r) => r?.magnet)
+    .map((r) => ({
+      magnet: r.magnet,
+      infoHash: (r.infoHash || extractInfoHash(r.magnet) || '').toLowerCase() || undefined,
+      title: r.title,
+    }));
+}
+
+function pickNextCandidate(
+  candidates: TorrentCandidate[] | undefined,
+  tried: Set<string>,
+  currentMagnet?: string
+): TorrentCandidate | null {
+  for (const c of candidates || []) {
+    if (!c?.magnet) continue;
+    const h = (c.infoHash || extractInfoHash(c.magnet) || '').toLowerCase();
+    if (h && tried.has(h)) continue;
+    if (!h && currentMagnet && c.magnet === currentMagnet) continue;
+    if (h) return c;
+    if (c.magnet !== currentMagnet) return c;
+  }
+  return null;
+}
+
+async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
+  const settings = getSettings();
+  const tried = new Set((item.triedInfoHashes || []).map((h) => h.toLowerCase()));
+  if (item.infoHash) tried.add(item.infoHash.toLowerCase());
+  const curHash = extractInfoHash(item.magnet || '');
+  if (curHash) tried.add(curHash.toLowerCase());
+
+  let candidates = item.candidates ? [...item.candidates] : [];
+  let next = pickNextCandidate(candidates, tried, item.magnet);
+
+  // Re-search and skip already-tried infohashes when no stored next candidate
+  if (!next) {
+    try {
+      if (item.kind === 'movie' && item.movieId != null) {
+        const movie = getMovies().find((m) => m.tmdbId === item.movieId);
+        if (movie) {
+          const preferred = (movie.preferredResolution ||
+            settings.defaultMovieResolution ||
+            settings.defaultResolution) as Resolution;
+          const res = await searchMovieTorrents(
+            settings,
+            movie.title,
+            movie.releaseYear,
+            preferred
+          );
+          candidates = toCandidates(res.results);
+          next = pickNextCandidate(candidates, tried, item.magnet);
+        }
+      } else if (item.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
+        const show = getShows().find((s) => s.tmdbId === item.showId);
+        if (show) {
+          const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
+          const res = await searchEpisodeTorrents(
+            settings,
+            show.name,
+            item.seasonNumber,
+            item.episodeNumber,
+            preferred,
+            { imdbId: show.imdbId, mazeId: show.tmdbId }
+          );
+          candidates = toCandidates(res.results);
+          next = pickNextCandidate(candidates, tried, item.magnet);
+        }
+      }
+    } catch {
+      // search failure — fall through to "no alternative"
+    }
+  }
+
+  notify(`Skipped .exe, trying another torrent for ${item.name}`, 'warn');
+
+  if (!next?.magnet) {
+    notify(`No alternative torrents after skipping .exe for ${item.name}`, 'error');
+    pushDownloads();
+    return;
+  }
+
+  const triedList = Array.from(tried);
+  try {
+    if (item.kind === 'movie' && item.movieId != null) {
+      const movie = getMovies().find((m) => m.tmdbId === item.movieId);
+      if (!movie) throw new Error('Movie not found');
+      await downloadEngine.startMovie({
+        magnet: next.magnet,
+        movie,
+        movieLibraryRoot: settings.movieLibraryRoot,
+        candidates,
+        triedInfoHashes: triedList,
+      });
+      upsertMovie(withMovieLocalStatus(movie));
+      mainWindow?.webContents.send('movies:changed');
+    } else {
+      const show = getShows().find((s) => s.tmdbId === item.showId);
+      if (!show) throw new Error('Show not found');
+      await downloadEngine.start({
+        magnet: next.magnet,
+        show,
+        libraryRoot: settings.libraryRoot,
+        seasonNumber: item.seasonNumber,
+        episodeNumber: item.episodeNumber,
+        episodeTitle: item.episodeTitle,
+        candidates,
+        triedInfoHashes: triedList,
+      });
+      mainWindow?.webContents.send('library:changed');
+    }
+    pushDownloads();
+  } catch (err) {
+    notify(
+      `Failed to start next torrent: ${err instanceof Error ? err.message : String(err)}`,
+      'error'
+    );
+  }
+}
+
+async function maybeFtpUpload(localPath: string | undefined, label: string): Promise<void> {
+  const settings = getSettings();
+  if (!settings.ftpEnabled || !localPath) return;
+  try {
+    await uploadFinishedFile(settings, localPath);
+    notify(`FTP uploaded: ${label}`, 'ok');
+  } catch (err) {
+    // Local success stands; never undo. Never include password in message.
+    notify(`FTP upload failed: ${err instanceof Error ? err.message : String(err)}`, 'warn');
+  }
+}
+
 function withLocalStatuses(show: Show): Show {
   return applyLocalStatuses(show, getSettings().libraryRoot, downloadingKeys());
 }
@@ -181,6 +317,7 @@ async function autoDownloadForShows(shows: Show[]): Promise<number> {
           }
           const best = results[0];
           if (!best?.magnet) continue;
+          const candidates = toCandidates(results);
           await downloadEngine.start({
             magnet: best.magnet,
             show,
@@ -188,6 +325,8 @@ async function autoDownloadForShows(shows: Show[]): Promise<number> {
             seasonNumber: ep.seasonNumber,
             episodeNumber: ep.episodeNumber,
             episodeTitle: ep.name,
+            candidates,
+            triedInfoHashes: [],
           });
           started += 1;
           pushDownloads();
@@ -593,11 +732,15 @@ function registerIpc() {
         episode: number;
         episodeTitle: string;
         magnet: string;
+        candidates?: TorrentCandidate[];
       }
     ) => {
       const settings = getSettings();
       const show = getShows().find((s) => s.tmdbId === payload.tmdbId);
       if (!show) throw new Error('Show not found');
+      const candidates = payload.candidates?.length
+        ? toCandidates(payload.candidates)
+        : toCandidates([{ magnet: payload.magnet }]);
       const item = await downloadEngine.start({
         magnet: payload.magnet,
         show,
@@ -605,6 +748,8 @@ function registerIpc() {
         seasonNumber: payload.season,
         episodeNumber: payload.episode,
         episodeTitle: payload.episodeTitle,
+        candidates,
+        triedInfoHashes: [],
       });
       pushDownloads();
       return item;
@@ -715,6 +860,7 @@ function registerIpc() {
       payload: {
         tmdbId: number;
         magnet: string;
+        candidates?: TorrentCandidate[];
       }
     ) => {
       const settings = getSettings();
@@ -723,10 +869,15 @@ function registerIpc() {
       if (!(settings.movieLibraryRoot || '').trim()) {
         throw new Error('Set a movie library folder in Settings');
       }
+      const candidates = payload.candidates?.length
+        ? toCandidates(payload.candidates)
+        : toCandidates([{ magnet: payload.magnet }]);
       const item = await downloadEngine.startMovie({
         magnet: payload.magnet,
         movie,
         movieLibraryRoot: settings.movieLibraryRoot,
+        candidates,
+        triedInfoHashes: [],
       });
       // Mark downloading in store for UI
       upsertMovie(withMovieLocalStatus(movie));
@@ -754,7 +905,10 @@ app.whenReady().then(() => {
   wireTelegram();
   setupAutoUpdater();
   downloadEngine.on('update', () => pushDownloads());
-  downloadEngine.on('done', (item) => {
+  downloadEngine.on('reject-exe', (item: DownloadItem) => {
+    void tryNextAfterExeReject(item);
+  });
+  downloadEngine.on('done', (item: DownloadItem) => {
     if (item?.kind === 'movie' && item.movieId != null) {
       const movie = getMovies().find((m) => m.tmdbId === item.movieId);
       if (movie) {
@@ -775,6 +929,7 @@ app.whenReady().then(() => {
       notify(`Finished: ${item.name}`, 'ok');
     }
     pushDownloads();
+    void maybeFtpUpload(item?.savePath, item?.name || path.basename(item?.savePath || 'file'));
   });
   createWindow();
   const settings = getSettings();
