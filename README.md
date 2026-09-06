@@ -1,10 +1,10 @@
 # Torrent – TV Show & Movie Manager
 
-Desktop TV show / movie manager (Electron + Vite + React). **v1.5.0**
+Desktop TV show / movie manager (Electron + Vite + React). **v1.5.3**
 
 ## Free by default
 - **TV metadata:** **TVMaze** — show info, episode air dates, and IMDb ids (for EZTV). No API key.
-- **Movie metadata:** **TMDB** — free API key required (Settings → TMDB API key). Get one at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api).
+- **Movie metadata:** **IMDb.com** (scraped) — title search, poster, year, runtime, plot. No API key.
 - Separate **movie library folder** (Settings) — movies never mix into the TV library root.
 - Torrent sources (enable any combination in Settings – checkbox grid):
   1. **Apibay** — public Pirate Bay JSON API (apibay.org) — default on

@@ -54,6 +54,13 @@ export default function SettingsView() {
   const [appVersion, setAppVersion] = useState('—');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [threadInfo, setThreadInfo] = useState<{
+    searchWorkers?: number;
+    searchUsingWorkers?: boolean;
+    cpus?: number;
+    torrentMode?: string;
+    torrentDetail?: string;
+  } | null>(null);
 
   const refreshTg = async () => {
     try {
@@ -74,6 +81,7 @@ export default function SettingsView() {
       setLocal(loaded);
     });
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || '—'))).catch(() => undefined);
+    window.torrentAPI.getThreadInfo?.().then((info) => setThreadInfo(info as typeof threadInfo)).catch(() => undefined);
     window.torrentAPI.getUpdateStatus?.().then((s) => setUpdateStatus(s as UpdateStatus)).catch(() => undefined);
     refreshTg();
     const id = setInterval(() => void refreshTg(), 4000);
@@ -308,8 +316,10 @@ export default function SettingsView() {
           />
           <div className="hint">
             Higher values can improve throughput when many peers are available. Default 200.
-            Downloads use Node/WebTorrent with multi-connection peer I/O; the UI runs on one thread
-            (progress updates are throttled to reduce freezes).
+            WebTorrent peer I/O uses many connections; piece hashing and peer churn run in an
+            Electron <code>utilityProcess</code> when available (separate from the UI process).
+            Torrent search merge/dedupe/ranking runs on a <code>worker_threads</code> pool
+            (up to 4 workers / CPU cores). Progress IPC is throttled.
           </div>
         </div>
 
@@ -446,8 +456,8 @@ export default function SettingsView() {
 
         <div className="field">
           <label>Movie metadata</label>
-          <input value="Wikidata / Wikimedia Commons — free, no API key" disabled />
-          <div className="hint">Movie search and posters come from Wikidata and Commons. No signup required (same idea as TVMaze for TV).</div>
+          <input value="IMDb.com (scraped) — free, no API key" disabled />
+          <div className="hint">Movie search and title details (poster, year, runtime, plot, IMDb id) are scraped from IMDb. No signup or API key. TV stays on TVMaze.</div>
         </div>
 
         <div className="field">
@@ -613,9 +623,18 @@ export default function SettingsView() {
       >
         <div style={{ fontWeight: 650, marginBottom: 6 }}>About Torrent</div>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
-          Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via free Wikidata (no API key).
-          Downloads use Node/WebTorrent (multi-connection); the UI runs on one thread — freezes are reduced by
-          throttling progress updates and using async file moves. Prefer legal sources and content you have rights to download.
+          Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via IMDb.com scrape (no API key).
+          Multi-core CPU: torrent search (fetch + merge/dedupe by infohash + resolution ranking) runs on a
+          Node <code>worker_threads</code> pool (size = min(4, CPU cores)). WebTorrent (piece verification /
+          hashing and peer churn) prefers an Electron <code>utilityProcess</code> so it does not freeze the
+          BrowserWindow event loop; falls back to the main process if utilityProcess cannot start.
+          Progress updates are throttled; library renames are async. Prefer legal sources and content you have rights to download.
+          {threadInfo && (
+            <div style={{ marginTop: 8 }}>
+              Runtime: search workers {threadInfo.searchUsingWorkers ? `on (${threadInfo.searchWorkers}/${threadInfo.cpus} CPUs)` : 'fallback in-process'};
+              torrent engine {threadInfo.torrentMode || '—'}.
+            </div>
+          )}
         </div>
       </div>
     </div>

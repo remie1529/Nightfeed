@@ -57,7 +57,7 @@ export interface TorrentCandidate {
 }
 
 export interface AppSettings {
-  /** @deprecated Movies use Wikidata (no key). Kept for older settings files. */
+  /** @deprecated Movies use IMDb scrape (no key). Kept for older settings files. */
   tmdbApiKey?: string;
   libraryRoot: string;
   /** Separate root for movies — never mix with TV libraryRoot. */
@@ -148,10 +148,13 @@ export interface Show {
 
 export interface Movie {
   id: number;
+  /** Numeric IMDb title id (tt digits); legacy field name tmdbId kept for store compatibility */
   tmdbId: number;
   title: string;
   overview: string;
-  /** Absolute TMDB image URL */
+  /** IMDb id like tt0133093 */
+  imdbId?: string | null;
+  /** Absolute poster image URL (IMDb / Amazon CDN) */
   posterPath: string | null;
   backdropPath: string | null;
   releaseDate: string | null;

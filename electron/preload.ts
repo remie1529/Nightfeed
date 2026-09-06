@@ -57,6 +57,7 @@ const api = {
   sendTelegramTest: () => ipcRenderer.invoke('telegram:test'),
 
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+  getThreadInfo: () => ipcRenderer.invoke('app:getThreadInfo'),
   getUpdateStatus: () => ipcRenderer.invoke('update:status'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),

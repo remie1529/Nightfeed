@@ -1,43 +1,78 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import electron from 'vite-plugin-electron/simple'
+import electron from 'vite-plugin-electron'
+import renderer from 'vite-plugin-electron-renderer'
 import path from 'path'
+
+const electronExternal = ['electron', 'electron-store', 'webtorrent', 'basic-ftp']
 
 export default defineConfig({
   plugins: [
     react(),
-    electron({
-      main: {
+    electron([
+      {
         entry: 'electron/main.ts',
         vite: {
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron', 'electron-store', 'webtorrent']
-            }
-          }
-        }
+              external: electronExternal,
+            },
+          },
+        },
       },
-      preload: {
-        input: 'electron/preload.ts',
+      {
+        entry: 'electron/workers/search-worker.ts',
+        onstart() {
+          // Worker rebuild — no Electron restart needed beyond main reload
+        },
         vite: {
           build: {
-            outDir: 'dist-electron'
-          }
-        }
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
       },
-      renderer: {}
-    })
+      {
+        entry: 'electron/workers/torrent-utility.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
+        entry: 'electron/preload.ts',
+        onstart(args) {
+          args.reload()
+        },
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+          },
+        },
+      },
+    ]),
+    renderer(),
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src')
-    }
+      '@': path.resolve(__dirname, 'src'),
+    },
   },
   build: {
-    outDir: 'dist'
+    outDir: 'dist',
   },
   server: {
-    port: 5173
-  }
+    port: 5173,
+  },
 })
