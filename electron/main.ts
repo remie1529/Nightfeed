@@ -1,10 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import {
+  exportBackupData,
   getMovies,
   getSettings,
   getShows,
+  importBackupData,
   removeMovie,
   removeShow,
   saveDownloads,
@@ -18,14 +20,13 @@ import {
   applyLocalStatuses,
   fetchShowDetail,
   ignoreAiredEpisodes,
-  searchShows,
 } from './services/tvmaze';
 import { extractInfoHash } from './services/search';
 import { searchEpisodeTorrents, searchMovieTorrents, destroySearchPool, getSearchPoolInfo } from './services/search-pool';
+import { searchShowsMeta, searchMoviesMeta, destroyMetadataPool, getMetadataPoolInfo } from './services/metadata-pool';
 import {
   applyMovieLocalStatus,
   fetchMovieDetail,
-  searchMovies,
 } from './services/imdb';
 import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo } from './services/engine-bridge';
 import { telegramBot } from './services/telegram';
@@ -64,6 +65,7 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: '#121212',
     title: 'Nightfeed',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -71,6 +73,11 @@ function createWindow() {
       sandbox: false,
     },
   });
+  try {
+    mainWindow.setMenuBarVisibility(false);
+  } catch {
+    // ignore
+  }
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -85,10 +92,62 @@ function createWindow() {
   });
 }
 
-function pushDownloads() {
+/** Strip heavy fields from progress IPC so the renderer stays light. */
+function slimDownloadsForUi(items: DownloadItem[]): DownloadItem[] {
+  return items.map((item) => {
+    if (!item.candidates?.length && !item.triedInfoHashes?.length) return item;
+    const { candidates: _c, triedInfoHashes: _t, ...rest } = item;
+    return rest;
+  });
+}
+
+/** Persist downloads without candidates (retry uses in-memory / reject-exe events). */
+function slimDownloadsForStore(items: DownloadItem[]): DownloadItem[] {
+  return items.map((item) => {
+    if (!item.candidates?.length) return item;
+    const { candidates: _c, ...rest } = item;
+    return rest;
+  });
+}
+
+let persistDownloadsTimer: NodeJS.Timeout | null = null;
+let pendingPersistItems: DownloadItem[] | null = null;
+
+function persistDownloadsDebounced(items: DownloadItem[], force = false): void {
+  pendingPersistItems = items;
+  const flush = () => {
+    persistDownloadsTimer = null;
+    const snapshot = pendingPersistItems;
+    pendingPersistItems = null;
+    if (!snapshot) return;
+    // Never block the IPC/progress turn with sync electron-store I/O.
+    setImmediate(() => {
+      try {
+        saveDownloads(slimDownloadsForStore(snapshot));
+      } catch (err) {
+        console.error('[downloads] persist failed', err);
+      }
+    });
+  };
+  if (force) {
+    if (persistDownloadsTimer) {
+      clearTimeout(persistDownloadsTimer);
+      persistDownloadsTimer = null;
+    }
+    flush();
+    return;
+  }
+  if (!persistDownloadsTimer) {
+    persistDownloadsTimer = setTimeout(flush, 5000);
+  }
+}
+
+function pushDownloads(opts?: { persist?: 'debounce' | 'now' | 'skip' }) {
   const items = downloadEngine.list();
-  saveDownloads(items);
-  mainWindow?.webContents.send('downloads:update', items);
+  const mode = opts?.persist ?? 'debounce';
+  if (mode === 'now') persistDownloadsDebounced(items, true);
+  else if (mode === 'debounce') persistDownloadsDebounced(items, false);
+  mainWindow?.webContents.send('downloads:update', slimDownloadsForUi(items));
 }
 
 function notify(message: string, kind: 'info' | 'ok' | 'warn' | 'error' = 'info') {
@@ -208,7 +267,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
 
   if (!next?.magnet) {
     notify(`No alternative torrents after skipping .exe for ${item.name}`, 'error');
-    pushDownloads();
+    pushDownloads({ persist: 'now' });
     return;
   }
 
@@ -241,7 +300,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
       });
       mainWindow?.webContents.send('library:changed');
     }
-    pushDownloads();
+    pushDownloads({ persist: 'now' });
   } catch (err) {
     notify(
       `Failed to start next torrent: ${err instanceof Error ? err.message : String(err)}`,
@@ -330,7 +389,7 @@ async function autoDownloadForShows(shows: Show[]): Promise<number> {
             triedInfoHashes: [],
           });
           started += 1;
-          pushDownloads();
+          pushDownloads({ persist: 'now' });
           notify(
             `Auto-download: ${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`,
             'ok'
@@ -595,7 +654,7 @@ function wireTelegram() {
         await reply(chatId, 'Usage: /add <show name>');
         return;
       }
-      const results = await searchShows(args.trim());
+      const results = await searchShowsMeta(args.trim());
       if (!results.length) {
         await reply(chatId, `No TVMaze results for “${args.trim()}”.`);
         return;
@@ -644,7 +703,11 @@ function registerIpc() {
     return res.filePaths[0];
   });
 
-  ipcMain.handle('tmdb:search', async (_e, query: string) => searchShows(query));
+  ipcMain.handle('tmdb:search', async (_e, query: string) => {
+    // Off main: metadata worker. Yield first so we never share a turn with progress flush.
+    await new Promise<void>((r) => setImmediate(r));
+    return searchShowsMeta(query || '');
+  });
 
   ipcMain.handle('library:list', () => {
     const settings = getSettings();
@@ -752,7 +815,7 @@ function registerIpc() {
         candidates,
         triedInfoHashes: [],
       });
-      pushDownloads();
+      pushDownloads({ persist: 'now' });
       return item;
     }
   );
@@ -760,21 +823,22 @@ function registerIpc() {
   ipcMain.handle('download:list', () => downloadEngine.list());
   ipcMain.handle('download:pause', (_e, id: string) => {
     downloadEngine.pause(id);
-    pushDownloads();
+    pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:resume', (_e, id: string) => {
     downloadEngine.resume(id);
-    pushDownloads();
+    pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:cancel', (_e, id: string) => {
     downloadEngine.cancel(id);
-    pushDownloads();
+    pushDownloads({ persist: 'now' });
   });
 
 
 
   ipcMain.handle('tmdb:searchMovies', async (_e, query: string) => {
-    return searchMovies(query);
+    await new Promise<void>((r) => setImmediate(r));
+    return searchMoviesMeta(query || '');
   });
 
   ipcMain.handle('movies:list', () => {
@@ -882,22 +946,68 @@ function registerIpc() {
       });
       // Mark downloading in store for UI
       upsertMovie(withMovieLocalStatus(movie));
-      pushDownloads();
+      pushDownloads({ persist: 'now' });
       mainWindow?.webContents.send('movies:changed');
       return item;
     }
   );
 
-  ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
+  ipcMain.handle('backup:export', async () => {
+    const data = exportBackupData();
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Export Nightfeed backup',
+      defaultPath: `nightfeed-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: 'JSON backup', extensions: ['json'] }],
+    });
+    if (canceled || !filePath) return { ok: false, canceled: true };
+    const fs = await import('fs/promises');
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+    return { ok: true, path: filePath };
+  });
+
+  ipcMain.handle('backup:import', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Import Nightfeed backup',
+      filters: [{ name: 'JSON backup', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
+    const fs = await import('fs/promises');
+    const rawText = await fs.readFile(filePaths[0], 'utf8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      throw new Error('Backup file is not valid JSON');
+    }
+    const counts = importBackupData(parsed);
+    const settings = getSettings();
+    downloadEngine.applySettings({
+      maxConnections: settings.maxConnections,
+      maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
+      maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
+    });
+    applyLoginItem(!!settings.launchOnStartup);
+    telegramBot.sync(settings);
+    scheduleRefresh();
+    mainWindow?.webContents.send('library:changed');
+    mainWindow?.webContents.send('movies:changed');
+    pushDownloads({ persist: 'skip' });
+    return { ok: true, ...counts, path: filePaths[0] };
+  });
+
+    ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
   ipcMain.handle('telegram:test', async () => telegramBot.sendTest(getSettings()));
 
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('app:getThreadInfo', () => {
     const search = getSearchPoolInfo();
     const torrent = getTorrentEngineInfo();
+    const meta = getMetadataPoolInfo();
     return {
       searchWorkers: search.size,
       searchUsingWorkers: search.usingWorkers,
+      metadataWorker: meta.usingWorker,
       cpus: search.cpus,
       torrentMode: torrent.mode,
       torrentDetail: torrent.detail,
@@ -913,11 +1023,22 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  try {
+    Menu.setApplicationMenu(null);
+  } catch {
+    // ignore
+  }
   registerIpc();
   wireTelegram();
   setupAutoUpdater();
   await ensureTorrentEngine();
-  downloadEngine.on('update', () => pushDownloads());
+  if (getTorrentEngineInfo().mode === 'in-process') {
+    notify(
+      'WebTorrent utilityProcess failed — downloads run on the UI process. Library search still uses a worker.',
+      'warn'
+    );
+  }
+  downloadEngine.on('update', () => pushDownloads({ persist: 'debounce' }));
   downloadEngine.on('reject-exe', (item: DownloadItem) => {
     void tryNextAfterExeReject(item);
   });
@@ -941,7 +1062,7 @@ app.whenReady().then(async () => {
     if (item?.name) {
       notify(`Finished: ${item.name}`, 'ok');
     }
-    pushDownloads();
+    pushDownloads({ persist: 'now' });
     void maybeFtpUpload(item?.savePath, item?.name || path.basename(item?.savePath || 'file'));
   });
   createWindow();
@@ -969,6 +1090,7 @@ app.on('window-all-closed', () => {
     telegramBot.stop();
     downloadEngine.destroy();
     void destroySearchPool();
+    void destroyMetadataPool();
     app.quit();
   }
 });

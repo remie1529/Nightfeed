@@ -189,3 +189,56 @@ export function clearShowOverrides(showId: number): void {
   }
   store.set('episodeOverrides', next);
 }
+
+
+/** Full app data snapshot for backup (includes secrets from settings). */
+export function exportBackupData(): AppData & { exportedAt: string; app: string; version: number } {
+  return {
+    settings: getSettings(),
+    shows: getShows(),
+    movies: getMovies(),
+    downloads: getDownloads(),
+    episodeOverrides: getEpisodeOverrides(),
+    exportedAt: new Date().toISOString(),
+    app: 'Nightfeed',
+    version: 1,
+  };
+}
+
+/**
+ * Replace all persisted data with a backup payload.
+ * Expects the shape written by exportBackupData (or a raw AppData object).
+ */
+export function importBackupData(raw: unknown): { shows: number; movies: number } {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Invalid backup: not an object');
+  }
+  const data = raw as Partial<AppData> & { settings?: AppSettings };
+  if (!data.settings || typeof data.settings !== 'object') {
+    throw new Error('Invalid backup: missing settings');
+  }
+  if (!Array.isArray(data.shows)) {
+    throw new Error('Invalid backup: missing shows array');
+  }
+  if (!Array.isArray(data.movies)) {
+    // Older backups may omit movies
+    data.movies = [];
+  }
+  if (!Array.isArray(data.downloads)) {
+    data.downloads = [];
+  }
+  if (!data.episodeOverrides || typeof data.episodeOverrides !== 'object') {
+    data.episodeOverrides = {};
+  }
+
+  const nextSettings: AppSettings = { ...DEFAULT_SETTINGS, ...data.settings };
+  nextSettings.torrentSources = migrateTorrentSources(data.settings as Partial<AppSettings>);
+
+  store.set('settings', nextSettings);
+  store.set('shows', data.shows);
+  store.set('movies', data.movies);
+  store.set('downloads', data.downloads);
+  store.set('episodeOverrides', data.episodeOverrides);
+
+  return { shows: data.shows.length, movies: (data.movies || []).length };
+}

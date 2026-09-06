@@ -39,7 +39,18 @@ class UtilityEngineProxy extends EventEmitter {
   async ensureStarted(): Promise<boolean> {
     if (this.ready && this.child) return true;
     if (this.startPromise) return this.startPromise;
-    this.startPromise = this.fork();
+    this.startPromise = (async () => {
+      // Prefer utilityProcess; one retry if first fork times out / fails.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const ok = await this.fork();
+        if (ok) return true;
+        console.error(`[engine-bridge] utilityProcess attempt ${attempt} failed`);
+        this.child = null;
+        this.ready = false;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
+      }
+      return false;
+    })();
     return this.startPromise;
   }
 
@@ -63,7 +74,7 @@ class UtilityEngineProxy extends EventEmitter {
           this.child = null;
           this.ready = false;
           resolve(false);
-        }, 8000);
+        }, 12000);
 
         child.on('message', (msg: any) => {
           if (msg?.type === 'ready') {
@@ -278,6 +289,9 @@ class EngineFacade extends EventEmitter {
         this.backend = proxy;
         this.mode = 'utilityProcess';
       } else {
+        console.error(
+          '[engine-bridge] utilityProcess unavailable — falling back to in-process WebTorrent (may contend with UI/search IPC)'
+        );
         const local = new DownloadEngine();
         local.on('update', (items) => this.emit('update', items));
         local.on('done', (item) => this.emit('done', item));

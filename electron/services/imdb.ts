@@ -9,7 +9,7 @@ import { Movie, MovieStatus } from '../types';
 import { findLocalMovie, getMovieFolderName } from './paths';
 
 const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Nightfeed/1.5.4';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Nightfeed/1.5.5';
 
 const SUGGEST_BASE = 'https://v3.sg.media-imdb.com/suggestion';
 const GRAPHQL = 'https://api.graphql.imdb.com/';

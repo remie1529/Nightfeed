@@ -1,42 +1,62 @@
-# Nightfeed – TV Show & Movie Manager
+# Nightfeed
 
-Desktop TV show / movie manager (Electron + Vite + React). **v1.5.4**
+Desktop TV show & movie manager with embedded torrent downloads.
 
-## Free by default
-- **TV metadata:** **TVMaze** — show info, episode air dates, and IMDb ids (for EZTV). No API key.
-- **Movie metadata:** **IMDb.com** (scraped) — title search, poster, year, runtime, plot. No API key.
-- Separate **movie library folder** (Settings) — movies never mix into the TV library root.
-- Torrent sources (enable any combination in Settings – checkbox grid):
-  1. **Apibay** — public Pirate Bay JSON API (apibay.org) — default on
-  2. **Knaben** — meta-search JSON API (api.knaben.org) — default on
-  3. **YourBittorrent** — public search JSON API — default on
-  4. **Torrents.csv** — open dump search API (torrents-csv.com) — default on
-  5. **EZTV** — TV-focused API via show IMDb id (eztxx.to) — default on (TV only)
-  6. **AnimeTosho** — anime JSON feed — default on
-  7. **Nyaa** — anime/raw RSS (nyaa.si) — default on
-  8. **LimeTorrents** — public RSS (infohash → magnet) — default on
-  9. **Jackett** — optional self-hosted meta-search — default off
+**Electron · React · WebTorrent · TVMaze · IMDb**
 
-Searches query all enabled sources in parallel, merge/dedupe by infohash, and rank by preferred resolution + seeders. Partial source errors never wipe other results. Movie search skips EZTV.
+---
 
-UIndex / FlareSolverr / Cloudflare unlock UI were removed in v1.4.0.
+## Install
+
+1. Open [Releases](https://github.com/remie1529/Nightfeed/releases)
+2. Download `Nightfeed-Setup-x.yz.exe` (Windows x64)
+3. Run the installer and launch **Nightfeed**
+
+In-app updates use GitHub Releases. Because this repo is **private**, add a GitHub personal access token under **Settings → Updates** (classic PAT with `repo`, or fine-grained with Contents: Read on this repo).
+
+---
 
 ## Features
-- Movies tab: search TMDB, track library status, download into `{Title} ({Year})/` under the movie library root
-- Manual episode status in store
-- Add-show older episode modal
-- Auto-download skips ignored (TV)
-- On download complete: status → Downloaded, item leaves Downloads queue, torrent destroyed (no seeding by default)
-- WebTorrent settings: max connections (default 150), optional download/upload KiB/s caps (0 = unlimited)
-- Extra public trackers on magnets for peer discovery
-- Telegram and startup
-- Auto update from private GitHub Releases (paste a PAT in Settings after installing)
 
-## Setup
+- **TV library** — search & track shows via [TVMaze](https://www.tvmaze.com/) (no API key)
+- **Movies** — search & metadata via IMDb.com scrape (no API key); separate movie library folder
+- **Embedded downloads** — WebTorrent in an Electron `utilityProcess` when available
+- **Multi-thread search** — torrent index fetch/merge/rank on `worker_threads`; library zoekfunctie (TVMaze / IMDb) on its own worker so search stays responsive during downloads
+- **Multi-source torrents** — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, AnimeTosho, Nyaa, LimeTorrents; optional Jackett
+- **Auto-download** — missing episodes on a schedule; skip ignored
+- **FTP upload** — optional upload when a download finishes
+- **Telegram bot** — status / search / downloads from chat
+- **Backup** — export/import settings + TV + movie libraries (JSON; includes secrets — keep private)
+- **UNC paths** — Windows network library roots supported
 
-    npm install && npm run dev
+---
 
-## Build
+## Settings notes
 
-    npm run dist
-    npm run dist:dir
+| Setting | Purpose |
+|--------|---------|
+| TV / movie library roots | Where finished files are filed |
+| Torrent sources | Enable any combination |
+| Max connections / speed caps | WebTorrent limits |
+| GitHub PAT | Private-repo update checks |
+| Backup | Export or replace-all import |
+
+Prefer legal sources and content you have rights to download.
+
+---
+
+## Develop
+
+```bash
+npm install
+npm run dev          # Vite + Electron
+npm run dist         # Windows NSIS installer → release/
+```
+
+Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains `tv-show-manager` for continuity.
+
+---
+
+## Version
+
+**1.5.5** — library search stays responsive during downloads; hide native menu bar; backup export/import; README refresh.
