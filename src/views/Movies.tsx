@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Poster from '../components/Poster';
 import type { Movie, TmdbMovieSearchItem } from '../lib/types';
+import FolderScanImport from '../components/FolderScanImport';
 
 export default function Movies({
   onOpenMovie,
@@ -70,6 +71,9 @@ export default function Movies({
         <div>
           <h1>Movies</h1>
           <p>{movies.length} movie{movies.length === 1 ? '' : 's'} tracked</p>
+        </div>
+        <div className="toolbar">
+          <FolderScanImport defaultScope="movies" onDone={() => { void load(); onRefreshDone(); }} />
         </div>
       </div>
 

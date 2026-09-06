@@ -29,6 +29,7 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 - **FTP upload** — optional upload when a download finishes
 - **Telegram bot** — admin commands + request-only chats (approve/deny movie & TV requests)
 - **Backup** — export/import settings + TV + movie libraries (JSON; includes secrets — keep private)
+- **Manual folder import** — Scan library folders & import (preview + confirm; never auto)
 - **UNC paths** — Windows network library roots supported
 - **OpenVPN (torrent-only)** — optional split tunnel: bind WebTorrent to the VPN TUN/TAP IP; metadata/UI stay on the normal network
 

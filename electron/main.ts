@@ -37,6 +37,12 @@ import { approveDenyKeyboard, telegramBot } from './services/telegram';
 import { uploadFinishedFile } from './services/ftp';
 import { vpnManager } from './services/vpn';
 import {
+  buildScanPreview,
+  type FolderScanImportItem,
+  type FolderScanImportResult,
+  type LibraryScanScope,
+} from './services/library-scan';
+import {
   AddShowPolicy,
   AppSettings,
   DownloadItem,
@@ -566,6 +572,125 @@ function formatSpeed(bps: number): string {
   if (!bps || bps < 1024) return `${Math.round(bps || 0)} B/s`;
   if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
   return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+
+async function importShowFromScan(mazeId: number, folderPath: string): Promise<Show> {
+  const settings = getSettings();
+  const existing = getShows().find((s) => s.tmdbId === mazeId);
+  if (existing) {
+    // Ensure libraryPath points at scanned folder if missing
+    if (folderPath && !(existing.libraryPath || '').trim()) {
+      const updated = { ...existing, libraryPath: folderPath };
+      upsertShow(updated);
+      const refreshed = await refreshOne(updated);
+      mainWindow?.webContents.send('library:changed');
+      return refreshed;
+    }
+    return withLocalStatuses(existing);
+  }
+  const shell = {
+    id: mazeId,
+    tmdbId: mazeId,
+    name: '',
+    overview: '',
+    posterPath: null,
+    backdropPath: null,
+    firstAirDate: null,
+    status: '',
+    libraryPath: folderPath,
+    seasons: [],
+    addedAt: new Date().toISOString(),
+  } as Show;
+  let show = await fetchShowDetail(mazeId, settings.libraryRoot, shell, downloadingKeys());
+  show = { ...show, libraryPath: folderPath || show.libraryPath };
+  show = withLocalStatuses(show);
+  upsertShow(show);
+  mainWindow?.webContents.send('library:changed');
+  return show;
+}
+
+async function importMovieFromScan(movieId: number, folderPath: string): Promise<Movie> {
+  const settings = getSettings();
+  const existing = getMovies().find((m) => m.tmdbId === movieId);
+  if (existing) {
+    if (folderPath && !(existing.libraryPath || '').trim()) {
+      const updated = applyMovieLocalStatus(
+        { ...existing, libraryPath: folderPath },
+        settings.movieLibraryRoot,
+        downloadingMovieIds()
+      );
+      upsertMovie(updated);
+      mainWindow?.webContents.send('movies:changed');
+      return withMovieLocalStatus(updated);
+    }
+    return withMovieLocalStatus(existing);
+  }
+  const shell = {
+    id: movieId,
+    tmdbId: movieId,
+    title: '',
+    overview: '',
+    posterPath: null,
+    backdropPath: null,
+    releaseDate: null,
+    releaseYear: null,
+    runtime: null,
+    status: 'missing' as const,
+    libraryPath: folderPath,
+    addedAt: new Date().toISOString(),
+  } as Movie;
+  let movie = await fetchMovieDetail(
+    movieId,
+    settings.movieLibraryRoot,
+    shell,
+    downloadingMovieIds()
+  );
+  movie = { ...movie, libraryPath: folderPath || movie.libraryPath };
+  movie = applyMovieLocalStatus(movie, settings.movieLibraryRoot, downloadingMovieIds());
+  upsertMovie(movie);
+  mainWindow?.webContents.send('movies:changed');
+  return withMovieLocalStatus(movie);
+}
+
+async function runFolderScanImport(items: FolderScanImportItem[]): Promise<FolderScanImportResult> {
+  const result: FolderScanImportResult = {
+    added: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [],
+    addedTitles: [],
+  };
+  const selected = (items || []).filter((i) => i.selected && i.matchId);
+  for (const item of selected) {
+    try {
+      if (item.kind === 'show') {
+        const before = getShows().some((s) => s.tmdbId === item.matchId);
+        if (before) {
+          result.skipped += 1;
+          continue;
+        }
+        const show = await importShowFromScan(item.matchId, item.folderPath);
+        result.added += 1;
+        result.addedTitles.push(show.name);
+      } else {
+        const before = getMovies().some((m) => m.tmdbId === item.matchId);
+        if (before) {
+          result.skipped += 1;
+          continue;
+        }
+        const movie = await importMovieFromScan(item.matchId, item.folderPath);
+        result.added += 1;
+        result.addedTitles.push(movie.title);
+      }
+    } catch (e) {
+      result.failed += 1;
+      result.errors.push(
+        `${item.kind} ${item.matchId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+  return result;
 }
 
 async function addShowWithPolicy(mazeId: number, policy: AddShowPolicy = 'manual'): Promise<Show> {
@@ -1157,6 +1282,24 @@ function registerIpc() {
   ipcMain.handle('library:add', async (_e, mazeId: number, policy?: AddShowPolicy) => {
     return addShowWithPolicy(mazeId, policy || 'manual');
   });
+
+  // Manual folder mass-import (never auto-runs)
+  ipcMain.handle('library:scanPreview', async (_e, scope: LibraryScanScope) => {
+    const settings = getSettings();
+    return buildScanPreview(
+      scope || 'both',
+      settings.libraryRoot,
+      settings.movieLibraryRoot,
+      getShows(),
+      getMovies()
+    );
+  });
+
+  ipcMain.handle('library:scanImport', async (_e, items: FolderScanImportItem[]) => {
+    return runFolderScanImport(items || []);
+  });
+
+
 
   ipcMain.handle('library:remove', (_e, tmdbId: number) => removeShow(tmdbId));
 

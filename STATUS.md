@@ -1,22 +1,17 @@
 ## Nightfeed status
 
-**Current:** v1.5.7 — Telegram request workflow (Admin / Requests chat IDs, approve/deny, download notify).
+**Current:** v1.5.8 — Manual mass-import from library folders (Scan folders & import…).
 
-# Status v1.5.6
+# Status v1.5.8
 
 ## Works
-- App icon (build/icon.png + multi-size build/icon.ico) wired into electron-builder / BrowserWindow
-- OpenVPN Settings: enable, import .ovpn into userData, optional user/pass (never logged), connect/disconnect + status
-- Split intent: openvpn `--route-nopull` + ignore redirect-gateway; WebTorrent TCP `localAddress` bind to detected TUN/TAP IP; DHT/uTP off while bound
-- Optional "Require VPN for torrents" gates manual + auto downloads
-- Does not ship openvpn.exe — detects PATH / Program Files\OpenVPN\bin
+- Settings / Library / Movies: **Scan folders & import…** (manual only — never on launch or timer)
+- Scope: TV root, movie root, or both
+- Preview with match status (will add / already in library / no match / ambiguous)
+- Confirm → TVMaze shows + IMDb movies; skip already present; local files marked downloaded via existing path logic
+- Progress + summary (added / skipped / failed)
+- Read-only scan (no delete/move); UNC paths respected via configured roots
 
 ## Limitations
-- Admin rights often needed for TAP/TUN
-- Until TUN/TAP IP is detected, torrent bind is pending (honest Settings hint)
-- Tracker announces may still use the default route; metadata APIs never go through VPN
-- Mid-download VPN bind change stops those torrents (restart download)
-
-## Artifacts
-- /workspace/torrent-tv-manager
-- Release v1.5.6 on remie1529/Nightfeed
+- Conservative metadata matching; ambiguous titles need user pick from alternatives
+- Large libraries take time (rate-limited TVMaze/IMDb lookups)
