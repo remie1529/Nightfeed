@@ -78,7 +78,7 @@ export default function Movies({
       <div className="toolbar" style={{ marginBottom: '1.25rem' }}>
         <input
           style={{ maxWidth: 360 }}
-          placeholder="Search Wikidata to add a movie…"
+          placeholder="Search IMDb to add a movie…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && doSearch()}
@@ -144,7 +144,7 @@ export default function Movies({
         <div className="empty-state">
           <h2>No movies yet</h2>
           <p>
-            Search Wikidata above to add a movie. Set a movie library folder in Settings first (separate from TV).
+            Search IMDb above to add a movie. Set a movie library folder in Settings first (separate from TV).
           </p>
         </div>
       ) : (

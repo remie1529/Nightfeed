@@ -632,4 +632,3 @@ export class DownloadEngine extends EventEmitter {
   }
 }
 
-export const downloadEngine = new DownloadEngine();

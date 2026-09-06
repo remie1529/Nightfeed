@@ -20,13 +20,14 @@ import {
   ignoreAiredEpisodes,
   searchShows,
 } from './services/tvmaze';
-import { extractInfoHash, searchEpisodeTorrents, searchMovieTorrents } from './services/search';
+import { extractInfoHash } from './services/search';
+import { searchEpisodeTorrents, searchMovieTorrents, destroySearchPool, getSearchPoolInfo } from './services/search-pool';
 import {
   applyMovieLocalStatus,
   fetchMovieDetail,
   searchMovies,
-} from './services/wikidata';
-import { downloadEngine } from './services/engine';
+} from './services/imdb';
+import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo } from './services/engine-bridge';
 import { telegramBot } from './services/telegram';
 import { uploadFinishedFile } from './services/ftp';
 import {
@@ -891,6 +892,17 @@ function registerIpc() {
   ipcMain.handle('telegram:test', async () => telegramBot.sendTest(getSettings()));
 
   ipcMain.handle('app:getVersion', () => app.getVersion());
+  ipcMain.handle('app:getThreadInfo', () => {
+    const search = getSearchPoolInfo();
+    const torrent = getTorrentEngineInfo();
+    return {
+      searchWorkers: search.size,
+      searchUsingWorkers: search.usingWorkers,
+      cpus: search.cpus,
+      torrentMode: torrent.mode,
+      torrentDetail: torrent.detail,
+    };
+  });
   ipcMain.handle('update:status', () => ({ ...updateState }));
   ipcMain.handle('update:check', async () => checkForUpdates(true));
   ipcMain.handle('update:install', () => {
@@ -900,10 +912,11 @@ function registerIpc() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerIpc();
   wireTelegram();
   setupAutoUpdater();
+  await ensureTorrentEngine();
   downloadEngine.on('update', () => pushDownloads());
   downloadEngine.on('reject-exe', (item: DownloadItem) => {
     void tryNextAfterExeReject(item);
@@ -955,6 +968,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     telegramBot.stop();
     downloadEngine.destroy();
+    void destroySearchPool();
     app.quit();
   }
 });

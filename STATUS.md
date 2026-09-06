@@ -1,25 +1,17 @@
-# Status v1.5.0
+# Status v1.5.3
 
 ## Works
-- Movies: TMDB search/metadata (free API key), separate movieLibraryRoot, Movies + MovieDetail UI
-- Movie torrent search (multi-source, skips EZTV); downloads only under movieLibraryRoot
-- Download complete for movies -> status downloaded + movies:changed; TV unchanged
-- Manual episode status overrides in electron-store
-- Add-show older-episode modal
-- Auto-download skips Ignored
-- Download complete -> setEpisodeOverride downloaded, remove from queue, torrent.destroy({ destroyStore: false })
-- WebTorrent maxConns default 150; Settings speed/connection caps
-- Extra public UDP/WSS trackers on magnets; select largest video file early
-- electron-updater + private GitHub via Settings githubToken (PAT)
-- Nav version label from app.getVersion()
-- TVMaze metadata + IMDb id on show for EZTV
-- Multi-source torrent search (Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, AnimeTosho, Nyaa, LimeTorrents, optional Jackett)
-- Settings: torrent sources grid; movie library picker; TMDB key; default movie resolution
-- Parallel search, merge/dedupe by infohash, rank by resolution + seeders
+- Multi-core CPU: torrent search (fetch + merge/dedupe by infohash + resolution ranking) on `worker_threads` pool (size = min(4, CPUs))
+- WebTorrent in Electron `utilityProcess` when available (piece hashing / peer churn off UI process); in-process fallback
+- Movie metadata via IMDb.com scrape (suggestion search + GraphQL/HTML detail) — no API key; TV stays on TVMaze
+- Movies: separate movieLibraryRoot; posters from m.media-amazon.com
+- Progress IPC throttled, async rename, maxConnections 200, .exe skip+retry, UNC+FTP
+- Multi-source torrent search; Jackett optional; electron-updater + GitHub PAT
 
-## Removed (v1.4.0)
-- UIndex / FlareSolverr / Cloudflare unlock UI
+## Removed
+- Wikidata movie metadata (replaced by IMDb scrape in 1.5.3)
+- TMDB API key requirement for movies (1.5.1+)
 
 ## Artifacts
 - /workspace/torrent-tv-manager
-- Release v1.5.0 on remie1529/TV-Show-Manager
+- Release v1.5.3 on remie1529/TV-Show-Manager
