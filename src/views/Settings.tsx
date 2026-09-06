@@ -361,21 +361,9 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
-          <label>TMDB API key (movies)</label>
-          <input
-            type="password"
-            autoComplete="off"
-            value={settings.tmdbApiKey || ''}
-            onChange={(e) => setLocal({ ...settings, tmdbApiKey: e.target.value })}
-            placeholder="Paste free TMDB API key"
-          />
-          <div className="hint">
-            Required only for movie search/metadata. Get a free key at{' '}
-            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">
-              themoviedb.org/settings/api
-            </a>
-            . TV shows do not use this key.
-          </div>
+          <label>Movie metadata</label>
+          <input value="Wikidata / Wikimedia Commons — free, no API key" disabled />
+          <div className="hint">Movie search and posters come from Wikidata and Commons. No signup required (same idea as TVMaze for TV).</div>
         </div>
 
         <div className="field">
@@ -541,7 +529,7 @@ export default function SettingsView() {
       >
         <div style={{ fontWeight: 650, marginBottom: 6 }}>About Torrent</div>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
-          Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via free TMDB API key.
+          Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via free Wikidata (no API key).
           Prefer legal sources and content you have rights to download.
         </div>
       </div>
