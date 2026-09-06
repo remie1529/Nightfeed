@@ -11,6 +11,7 @@ type InMsg =
       maxConnections?: number;
       maxDownloadSpeedKBps?: number;
       maxUploadSpeedKBps?: number;
+      bindAddress?: string | null;
     } }
   | {
       type: 'start';

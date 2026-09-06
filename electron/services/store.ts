@@ -82,6 +82,12 @@ export function getSettings(): AppSettings {
   if (merged.ftpPassword == null) merged.ftpPassword = '';
   if (merged.ftpRemoteBasePath == null) merged.ftpRemoteBasePath = '';
   if (!merged.maxConnections || merged.maxConnections < 1) merged.maxConnections = 200;
+  if (typeof merged.vpnEnabled !== 'boolean') merged.vpnEnabled = false;
+  if (merged.vpnConfigPath == null) merged.vpnConfigPath = '';
+  if (merged.vpnConfigName == null) merged.vpnConfigName = '';
+  if (merged.vpnUsername == null) merged.vpnUsername = '';
+  if (merged.vpnPassword == null) merged.vpnPassword = '';
+  if (typeof merged.vpnRequireForTorrents !== 'boolean') merged.vpnRequireForTorrents = false;
   return merged;
 }
 

@@ -103,6 +103,34 @@ export interface AppSettings {
   ftpPassword: string;
   /** Remote base path (TV and/or movies share one base). */
   ftpRemoteBasePath: string;
+  /** Enable OpenVPN controls (torrent traffic only when connected). */
+  vpnEnabled: boolean;
+  /** Copied .ovpn path under userData/vpn (never ship secrets in repo). */
+  vpnConfigPath: string;
+  /** Original .ovpn filename for Settings display. */
+  vpnConfigName: string;
+  /** Optional OpenVPN auth username. */
+  vpnUsername: string;
+  /** Optional OpenVPN auth password — never log. */
+  vpnPassword: string;
+  /** Refuse to start torrent downloads until VPN is connected. */
+  vpnRequireForTorrents: boolean;
+}
+
+export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface VpnStatus {
+  enabled: boolean;
+  state: VpnConnectionState;
+  message: string;
+  openvpnFound: boolean;
+  openvpnPath: string | null;
+  configPath: string | null;
+  configName: string | null;
+  bindAddress: string | null;
+  requireForTorrents: boolean;
+  usernameSet: boolean;
+  routeNopull: boolean;
 }
 
 export interface Episode {
@@ -263,4 +291,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ftpUser: '',
   ftpPassword: '',
   ftpRemoteBasePath: '',
+  vpnEnabled: false,
+  vpnConfigPath: '',
+  vpnConfigName: '',
+  vpnUsername: '',
+  vpnPassword: '',
+  vpnRequireForTorrents: false,
 };
