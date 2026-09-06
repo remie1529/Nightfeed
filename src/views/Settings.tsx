@@ -442,7 +442,7 @@ export default function SettingsView() {
             <span>Launch on Windows startup</span>
           </label>
           <div className="hint">
-            Uses Electron openAtLogin. You may also need to allow “Torrent” under Windows Settings → Apps → Startup.
+            Uses Electron openAtLogin. You may also need to allow “Nightfeed” under Windows Settings → Apps → Startup.
           </div>
         </div>
 
@@ -586,7 +586,7 @@ export default function SettingsView() {
           </div>
         )}
         <div className="hint">
-          Packaged builds check GitHub Releases for remie1529/TV-Show-Manager on startup.
+          Packaged builds check GitHub Releases for remie1529/Nightfeed on startup.
           The repo is private, so a GitHub token is required for update checks to succeed.
         </div>
       </div>
@@ -606,7 +606,7 @@ export default function SettingsView() {
           <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">
             github.com/settings/tokens
           </a>
-          , or a fine-grained token with Contents: Read on remie1529/TV-Show-Manager.
+          , or a fine-grained token with Contents: Read on remie1529/Nightfeed.
           Stored locally in electron-store. Never logged. Save, then Check for updates.
         </div>
       </div>
@@ -621,7 +621,7 @@ export default function SettingsView() {
           maxWidth: 760,
         }}
       >
-        <div style={{ fontWeight: 650, marginBottom: 6 }}>About Torrent</div>
+        <div style={{ fontWeight: 650, marginBottom: 6 }}>About Nightfeed</div>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
           Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via IMDb.com scrape (no API key).
           Multi-core CPU: torrent search (fetch + merge/dedupe by infohash + resolution ranking) runs on a

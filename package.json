@@ -1,7 +1,7 @@
 {
   "name": "tv-show-manager",
-  "productName": "Torrent",
-  "version": "1.5.3",
+  "productName": "Nightfeed",
+  "version": "1.5.4",
   "description": "Desktop TV show and movie manager",
   "main": "dist-electron/main.js",
   "author": "Remco Groothoff",
@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "com.tv.manager",
-    "productName": "Torrent",
+    "productName": "Nightfeed",
     "directories": {
       "output": "release"
     },
@@ -53,7 +53,7 @@
           ]
         }
       ],
-      "artifactName": "Torrent-Setup-${version}.${ext}",
+      "artifactName": "Nightfeed-Setup-${version}.${ext}",
       "signAndEditExecutable": false
     },
     "nsis": {
@@ -72,7 +72,7 @@
       {
         "provider": "github",
         "owner": "remie1529",
-        "repo": "TV-Show-Manager"
+        "repo": "Nightfeed"
       }
     ],
     "asarUnpack": [
@@ -84,6 +84,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/remie1529/TV-Show-Manager.git"
+    "url": "https://github.com/remie1529/Nightfeed.git"
   }
 }
