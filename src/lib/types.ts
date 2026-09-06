@@ -77,6 +77,28 @@ export interface AppSettings {
   /** Never log this value. */
   ftpPassword: string;
   ftpRemoteBasePath: string;
+  vpnEnabled: boolean;
+  vpnConfigPath: string;
+  vpnConfigName: string;
+  vpnUsername: string;
+  vpnPassword: string;
+  vpnRequireForTorrents: boolean;
+}
+
+export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface VpnStatus {
+  enabled: boolean;
+  state: VpnConnectionState;
+  message: string;
+  openvpnFound: boolean;
+  openvpnPath: string | null;
+  configPath: string | null;
+  configName: string | null;
+  bindAddress: string | null;
+  requireForTorrents: boolean;
+  usernameSet: boolean;
+  routeNopull: boolean;
 }
 
 export interface Episode {

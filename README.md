@@ -1,5 +1,7 @@
 # Nightfeed
 
+![Nightfeed](build/icon.png)
+
 Desktop TV show & movie manager with embedded torrent downloads.
 
 **Electron · React · WebTorrent · TVMaze · IMDb**
@@ -28,6 +30,7 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 - **Telegram bot** — status / search / downloads from chat
 - **Backup** — export/import settings + TV + movie libraries (JSON; includes secrets — keep private)
 - **UNC paths** — Windows network library roots supported
+- **OpenVPN (torrent-only)** — optional split tunnel: bind WebTorrent to the VPN TUN/TAP IP; metadata/UI stay on the normal network
 
 ---
 
@@ -40,6 +43,7 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 | Max connections / speed caps | WebTorrent limits |
 | GitHub PAT | Private-repo update checks |
 | Backup | Export or replace-all import |
+| VPN (OpenVPN) | Import `.ovpn`, connect/disconnect; torrent sockets only |
 
 Prefer legal sources and content you have rights to download.
 
@@ -58,5 +62,7 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 ---
 
 ## Version
+
+**1.5.6** — app icon; OpenVPN torrent-only split (route-nopull + WebTorrent interface bind).
 
 **1.5.5** — library search stays responsive during downloads; hide native menu bar; backup export/import; README refresh.

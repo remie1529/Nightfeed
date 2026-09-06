@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
+import fs from 'fs';
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import {
@@ -31,6 +32,7 @@ import {
 import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo } from './services/engine-bridge';
 import { telegramBot } from './services/telegram';
 import { uploadFinishedFile } from './services/ftp';
+import { vpnManager } from './services/vpn';
 import {
   AddShowPolicy,
   AppSettings,
@@ -42,6 +44,7 @@ import {
   Show,
   TorrentCandidate,
   UpdateStatus,
+  VpnStatus,
 } from './types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -57,7 +60,24 @@ const updateState: UpdateStatus = {
   error: null,
 };
 
+function resolveAppIcon(): string | undefined {
+  const candidates = [
+    path.join(__dirname, '../build/icon.png'),
+    path.join(process.resourcesPath || '', 'icon.png'),
+    path.join(__dirname, '../build/icon.ico'),
+  ];
+  for (const c of candidates) {
+    try {
+      if (c && fs.existsSync(c)) return c;
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
 function createWindow() {
+  const iconPath = resolveAppIcon();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
@@ -66,6 +86,7 @@ function createWindow() {
     backgroundColor: '#121212',
     title: 'Nightfeed',
     autoHideMenuBar: true,
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -73,6 +94,14 @@ function createWindow() {
       sandbox: false,
     },
   });
+  if (iconPath) {
+    try {
+      const img = nativeImage.createFromPath(iconPath);
+      if (!img.isEmpty()) mainWindow.setIcon(img);
+    } catch {
+      // ignore
+    }
+  }
   try {
     mainWindow.setMenuBarVisibility(false);
   } catch {
@@ -152,6 +181,28 @@ function pushDownloads(opts?: { persist?: 'debounce' | 'now' | 'skip' }) {
 
 function notify(message: string, kind: 'info' | 'ok' | 'warn' | 'error' = 'info') {
   mainWindow?.webContents.send('app:toast', { message, kind });
+}
+
+function pushVpnStatus(extra?: Partial<AppSettings>): void {
+  const settings = { ...getSettings(), ...(extra || {}) };
+  const status: VpnStatus = vpnManager.getStatus(settings);
+  mainWindow?.webContents.send('vpn:status', status);
+}
+
+function applyTorrentBindFromVpn(): void {
+  const addr = vpnManager.getBindAddress();
+  downloadEngine.applySettings({
+    bindAddress: addr,
+  });
+}
+
+/** When VPN is required for torrents, block starts until connected. */
+function assertVpnAllowsTorrents(): void {
+  const s = getSettings();
+  if (!s.vpnEnabled || !s.vpnRequireForTorrents) return;
+  if (!vpnManager.isConnected()) {
+    throw new Error('VPN required for torrents — connect OpenVPN in Settings first.');
+  }
 }
 
 function pushUpdateStatus() {
@@ -340,6 +391,9 @@ async function refreshOne(show: Show): Promise<Show> {
 async function autoDownloadForShows(shows: Show[]): Promise<number> {
   const settings = getSettings();
   if (!settings.autoDownload) return 0;
+  if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+    return 0;
+  }
   if (autoDownloadRunning) return 0;
   autoDownloadRunning = true;
   let started = 0;
@@ -689,9 +743,14 @@ function registerIpc() {
       maxConnections: next.maxConnections,
       maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
       maxUploadSpeedKBps: next.maxUploadSpeedKBps,
+      bindAddress: vpnManager.getBindAddress(),
     });
     // Re-apply private GitHub feed if token present (never log token)
     configureUpdaterFeed();
+    if (!next.vpnEnabled) {
+      void vpnManager.disconnect();
+    }
+    pushVpnStatus(next);
     return next;
   });
 
@@ -799,6 +858,7 @@ function registerIpc() {
         candidates?: TorrentCandidate[];
       }
     ) => {
+      assertVpnAllowsTorrents();
       const settings = getSettings();
       const show = getShows().find((s) => s.tmdbId === payload.tmdbId);
       if (!show) throw new Error('Show not found');
@@ -928,6 +988,7 @@ function registerIpc() {
         candidates?: TorrentCandidate[];
       }
     ) => {
+      assertVpnAllowsTorrents();
       const settings = getSettings();
       const movie = getMovies().find((m) => m.tmdbId === payload.tmdbId);
       if (!movie) throw new Error('Movie not found');
@@ -986,6 +1047,7 @@ function registerIpc() {
       maxConnections: settings.maxConnections,
       maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
       maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
+      bindAddress: vpnManager.getBindAddress(),
     });
     applyLoginItem(!!settings.launchOnStartup);
     telegramBot.sync(settings);
@@ -1020,6 +1082,60 @@ function registerIpc() {
       autoUpdater.quitAndInstall();
     }
   });
+
+  ipcMain.handle('vpn:status', async () => {
+    await vpnManager.refreshDetect();
+    return vpnManager.getStatus(getSettings());
+  });
+
+  ipcMain.handle('vpn:detect', async () => {
+    await vpnManager.refreshDetect();
+    pushVpnStatus();
+    return vpnManager.getStatus(getSettings());
+  });
+
+  ipcMain.handle('vpn:importConfig', async () => {
+    const res = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Import OpenVPN configuration',
+      properties: ['openFile'],
+      filters: [
+        { name: 'OpenVPN config', extensions: ['ovpn', 'conf'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (res.canceled || !res.filePaths[0]) return { canceled: true };
+    const imported = await vpnManager.importConfig(res.filePaths[0]);
+    const next = setSettings({
+      vpnConfigPath: imported.configPath,
+      vpnConfigName: imported.configName,
+      vpnEnabled: true,
+    });
+    pushVpnStatus(next);
+    return { ok: true, ...imported, settings: next };
+  });
+
+  ipcMain.handle('vpn:connect', async () => {
+    const s = getSettings();
+    if (!s.vpnConfigPath) {
+      throw new Error('Import an .ovpn file first');
+    }
+    // password never logged
+    await vpnManager.connect({
+      configPath: s.vpnConfigPath,
+      username: s.vpnUsername || '',
+      password: s.vpnPassword || '',
+    });
+    applyTorrentBindFromVpn();
+    pushVpnStatus();
+    return vpnManager.getStatus(getSettings());
+  });
+
+  ipcMain.handle('vpn:disconnect', async () => {
+    await vpnManager.disconnect();
+    applyTorrentBindFromVpn();
+    pushVpnStatus();
+    return vpnManager.getStatus(getSettings());
+  });
 }
 
 app.whenReady().then(async () => {
@@ -1031,6 +1147,15 @@ app.whenReady().then(async () => {
   registerIpc();
   wireTelegram();
   setupAutoUpdater();
+  await vpnManager.refreshDetect();
+  vpnManager.on('status', () => {
+    applyTorrentBindFromVpn();
+    pushVpnStatus();
+  });
+  vpnManager.on('bind', () => {
+    applyTorrentBindFromVpn();
+    pushVpnStatus();
+  });
   await ensureTorrentEngine();
   if (getTorrentEngineInfo().mode === 'in-process') {
     notify(
@@ -1071,6 +1196,7 @@ app.whenReady().then(async () => {
     maxConnections: settings.maxConnections,
     maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
+    bindAddress: vpnManager.getBindAddress(),
   });
   applyLoginItem(!!settings.launchOnStartup);
   scheduleRefresh();
@@ -1088,6 +1214,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     telegramBot.stop();
+    void vpnManager.disconnect();
     downloadEngine.destroy();
     void destroySearchPool();
     void destroyMetadataPool();

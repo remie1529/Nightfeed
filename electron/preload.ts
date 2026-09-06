@@ -65,6 +65,12 @@ const api = {
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
 
+  getVpnStatus: () => ipcRenderer.invoke('vpn:status'),
+  importVpnConfig: () => ipcRenderer.invoke('vpn:importConfig'),
+  connectVpn: () => ipcRenderer.invoke('vpn:connect'),
+  disconnectVpn: () => ipcRenderer.invoke('vpn:disconnect'),
+  detectOpenVpn: () => ipcRenderer.invoke('vpn:detect'),
+
   onDownloadsUpdate: (cb: (items: unknown[]) => void) => {
     const listener = (_: unknown, items: unknown[]) => cb(items);
     ipcRenderer.on('downloads:update', listener);
@@ -93,6 +99,12 @@ const api = {
     const listener = (_: unknown, status: unknown) => cb(status);
     ipcRenderer.on('update:status', listener);
     return () => ipcRenderer.removeListener('update:status', listener);
+  },
+
+  onVpnStatus: (cb: (status: unknown) => void) => {
+    const listener = (_: unknown, status: unknown) => cb(status);
+    ipcRenderer.on('vpn:status', listener);
+    return () => ipcRenderer.removeListener('vpn:status', listener);
   },
 
   posterUrl: (path: string | null, _size?: string) => {

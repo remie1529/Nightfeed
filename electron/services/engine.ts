@@ -82,6 +82,8 @@ export interface EngineSettings {
   maxConnections?: number;
   maxDownloadSpeedKBps?: number;
   maxUploadSpeedKBps?: number;
+  /** Bind outgoing torrent TCP sockets to this local IPv4 (VPN TUN/TAP). */
+  bindAddress?: string | null;
 }
 
 export class DownloadEngine extends EventEmitter {
@@ -91,10 +93,12 @@ export class DownloadEngine extends EventEmitter {
   private maxConns = 200;
   private maxDownloadSpeedKBps = 0;
   private maxUploadSpeedKBps = 0;
+  private bindAddress: string | null = null;
+  private netBindPatched = false;
   private lastProgressEmit = 0;
   private progressEmitTimer: NodeJS.Timeout | null = null;
 
-  /** Apply connection / speed settings. Safe to call before or after client exists. */
+  /** Apply connection / speed / VPN bind settings. Safe to call before or after client exists. */
   applySettings(settings: EngineSettings): void {
     if (typeof settings.maxConnections === 'number' && settings.maxConnections > 0) {
       this.maxConns = Math.max(1, Math.floor(settings.maxConnections));
@@ -105,6 +109,14 @@ export class DownloadEngine extends EventEmitter {
     if (typeof settings.maxUploadSpeedKBps === 'number') {
       this.maxUploadSpeedKBps = Math.max(0, Math.floor(settings.maxUploadSpeedKBps));
     }
+    if ('bindAddress' in settings) {
+      const next = settings.bindAddress ? String(settings.bindAddress) : null;
+      if (next !== this.bindAddress) {
+        this.bindAddress = next;
+        // Recreate client so new sockets use the updated localAddress bind.
+        this.destroyClientOnly();
+      }
+    }
     if (this.client) {
       this.client.maxConns = this.maxConns;
       // webtorrent 1.9.7: client.throttleDownload / throttleUpload (bytes/sec, -1 = unlimited)
@@ -113,15 +125,71 @@ export class DownloadEngine extends EventEmitter {
     }
   }
 
+  /** Patch net.connect in this process so outgoing torrent TCP uses localAddress. */
+  private ensureNetBindPatch(): void {
+    if (this.netBindPatched) return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const net = require('net') as typeof import('net');
+    const self = this;
+    const original = net.connect.bind(net);
+    (net as any).connect = function patchedConnect(...args: any[]) {
+      if (self.bindAddress) {
+        if (args.length > 0 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])) {
+          if (!args[0].localAddress) {
+            args[0] = { ...args[0], localAddress: self.bindAddress };
+          }
+        }
+      }
+      return original(...args);
+    };
+    this.netBindPatched = true;
+  }
+
+  /** Destroy WebTorrent client without clearing download items (used on bind change). */
+  private destroyClientOnly(): void {
+    if (!this.client) return;
+    try {
+      for (const [id, t] of this.torrents) {
+        try {
+          t.destroy?.();
+        } catch {
+          // ignore
+        }
+        this.torrents.delete(id);
+        const item = this.items.get(id);
+        if (item && (item.status === 'downloading' || item.status === 'queued' || item.status === 'paused')) {
+          item.status = 'error';
+          item.error = 'Network bind changed (VPN). Restart the download.';
+          item.downloadSpeed = 0;
+          item.uploadSpeed = 0;
+          item.numPeers = 0;
+        }
+      }
+      this.client.destroy(() => undefined);
+    } catch {
+      // ignore
+    }
+    this.client = null;
+    this.emit('update', this.list());
+  }
+
   private getClient() {
     if (!this.client) {
+      this.ensureNetBindPatch();
       const downloadLimit = kbpsToBytesPerSec(this.maxDownloadSpeedKBps);
       const uploadLimit = kbpsToBytesPerSec(this.maxUploadSpeedKBps);
-      this.client = new WebTorrent({
+      // When VPN-bound: disable DHT/uTP so peer traffic prefers TCP (localAddress bind).
+      // Tracker HTTP and metadata APIs still use the normal network (split intent).
+      const opts: Record<string, unknown> = {
         maxConns: this.maxConns,
         downloadLimit,
         uploadLimit,
-      });
+      };
+      if (this.bindAddress) {
+        opts.dht = false;
+        opts.utp = false;
+      }
+      this.client = new WebTorrent(opts);
       this.client.on('error', (err: Error) => {
         this.emit('engine-error', err.message);
       });

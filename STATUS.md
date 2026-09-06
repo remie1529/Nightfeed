@@ -1,16 +1,18 @@
-# Status v1.5.5
+# Status v1.5.6
 
 ## Works
-- Library zoekfunctie (TVMaze) + movie IMDb search on dedicated worker_threads metadata worker — stays responsive during active downloads
-- Download progress no longer sync-writes electron-store every tick (debounced 5s + setImmediate); progress IPC ~1s throttle; candidates stripped from UI payload
-- WebTorrent prefers utilityProcess (retry + 12s ready timeout); clear fallback warning if in-process
-- Native File/Edit/View menu bar hidden (Menu.setApplicationMenu(null) + setMenuBarVisibility(false))
-- Settings backup export/import (full electron-store JSON; replace-with-confirm; secrets included with UI warning)
-- Movies: IMDb scrape; TV: TVMaze; FTP; UNC; multi-source torrents; Telegram; electron-updater + PAT
+- App icon (build/icon.png + multi-size build/icon.ico) wired into electron-builder / BrowserWindow
+- OpenVPN Settings: enable, import .ovpn into userData, optional user/pass (never logged), connect/disconnect + status
+- Split intent: openvpn `--route-nopull` + ignore redirect-gateway; WebTorrent TCP `localAddress` bind to detected TUN/TAP IP; DHT/uTP off while bound
+- Optional "Require VPN for torrents" gates manual + auto downloads
+- Does not ship openvpn.exe — detects PATH / Program Files\OpenVPN\bin
 
-## Root cause (1.5.4 bug)
-pushDownloads() called sync saveDownloads() (electron-store) on every progress update (~350ms), blocking the main event loop so tmdb:search / TVMaze fetch could not complete until the download finished.
+## Limitations
+- Admin rights often needed for TAP/TUN
+- Until TUN/TAP IP is detected, torrent bind is pending (honest Settings hint)
+- Tracker announces may still use the default route; metadata APIs never go through VPN
+- Mid-download VPN bind change stops those torrents (restart download)
 
 ## Artifacts
 - /workspace/torrent-tv-manager
-- Release v1.5.5 on remie1529/Nightfeed
+- Release v1.5.6 on remie1529/Nightfeed

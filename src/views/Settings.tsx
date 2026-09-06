@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus } from '../lib/types';
+import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus, VpnStatus } from '../lib/types';
 import { DEFAULT_TORRENT_SOURCES } from '../lib/types';
 
 const defaultSources: TorrentSources = { ...DEFAULT_TORRENT_SOURCES };
@@ -42,6 +42,12 @@ const empty: AppSettings = {
   ftpUser: '',
   ftpPassword: '',
   ftpRemoteBasePath: '',
+  vpnEnabled: false,
+  vpnConfigPath: '',
+  vpnConfigName: '',
+  vpnUsername: '',
+  vpnPassword: '',
+  vpnRequireForTorrents: false,
 };
 
 export default function SettingsView() {
@@ -64,11 +70,22 @@ export default function SettingsView() {
   } | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [vpnStatus, setVpnStatus] = useState<VpnStatus | null>(null);
+  const [vpnBusy, setVpnBusy] = useState(false);
 
   const refreshTg = async () => {
     try {
       const s = (await window.torrentAPI.getTelegramStatus()) as TelegramStatus;
       setTgStatus(s);
+    } catch {
+      // ignore
+    }
+  };
+
+  const refreshVpn = async () => {
+    try {
+      const s = (await window.torrentAPI.getVpnStatus?.()) as VpnStatus;
+      if (s) setVpnStatus(s);
     } catch {
       // ignore
     }
@@ -87,11 +104,17 @@ export default function SettingsView() {
     window.torrentAPI.getThreadInfo?.().then((info) => setThreadInfo(info as typeof threadInfo)).catch(() => undefined);
     window.torrentAPI.getUpdateStatus?.().then((s) => setUpdateStatus(s as UpdateStatus)).catch(() => undefined);
     refreshTg();
-    const id = setInterval(() => void refreshTg(), 4000);
+    void refreshVpn();
+    const id = setInterval(() => {
+      void refreshTg();
+      void refreshVpn();
+    }, 4000);
     const off = window.torrentAPI.onUpdateStatus?.((s) => setUpdateStatus(s as UpdateStatus));
+    const offVpn = window.torrentAPI.onVpnStatus?.((s) => setVpnStatus(s as VpnStatus));
     return () => {
       clearInterval(id);
       off?.();
+      offVpn?.();
     };
   }, []);
 
@@ -224,6 +247,60 @@ export default function SettingsView() {
     }
   };
 
+  const importVpn = async () => {
+    setVpnBusy(true);
+    setError(null);
+    try {
+      const res = (await window.torrentAPI.importVpnConfig?.()) as {
+        ok?: boolean;
+        canceled?: boolean;
+        configName?: string;
+        settings?: AppSettings;
+      };
+      if (res?.canceled) return;
+      if (res?.settings) {
+        setLocal({
+          ...empty,
+          ...res.settings,
+          torrentSources: { ...defaultSources, ...(res.settings.torrentSources || {}) },
+        });
+      }
+      await refreshVpn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVpnBusy(false);
+    }
+  };
+
+  const connectVpn = async () => {
+    setVpnBusy(true);
+    setError(null);
+    try {
+      // Persist username/password/toggles before connect (password never logged)
+      await window.torrentAPI.setSettings(settings);
+      const s = (await window.torrentAPI.connectVpn?.()) as VpnStatus;
+      if (s) setVpnStatus(s);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      await refreshVpn();
+    } finally {
+      setVpnBusy(false);
+    }
+  };
+
+  const disconnectVpn = async () => {
+    setVpnBusy(true);
+    try {
+      const s = (await window.torrentAPI.disconnectVpn?.()) as VpnStatus;
+      if (s) setVpnStatus(s);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVpnBusy(false);
+    }
+  };
+
   const tgLabel = (() => {
     if (!settings.telegramEnabled) return 'Disabled';
     if (tgStatus?.polling) return 'Connected (polling)';
@@ -241,7 +318,7 @@ export default function SettingsView() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <p>TV & movie libraries, downloads, auto-download, startup, Telegram, updates</p>
+          <p>TV & movie libraries, downloads, VPN, auto-download, startup, Telegram, updates</p>
         </div>
         <div className="toolbar">
           {saved && <span style={{ color: 'var(--ok)' }}>Saved</span>}
@@ -488,6 +565,129 @@ export default function SettingsView() {
               <div className="hint">
                 One base directory for finished files (TV and/or movies). File is uploaded as{' '}
                 {'{base}/{filename}'}.
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="settings-section">VPN (OpenVPN)</div>
+
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.vpnEnabled}
+              onChange={(e) => setLocal({ ...settings, vpnEnabled: e.target.checked })}
+            />
+            <span>Enable OpenVPN</span>
+          </label>
+          <div className="hint">
+            Only <strong>torrent download sockets</strong> bind to the VPN TUN/TAP interface when connected.
+            TVMaze / IMDb / UI / updates stay on your normal network. OpenVPN is started with{' '}
+            <code>route-nopull</code> so the whole PC is not forced through the VPN.
+            Admin rights may be required for TAP/TUN. Nightfeed does not ship <code>openvpn.exe</code> (GPL) —
+            install <a href="https://openvpn.net/community-downloads/" target="_blank" rel="noreferrer">OpenVPN Community</a>{' '}
+            so <code>openvpn.exe</code> is available.
+          </div>
+        </div>
+
+        {settings.vpnEnabled && (
+          <>
+            <div className="field">
+              <label>.ovpn configuration</label>
+              <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                <input
+                  value={settings.vpnConfigName || settings.vpnConfigPath || ''}
+                  readOnly
+                  placeholder="No config imported"
+                />
+                <button type="button" onClick={() => void importVpn()} disabled={vpnBusy}>
+                  {vpnBusy ? 'Working…' : 'Import .ovpn…'}
+                </button>
+              </div>
+              <div className="hint">
+                File is copied into app userData and remembered. Original path is not required after import.
+              </div>
+            </div>
+
+            <div className="field">
+              <label>VPN username (optional)</label>
+              <input
+                value={settings.vpnUsername || ''}
+                onChange={(e) => setLocal({ ...settings, vpnUsername: e.target.value })}
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="field">
+              <label>VPN password (optional)</label>
+              <input
+                type="password"
+                autoComplete="off"
+                value={settings.vpnPassword || ''}
+                onChange={(e) => setLocal({ ...settings, vpnPassword: e.target.value })}
+              />
+              <div className="hint">Never logged. Written to a restricted auth-user-pass file only while connecting.</div>
+            </div>
+
+            <div className="field">
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={!!settings.vpnRequireForTorrents}
+                  onChange={(e) => setLocal({ ...settings, vpnRequireForTorrents: e.target.checked })}
+                />
+                <span>Require VPN for torrent downloads</span>
+              </label>
+              <div className="hint">
+                When on, manual and auto downloads refuse to start until OpenVPN status is connected.
+              </div>
+            </div>
+
+            <div className="field">
+              <label>VPN status</label>
+              <div className="status-line">
+                {vpnStatus
+                  ? `${vpnStatus.state}${vpnStatus.message ? ` — ${vpnStatus.message}` : ''}`
+                  : '—'}
+              </div>
+              {vpnStatus && (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  OpenVPN: {vpnStatus.openvpnFound ? (vpnStatus.openvpnPath || 'found') : 'not found — install Community edition'}
+                  {vpnStatus.bindAddress ? ` · torrent bind ${vpnStatus.bindAddress}` : ''}
+                  {vpnStatus.routeNopull ? ' · route-nopull' : ''}
+                </div>
+              )}
+              {!vpnStatus?.bindAddress && vpnStatus?.state === 'connected' && (
+                <div className="hint" style={{ color: 'var(--danger)' }}>
+                  Connected but TUN/TAP IP not detected yet — torrent bind pending. Peer TCP binds when the
+                  interface IP appears; until then traffic may use the default interface.
+                </div>
+              )}
+              <div className="row" style={{ marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => void connectVpn()}
+                  disabled={vpnBusy || !settings.vpnConfigPath}
+                >
+                  {vpnBusy ? 'Working…' : 'Connect'}
+                </button>
+                <button type="button" onClick={() => void disconnectVpn()} disabled={vpnBusy}>
+                  Disconnect
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void window.torrentAPI.detectOpenVpn?.().then((s) => setVpnStatus(s as VpnStatus))}
+                  disabled={vpnBusy}
+                >
+                  Re-detect OpenVPN
+                </button>
+              </div>
+              <div className="hint" style={{ marginTop: 8 }}>
+                Limitation: WebTorrent peer TCP connections use <code>localAddress</code> bind to the VPN IP.
+                DHT/uTP are disabled while bound. Tracker announces and metadata (TVMaze/IMDb) stay on the normal
+                network. Changing VPN bind mid-download may require restarting that download.
               </div>
             </div>
           </>

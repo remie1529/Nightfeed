@@ -9,3 +9,4 @@ release
 !.env.example
 *.zip
 win-unpacked
+tsconfig.node.tsbuildinfo
