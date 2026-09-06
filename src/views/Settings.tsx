@@ -32,6 +32,8 @@ const empty: AppSettings = {
   telegramEnabled: false,
   telegramBotToken: '',
   telegramAllowedChatIds: '',
+  telegramAdminChatIds: '',
+  telegramRequestChatIds: '',
   githubToken: '',
   maxConnections: 200,
   maxDownloadSpeedKBps: 0,
@@ -98,6 +100,9 @@ export default function SettingsView() {
         ...defaultSources,
         ...(loaded.torrentSources || {}),
       };
+      if (!(loaded.telegramAdminChatIds || '').trim() && (loaded.telegramAllowedChatIds || '').trim()) {
+        loaded.telegramAdminChatIds = loaded.telegramAllowedChatIds;
+      }
       setLocal(loaded);
     });
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || '—'))).catch(() => undefined);
@@ -305,8 +310,10 @@ export default function SettingsView() {
     if (!settings.telegramEnabled) return 'Disabled';
     if (tgStatus?.polling) return 'Connected (polling)';
     if (tgStatus?.lastError) return `Error: ${tgStatus.lastError}`;
-    if (!settings.telegramBotToken || !settings.telegramAllowedChatIds.trim()) {
-      return 'Enabled — token / chat id incomplete';
+    const admin = (settings.telegramAdminChatIds || settings.telegramAllowedChatIds || '').trim();
+    const reqs = (settings.telegramRequestChatIds || '').trim();
+    if (!settings.telegramBotToken || (!admin && !reqs)) {
+      return 'Enabled — token / chat ids incomplete';
     }
     return 'Enabled — starting…';
   })();
@@ -795,13 +802,35 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
-          <label>Allowed chat id(s)</label>
+          <label>Admin chat ID(s)</label>
           <input
-            value={settings.telegramAllowedChatIds}
-            onChange={(e) => setLocal({ ...settings, telegramAllowedChatIds: e.target.value })}
+            value={settings.telegramAdminChatIds || settings.telegramAllowedChatIds || ''}
+            onChange={(e) =>
+              setLocal({
+                ...settings,
+                telegramAdminChatIds: e.target.value,
+                telegramAllowedChatIds: e.target.value,
+              })
+            }
             placeholder="e.g. 123456789"
           />
-          <div className="hint">Comma-separated. Only these chats can run commands.</div>
+          <div className="hint">
+            Comma-separated. Admins get approval notifications and full bot commands
+            (/status /shows /movies /check /downloads /add /approve /deny /help).
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Requests chat ID(s)</label>
+          <input
+            value={settings.telegramRequestChatIds || ''}
+            onChange={(e) => setLocal({ ...settings, telegramRequestChatIds: e.target.value })}
+            placeholder="e.g. 987654321"
+          />
+          <div className="hint">
+            Comma-separated. These users can only submit movie/TV requests
+            (/request show|movie &lt;name&gt;). Unknown chats only receive their chat ID.
+          </div>
         </div>
 
         <div className="field">
@@ -824,7 +853,7 @@ export default function SettingsView() {
             )}
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            Commands: /status /shows /check /downloads /add &lt;query&gt; /help
+            Message the bot from a new chat to see Your chat ID: … then paste it above.
           </div>
         </div>
       </div>

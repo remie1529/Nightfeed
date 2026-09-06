@@ -18,6 +18,8 @@ type StartEpisodeOpts = {
   episodeTitle: string;
   candidates?: TorrentCandidate[];
   triedInfoHashes?: string[];
+  notifyChatId?: number;
+  telegramRequestId?: string;
 };
 
 type StartMovieOpts = {
@@ -26,6 +28,8 @@ type StartMovieOpts = {
   movieLibraryRoot: string;
   candidates?: TorrentCandidate[];
   triedInfoHashes?: string[];
+  notifyChatId?: number;
+  telegramRequestId?: string;
 };
 
 class UtilityEngineProxy extends EventEmitter {

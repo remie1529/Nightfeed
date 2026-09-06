@@ -8,6 +8,7 @@ import {
   EpisodeOverrideStatus,
   Movie,
   Show,
+  TelegramRequest,
 } from '../types';
 
 export interface AppData {
@@ -17,6 +18,8 @@ export interface AppData {
   downloads: DownloadItem[];
   /** Manual episode status overrides keyed by `${showId}:${season}:${episode}` */
   episodeOverrides: Record<string, EpisodeOverrideStatus>;
+  /** Telegram movie/TV requests (pending / approved / denied). */
+  telegramRequests: TelegramRequest[];
 }
 
 const defaults: AppData = {
@@ -29,6 +32,7 @@ const defaults: AppData = {
   movies: [],
   downloads: [],
   episodeOverrides: {},
+  telegramRequests: [],
 };
 
 export const store = new Store<AppData>({
@@ -88,11 +92,32 @@ export function getSettings(): AppSettings {
   if (merged.vpnUsername == null) merged.vpnUsername = '';
   if (merged.vpnPassword == null) merged.vpnPassword = '';
   if (typeof merged.vpnRequireForTorrents !== 'boolean') merged.vpnRequireForTorrents = false;
+  if (merged.telegramAdminChatIds == null) merged.telegramAdminChatIds = '';
+  if (merged.telegramRequestChatIds == null) merged.telegramRequestChatIds = '';
+  // Migrate legacy single allow-list into Admin when new fields are empty.
+  if (
+    !(merged.telegramAdminChatIds || '').trim() &&
+    !(merged.telegramRequestChatIds || '').trim() &&
+    (merged.telegramAllowedChatIds || '').trim()
+  ) {
+    merged.telegramAdminChatIds = merged.telegramAllowedChatIds;
+  }
   return merged;
 }
 
 export function setSettings(partial: Partial<AppSettings>): AppSettings {
   const next = { ...getSettings(), ...partial };
+  // Keep deprecated allow-list mirrored to admin ids for older backups / tooling.
+  if (
+    partial.telegramAdminChatIds !== undefined ||
+    (partial.telegramAllowedChatIds !== undefined && !(next.telegramAdminChatIds || '').trim())
+  ) {
+    if (partial.telegramAdminChatIds !== undefined) {
+      next.telegramAllowedChatIds = next.telegramAdminChatIds || '';
+    } else if (partial.telegramAllowedChatIds !== undefined && !(next.telegramAdminChatIds || '').trim()) {
+      next.telegramAdminChatIds = next.telegramAllowedChatIds || '';
+    }
+  }
   store.set('settings', next);
   return next;
 }
@@ -197,6 +222,29 @@ export function clearShowOverrides(showId: number): void {
 }
 
 
+export function getTelegramRequests(): TelegramRequest[] {
+  return store.get('telegramRequests') || [];
+}
+
+export function saveTelegramRequests(requests: TelegramRequest[]): void {
+  store.set('telegramRequests', requests);
+}
+
+export function upsertTelegramRequest(req: TelegramRequest): TelegramRequest[] {
+  const all = getTelegramRequests();
+  const idx = all.findIndex((r) => r.id === req.id);
+  if (idx >= 0) all[idx] = req;
+  else all.push(req);
+  // Cap history to avoid unbounded growth (keep newest 200).
+  const trimmed = all.length > 200 ? all.slice(all.length - 200) : all;
+  saveTelegramRequests(trimmed);
+  return trimmed;
+}
+
+export function getTelegramRequest(id: string): TelegramRequest | undefined {
+  return getTelegramRequests().find((r) => r.id === id);
+}
+
 /** Full app data snapshot for backup (includes secrets from settings). */
 export function exportBackupData(): AppData & { exportedAt: string; app: string; version: number } {
   return {
@@ -205,6 +253,7 @@ export function exportBackupData(): AppData & { exportedAt: string; app: string;
     movies: getMovies(),
     downloads: getDownloads(),
     episodeOverrides: getEpisodeOverrides(),
+    telegramRequests: getTelegramRequests(),
     exportedAt: new Date().toISOString(),
     app: 'Nightfeed',
     version: 1,
@@ -236,15 +285,28 @@ export function importBackupData(raw: unknown): { shows: number; movies: number 
   if (!data.episodeOverrides || typeof data.episodeOverrides !== 'object') {
     data.episodeOverrides = {};
   }
+  if (!Array.isArray((data as AppData).telegramRequests)) {
+    (data as AppData).telegramRequests = [];
+  }
 
   const nextSettings: AppSettings = { ...DEFAULT_SETTINGS, ...data.settings };
   nextSettings.torrentSources = migrateTorrentSources(data.settings as Partial<AppSettings>);
+  if (nextSettings.telegramAdminChatIds == null) nextSettings.telegramAdminChatIds = '';
+  if (nextSettings.telegramRequestChatIds == null) nextSettings.telegramRequestChatIds = '';
+  if (
+    !(nextSettings.telegramAdminChatIds || '').trim() &&
+    !(nextSettings.telegramRequestChatIds || '').trim() &&
+    (nextSettings.telegramAllowedChatIds || '').trim()
+  ) {
+    nextSettings.telegramAdminChatIds = nextSettings.telegramAllowedChatIds;
+  }
 
   store.set('settings', nextSettings);
   store.set('shows', data.shows);
   store.set('movies', data.movies);
   store.set('downloads', data.downloads);
   store.set('episodeOverrides', data.episodeOverrides);
+  store.set('telegramRequests', (data as AppData).telegramRequests || []);
 
   return { shows: data.shows.length, movies: (data.movies || []).length };
 }

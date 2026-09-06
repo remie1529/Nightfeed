@@ -418,6 +418,8 @@ export class DownloadEngine extends EventEmitter {
     episodeTitle: string;
     candidates?: TorrentCandidate[];
     triedInfoHashes?: string[];
+    notifyChatId?: number;
+    telegramRequestId?: string;
   }): Promise<DownloadItem> {
     const client = this.getClient();
     const id = `${opts.show.tmdbId}-S${opts.seasonNumber}E${opts.episodeNumber}-${Date.now()}`;
@@ -450,6 +452,8 @@ export class DownloadEngine extends EventEmitter {
       magnet: opts.magnet,
       candidates: opts.candidates,
       triedInfoHashes: opts.triedInfoHashes ? [...opts.triedInfoHashes] : [],
+      notifyChatId: opts.notifyChatId,
+      telegramRequestId: opts.telegramRequestId,
     };
     this.items.set(id, item);
     this.emitUpdateNow();
@@ -552,6 +556,8 @@ export class DownloadEngine extends EventEmitter {
     movieLibraryRoot: string;
     candidates?: TorrentCandidate[];
     triedInfoHashes?: string[];
+    notifyChatId?: number;
+    telegramRequestId?: string;
   }): Promise<DownloadItem> {
     const client = this.getClient();
     const id = `movie-${opts.movie.tmdbId}-${Date.now()}`;
@@ -578,6 +584,8 @@ export class DownloadEngine extends EventEmitter {
       movieId: opts.movie.tmdbId,
       candidates: opts.candidates,
       triedInfoHashes: opts.triedInfoHashes ? [...opts.triedInfoHashes] : [],
+      notifyChatId: opts.notifyChatId,
+      telegramRequestId: opts.telegramRequestId,
     };
     this.items.set(id, item);
     this.emitUpdateNow();
