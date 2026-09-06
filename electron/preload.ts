@@ -15,6 +15,15 @@ const api = {
     ipcRenderer.invoke('library:update', mazeId, partial),
   refreshShow: (mazeId: number) => ipcRenderer.invoke('library:refresh', mazeId),
   refreshAll: () => ipcRenderer.invoke('library:refreshAll'),
+  scanLibraryPreview: (scope: 'tv' | 'movies' | 'both') =>
+    ipcRenderer.invoke('library:scanPreview', scope),
+  scanLibraryImport: (items: Array<{
+    id: string;
+    kind: 'show' | 'movie';
+    folderPath: string;
+    matchId: number;
+    selected: boolean;
+  }>) => ipcRenderer.invoke('library:scanImport', items),
   setEpisodeStatus: (
     mazeId: number,
     season: number,

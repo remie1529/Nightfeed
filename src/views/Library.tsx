@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Poster from '../components/Poster';
 import type { AddShowPolicy, Show, MazeSearchItem } from '../lib/types';
+import FolderScanImport from '../components/FolderScanImport';
 
 export default function Library({
   onOpenShow,
@@ -90,6 +91,7 @@ export default function Library({
           <p>{shows.length} show{shows.length === 1 ? '' : 's'} tracked</p>
         </div>
         <div className="toolbar">
+          <FolderScanImport defaultScope="tv" onDone={() => { void load(); onRefreshDone(); }} />
           <button onClick={refreshAll} disabled={refreshing || shows.length === 0}>
             {refreshing ? 'Refreshing…' : 'Check new episodes'}
           </button>

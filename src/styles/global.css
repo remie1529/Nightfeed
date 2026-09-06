@@ -566,3 +566,20 @@ table.dense tr:hover td {
   color: var(--text-faint);
   line-height: 1.25;
 }
+
+
+.scan-badge {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.scan-will_add { color: #b5d4b5; border-color: #3d5a3d; background: #1a241a; }
+.scan-already_in_library { color: var(--text-faint); border-color: #3a3a3a; background: #1a1a1a; }
+.scan-no_match { color: #d4a0a0; border-color: #5a3d3d; background: #241a1a; }
+.scan-ambiguous { color: #e0c080; border-color: #5a4a2a; background: #241e14; }

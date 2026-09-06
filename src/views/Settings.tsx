@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus, VpnStatus } from '../lib/types';
+import FolderScanImport from '../components/FolderScanImport';
 import { DEFAULT_TORRENT_SOURCES } from '../lib/types';
 
 const defaultSources: TorrentSources = { ...DEFAULT_TORRENT_SOURCES };
@@ -365,6 +366,17 @@ export default function SettingsView() {
           <div className="hint">
             Separate from TV. Movies save as {'{Title} ({Year})/{Title} ({Year}).ext'} under this folder only.
             Mapped drives and UNC (\\server\share\Movies) are supported via Browse or typed path.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Mass import from folders</label>
+          <div className="row" style={{ gap: '0.6rem', flexWrap: 'wrap' }}>
+            <FolderScanImport defaultScope="both" />
+          </div>
+          <div className="hint">
+            Manual only — never runs on startup. Scans TV/movie library roots, previews matches (TVMaze / IMDb),
+            then imports on confirm. Existing files are marked downloaded when paths match; nothing is moved or deleted.
           </div>
         </div>
 
