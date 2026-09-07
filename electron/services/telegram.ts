@@ -230,7 +230,8 @@ export class TelegramBot {
   /** Notify a chat using current settings token (fire-and-forget safe). */
   async notifyChat(settings: AppSettings, chatId: number | string, text: string): Promise<void> {
     const token = settings.telegramBotToken.trim();
-    if (!token || chatId == null || chatId === '') return;
+    // Skip empty / web-only (0) chat ids — negative group ids remain valid.
+    if (!token || chatId == null || chatId === '' || chatId === 0 || chatId === '0') return;
     await this.sendMessage(token, chatId, text);
   }
 
@@ -408,12 +409,12 @@ export class TelegramBot {
 
     if (!this.handlers) return;
 
-    const match = text.match(/^\/([a-zA-Z0-9_]+)(?:@\w+)?(?:\s+([\s\S]*))?$/);
+    const match = text.match(/^\/([a-zA-Z0-9_-]+)(?:@\w+)?(?:\s+([\s\S]*))?$/);
     if (!match) {
       if (role === 'requests') {
         await reply(
           chatId,
-          'Use /request show <name> or /request movie <name>. Try /help'
+          'Use /request-show <name> or /request-movie <name>. Try /help'
         );
       } else {
         await reply(chatId, 'Unknown input. Try /help');
@@ -451,11 +452,21 @@ export class TelegramBot {
   ) {
     if (!this.handlers) return;
     switch (cmd) {
+      case 'request-show':
+        if (this.handlers.request) await this.handlers.request(chatId, `show ${args}`.trim(), reply, meta);
+        else await reply(chatId, 'Request command not available.');
+        break;
+      case 'request-movie':
+        if (this.handlers.request) await this.handlers.request(chatId, `movie ${args}`.trim(), reply, meta);
+        else await reply(chatId, 'Request command not available.');
+        break;
       case 'request':
+        // Legacy alias: /request show|movie <name>
         if (this.handlers.request) await this.handlers.request(chatId, args, reply, meta);
         else await reply(chatId, 'Request command not available.');
         break;
       case 'myrequests':
+      case 'my-requests':
       case 'requests':
         if (this.handlers.myrequests) await this.handlers.myrequests(chatId, args, reply, meta);
         else await reply(chatId, 'No request status available.');
@@ -473,7 +484,7 @@ export class TelegramBot {
       default:
         await reply(
           chatId,
-          `Unknown command /${cmd}. Requests chats can use /request, /status, /help.`
+          `Unknown command /${cmd}. Requests chats can use /request-show, /request-movie, /status, /help.`
         );
     }
   }
@@ -506,7 +517,16 @@ export class TelegramBot {
       case 'add':
         await this.handlers.add(chatId, args, reply, meta);
         break;
+      case 'request-show':
+        if (this.handlers.request) await this.handlers.request(chatId, `show ${args}`.trim(), reply, meta);
+        else await reply(chatId, 'Request command not available.');
+        break;
+      case 'request-movie':
+        if (this.handlers.request) await this.handlers.request(chatId, `movie ${args}`.trim(), reply, meta);
+        else await reply(chatId, 'Request command not available.');
+        break;
       case 'request':
+        // Legacy alias: /request show|movie <name>
         if (this.handlers.request) await this.handlers.request(chatId, args, reply, meta);
         else await reply(chatId, 'Request command not available.');
         break;
@@ -519,6 +539,7 @@ export class TelegramBot {
         else await reply(chatId, 'Deny not available.');
         break;
       case 'myrequests':
+      case 'my-requests':
       case 'requests':
         if (this.handlers.myrequests) await this.handlers.myrequests(chatId, args, reply, meta);
         else await reply(chatId, 'No request status available.');

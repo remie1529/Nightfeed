@@ -121,6 +121,16 @@ export interface AppSettings {
   vpnPassword: string;
   /** Refuse to start torrent downloads until VPN is connected. */
   vpnRequireForTorrents: boolean;
+  /** Enable local HTTP request/admin portal in the main process. */
+  webPortalEnabled: boolean;
+  /** HTTP listen port (default 8787). */
+  webPortalPort: number;
+  /** localhost = 127.0.0.1, lan = 0.0.0.0 */
+  webPortalBind: 'localhost' | 'lan';
+  /** scrypt hash of admin password — never store or log plaintext. */
+  webPortalAdminPasswordHash: string;
+  /** HMAC secret for admin session cookies. */
+  webPortalSessionSecret: string;
 }
 
 export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -269,12 +279,15 @@ export interface TelegramRequest {
   title: string;
   year?: number | null;
   overview?: string;
+  /** Telegram chat id; 0 for web-only requesters (no Telegram notify). */
   requesterChatId: number;
   requesterName?: string;
   status: TelegramRequestStatus;
   createdAt: string;
   resolvedAt?: string;
   resolvedByChatId?: number;
+  /** Origin of the request (telegram bot vs local web portal). */
+  source?: 'telegram' | 'web';
 }
 
 export interface TelegramStatus {
@@ -346,4 +359,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vpnUsername: '',
   vpnPassword: '',
   vpnRequireForTorrents: false,
+  webPortalEnabled: false,
+  webPortalPort: 8787,
+  webPortalBind: 'localhost',
+  webPortalAdminPasswordHash: '',
+  webPortalSessionSecret: '',
 };

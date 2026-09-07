@@ -86,6 +86,12 @@ export interface AppSettings {
   vpnUsername: string;
   vpnPassword: string;
   vpnRequireForTorrents: boolean;
+  webPortalEnabled: boolean;
+  webPortalPort: number;
+  webPortalBind: 'localhost' | 'lan';
+  /** Present when a password has been set (hash never shown in UI). */
+  webPortalAdminPasswordHash?: string;
+  webPortalSessionSecret?: string;
 }
 
 export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -228,6 +234,17 @@ export interface TelegramRequest {
   createdAt: string;
   resolvedAt?: string;
   resolvedByChatId?: number;
+  source?: 'telegram' | 'web';
+}
+
+export interface WebPortalStatus {
+  enabled: boolean;
+  listening: boolean;
+  port: number;
+  bind: string;
+  urls: string[];
+  lastError: string | null;
+  passwordSet: boolean;
 }
 
 export interface TelegramStatus {

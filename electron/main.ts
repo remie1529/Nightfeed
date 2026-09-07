@@ -34,9 +34,21 @@ import {
   fetchMovieDetail,
 } from './services/imdb';
 import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo } from './services/engine-bridge';
-import { approveDenyKeyboard, telegramBot } from './services/telegram';
+import {
+  approveDenyKeyboard,
+  normalizeChatIdToken,
+  parseChatIds,
+  telegramBot,
+} from './services/telegram';
+import {
+  hashWebPortalPassword,
+  portalPublicUrls,
+  webPortal,
+} from './services/web-portal';
 import { uploadFinishedFile } from './services/ftp';
 import { vpnManager } from './services/vpn';
+import { randomBytes } from 'crypto';
+import os from 'os';
 import {
   buildScanPreview,
   type FolderScanImportItem,
@@ -597,6 +609,48 @@ function formatRequestLine(r: TelegramRequest): string {
   return `[${r.id}] ${type}: ${r.title}${year} — ${r.status}`;
 }
 
+function pickLanIpv4(): string | null {
+  try {
+    const nets = os.networkInterfaces();
+    for (const entries of Object.values(nets)) {
+      for (const e of entries || []) {
+        if (e && !e.internal && (e.family === 'IPv4' || e.family === 4)) return e.address;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function ensureWebPortalSecrets(settings: AppSettings): AppSettings {
+  let next = settings;
+  if (!(next.webPortalSessionSecret || '').trim()) {
+    next = setSettings({ webPortalSessionSecret: randomBytes(24).toString('hex') });
+  }
+  return next;
+}
+
+function applySettingsSideEffects(next: AppSettings): void {
+  scheduleRefresh();
+  applyLoginItem(!!next.launchOnStartup);
+  telegramBot.sync(next);
+  const portalSettings = ensureWebPortalSecrets(next);
+  webPortal.sync(portalSettings);
+  downloadEngine.applySettings({
+    maxConnections: next.maxConnections,
+    maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
+    maxUploadSpeedKBps: next.maxUploadSpeedKBps,
+    bindAddress: vpnManager.getBindAddress(),
+  });
+  configureUpdaterFeed();
+  if (!next.vpnEnabled) {
+    void vpnManager.disconnect();
+  }
+  pushVpnStatus(next);
+}
+
+
 async function refreshAllShows(): Promise<Show[]> {
   const updated: Show[] = [];
   for (const show of getShows()) {
@@ -899,7 +953,8 @@ function wireTelegram() {
           '/check — refresh metadata (+ auto-download if enabled)',
           '/downloads — download progress',
           '/add <query> — search TVMaze and add best match',
-          '/request show|movie <name> — submit a request (or approve your own via admin)',
+          '/request-show <name> — submit a TV request',
+          '/request-movie <name> — submit a movie request',
           '/approve <id> — approve a pending request',
           '/deny <id> — deny a pending request',
           '/requests — list recent pending requests',
@@ -912,9 +967,8 @@ function wireTelegram() {
         chatId,
         [
           'Nightfeed bot (requests)',
-          '/request show <name> — request a TV show',
-          '/request movie <name> — request a movie',
-          '/request <name> — prompt for show vs movie',
+          '/request-show <name> — request a TV show',
+          '/request-movie <name> — request a movie',
           '/status — your recent requests',
           '/help — this list',
         ].join('\n')
@@ -1023,7 +1077,7 @@ function wireTelegram() {
       if (!raw) {
         await reply(
           chatId,
-          'Usage:\n/request show <name>\n/request movie <name>\n/request <name>'
+          'Usage:\n/request-show <name>\n/request-movie <name>'
         );
         return;
       }
@@ -1042,7 +1096,7 @@ function wireTelegram() {
       if (!mediaType) {
         await reply(
           chatId,
-          `Is “${query}” a show or a movie?\nUse:\n/request show ${query}\nor\n/request movie ${query}`
+          `Is “${query}” a show or a movie?\nUse:\n/request-show ${query}\nor\n/request-movie ${query}`
         );
         return;
       }
@@ -1054,25 +1108,8 @@ function wireTelegram() {
           return;
         }
         const best = results[0];
-        const existing = getShows().find((s) => s.tmdbId === best.id);
-        if (existing) {
-          await reply(chatId, `Already in library: ${existing.name}`);
-          return;
-        }
-        const pendingDup = getTelegramRequests().find(
-          (r) =>
-            r.status === 'pending' &&
-            r.mediaType === 'show' &&
-            r.mediaId === best.id &&
-            r.requesterChatId === chatId
-        );
-        if (pendingDup) {
-          await reply(chatId, `You already have a pending request: ${pendingDup.title} (${pendingDup.id})`);
-          return;
-        }
         const year = best.firstAirDate ? Number(best.firstAirDate.slice(0, 4)) || null : null;
-        const req: TelegramRequest = {
-          id: newTelegramRequestId(),
+        const result = await submitPendingMediaRequest({
           mediaType: 'show',
           mediaId: best.id,
           title: best.name,
@@ -1080,49 +1117,19 @@ function wireTelegram() {
           overview: best.overview,
           requesterChatId: chatId,
           requesterName: meta?.fromName,
-          status: 'pending',
-          createdAt: new Date().toISOString(),
-        };
-        upsertTelegramRequest(req);
-        await reply(chatId, 'Request submitted, waiting for admin approval');
-        const adminText = [
-          'New Telegram request',
-          `Type: TV show`,
-          `Title: ${req.title}${year ? ` (${year})` : ''}`,
-          `Requester: ${req.requesterName || '—'} (${req.requesterChatId})`,
-          `Id: ${req.id}`,
-          '',
-          `Or: /approve ${req.id}  /deny ${req.id}`,
-        ].join('\n');
-        await telegramBot.notifyAdminChats(getSettings(), adminText, approveDenyKeyboard(req.id));
+          source: 'telegram',
+        });
+        await reply(chatId, result.message);
         return;
       }
 
-      // movie
       const results = await searchMoviesMeta(query);
       if (!results.length) {
         await reply(chatId, `No movies found for “${query}”.`);
         return;
       }
       const best = results[0];
-      const existing = getMovies().find((m) => m.tmdbId === best.id);
-      if (existing) {
-        await reply(chatId, `Already in library: ${existing.title}`);
-        return;
-      }
-      const pendingDup = getTelegramRequests().find(
-        (r) =>
-          r.status === 'pending' &&
-          r.mediaType === 'movie' &&
-          r.mediaId === best.id &&
-          r.requesterChatId === chatId
-      );
-      if (pendingDup) {
-        await reply(chatId, `You already have a pending request: ${pendingDup.title} (${pendingDup.id})`);
-        return;
-      }
-      const req: TelegramRequest = {
-        id: newTelegramRequestId(),
+      const result = await submitPendingMediaRequest({
         mediaType: 'movie',
         mediaId: best.id,
         title: best.title,
@@ -1130,32 +1137,18 @@ function wireTelegram() {
         overview: best.overview,
         requesterChatId: chatId,
         requesterName: meta?.fromName,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-      };
-      upsertTelegramRequest(req);
-      await reply(chatId, 'Request submitted, waiting for admin approval');
-      const adminText = [
-        'New Telegram request',
-        `Type: Movie`,
-        `Title: ${req.title}${req.year ? ` (${req.year})` : ''}`,
-        `Requester: ${req.requesterName || '—'} (${req.requesterChatId})`,
-        `Id: ${req.id}`,
-        '',
-        `Or: /approve ${req.id}  /deny ${req.id}`,
-      ].join('\n');
-      await telegramBot.notifyAdminChats(getSettings(), adminText, approveDenyKeyboard(req.id));
+        source: 'telegram',
+      });
+      await reply(chatId, result.message);
     },
     async myrequests(chatId, args, reply) {
       const settings = getSettings();
-      const adminRaw =
+      const adminIds = parseChatIds(
         (settings.telegramAdminChatIds || '').trim() ||
-        (settings.telegramAllowedChatIds || '').trim();
-      const isAdmin = adminRaw
-        .split(/[\s,;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .includes(String(chatId));
+          (settings.telegramAllowedChatIds || '').trim()
+      );
+      const chatToken = normalizeChatIdToken(String(chatId));
+      const isAdmin = !!(chatToken && adminIds.has(chatToken));
       if (isAdmin && !(args || '').trim()) {
         const pending = getTelegramRequests()
           .filter((r) => r.status === 'pending')
@@ -1173,7 +1166,7 @@ function wireTelegram() {
         .slice(-15)
         .reverse();
       if (!mine.length) {
-        await reply(chatId, 'You have no requests yet. Try /request show <name>');
+        await reply(chatId, 'You have no requests yet. Try /request-show <name>');
         return;
       }
       await reply(chatId, mine.map(formatRequestLine).join('\n'));
@@ -1208,6 +1201,124 @@ function wireTelegram() {
     },
   });
   telegramBot.sync(getSettings());
+  wireWebPortal();
+}
+
+function wireWebPortal() {
+  webPortal.setDeps({
+    getSettings,
+    searchShows: async (query) => {
+      const results = await searchShowsMeta(query);
+      return results.map((r) => ({
+        id: r.id,
+        name: r.name,
+        overview: r.overview,
+        firstAirDate: r.firstAirDate,
+        posterUrl: r.posterUrl || null,
+      }));
+    },
+    searchMovies: async (query) => {
+      const results = await searchMoviesMeta(query);
+      return results.map((r) => ({
+        id: r.id,
+        title: r.title,
+        overview: r.overview,
+        releaseYear: r.releaseYear,
+        posterUrl: r.posterUrl || null,
+      }));
+    },
+    isInLibrary: (mediaType, mediaId) => {
+      if (mediaType === 'show') return getShows().some((s) => s.tmdbId === mediaId);
+      return getMovies().some((m) => m.tmdbId === mediaId);
+    },
+    submitRequest: async (input) =>
+      submitPendingMediaRequest({
+        ...input,
+        requesterChatId: 0,
+        source: 'web',
+      }),
+    listRequests: () => getTelegramRequests(),
+    resolveRequest: async (id, action) => resolveTelegramRequest(id, action, 0),
+  });
+  webPortal.sync(ensureWebPortalSecrets(getSettings()));
+}
+
+
+async function submitPendingMediaRequest(input: {
+  mediaType: 'show' | 'movie';
+  mediaId: number;
+  title: string;
+  year?: number | null;
+  overview?: string;
+  requesterChatId: number;
+  requesterName?: string;
+  source: 'telegram' | 'web';
+}): Promise<{ ok: boolean; message: string; request?: TelegramRequest }> {
+  const existingShow =
+    input.mediaType === 'show'
+      ? getShows().find((s) => s.tmdbId === input.mediaId)
+      : undefined;
+  const existingMovie =
+    input.mediaType === 'movie'
+      ? getMovies().find((m) => m.tmdbId === input.mediaId)
+      : undefined;
+  if (existingShow) {
+    return { ok: false, message: `Already in library: ${existingShow.name}` };
+  }
+  if (existingMovie) {
+    return { ok: false, message: `Already in library: ${existingMovie.title}` };
+  }
+
+  const pendingDup = getTelegramRequests().find(
+    (r) =>
+      r.status === 'pending' &&
+      r.mediaType === input.mediaType &&
+      r.mediaId === input.mediaId &&
+      r.requesterChatId === input.requesterChatId
+  );
+  if (pendingDup) {
+    return {
+      ok: false,
+      message: `You already have a pending request: ${pendingDup.title} (${pendingDup.id})`,
+    };
+  }
+
+  const req: TelegramRequest = {
+    id: newTelegramRequestId(),
+    mediaType: input.mediaType,
+    mediaId: input.mediaId,
+    title: input.title,
+    year: input.year ?? null,
+    overview: input.overview,
+    requesterChatId: input.requesterChatId,
+    requesterName: input.requesterName,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    source: input.source,
+  };
+  upsertTelegramRequest(req);
+
+  const typeLabel = input.mediaType === 'movie' ? 'Movie' : 'TV show';
+  const who =
+    input.source === 'web'
+      ? `Web${input.requesterName ? `: ${input.requesterName}` : ''}`
+      : `${input.requesterName || '—'} (${input.requesterChatId})`;
+  const adminText = [
+    input.source === 'web' ? 'New web portal request' : 'New Telegram request',
+    `Type: ${typeLabel}`,
+    `Title: ${req.title}${req.year ? ` (${req.year})` : ''}`,
+    `Requester: ${who}`,
+    `Id: ${req.id}`,
+    '',
+    `Or: /approve ${req.id}  /deny ${req.id}`,
+  ].join('\n');
+  await telegramBot.notifyAdminChats(getSettings(), adminText, approveDenyKeyboard(req.id));
+
+  return {
+    ok: true,
+    message: 'Request submitted, waiting for admin approval',
+    request: req,
+  };
 }
 
 async function resolveTelegramRequest(
@@ -1242,11 +1353,16 @@ async function resolveTelegramRequest(
     return { ok: true, message: `Denied ${req.title} (${req.id}).` };
   }
 
-  // approve
-  const notifyCtx = {
-    notifyChatId: req.requesterChatId,
-    telegramRequestId: req.id,
-  };
+  // approve — only Telegram-notify when requester has a real chat id (web uses 0)
+  const notifyCtx =
+    req.requesterChatId && req.requesterChatId !== 0
+      ? {
+          notifyChatId: req.requesterChatId,
+          telegramRequestId: req.id,
+        }
+      : {
+          telegramRequestId: req.id,
+        };
   try {
     if (req.mediaType === 'show') {
       const show = await addShowWithPolicy(req.mediaId, 'manual');
@@ -1303,23 +1419,36 @@ async function resolveTelegramRequest(
 
 function registerIpc() {
   ipcMain.handle('settings:get', () => getSettings());
-  ipcMain.handle('settings:set', (_e, partial: Partial<AppSettings>) => {
-    const next = setSettings(partial);
-    scheduleRefresh();
-    applyLoginItem(!!next.launchOnStartup);
-    telegramBot.sync(next);
-    downloadEngine.applySettings({
-      maxConnections: next.maxConnections,
-      maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
-      maxUploadSpeedKBps: next.maxUploadSpeedKBps,
-      bindAddress: vpnManager.getBindAddress(),
-    });
-    // Re-apply private GitHub feed if token present (never log token)
-    configureUpdaterFeed();
-    if (!next.vpnEnabled) {
-      void vpnManager.disconnect();
+  ipcMain.handle('settings:set', (_e, partial: Partial<AppSettings> & { webPortalAdminPassword?: string }) => {
+    const incoming = { ...(partial || {}) } as Partial<AppSettings> & {
+      webPortalAdminPassword?: string;
+    };
+    const plainPassword =
+      typeof incoming.webPortalAdminPassword === 'string'
+        ? incoming.webPortalAdminPassword
+        : undefined;
+    delete incoming.webPortalAdminPassword;
+
+    if (plainPassword && plainPassword.length > 0) {
+      incoming.webPortalAdminPasswordHash = hashWebPortalPassword(plainPassword);
     }
-    pushVpnStatus(next);
+    if (incoming.webPortalAdminPasswordHash === '') {
+      delete incoming.webPortalAdminPasswordHash;
+    }
+
+    if (incoming.webPortalEnabled && !(getSettings().webPortalSessionSecret || '').trim()) {
+      incoming.webPortalSessionSecret = randomBytes(24).toString('hex');
+    }
+    if (incoming.webPortalPort != null) {
+      const n = Number(incoming.webPortalPort);
+      incoming.webPortalPort = Number.isFinite(n) ? Math.max(1, Math.min(65535, Math.floor(n))) : 8787;
+    }
+    if (incoming.webPortalBind != null && incoming.webPortalBind !== 'lan') {
+      incoming.webPortalBind = 'localhost';
+    }
+
+    const next = setSettings(incoming);
+    applySettingsSideEffects(next);
     return next;
   });
 
@@ -1678,6 +1807,12 @@ function registerIpc() {
 
     ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
   ipcMain.handle('telegram:test', async () => telegramBot.sendTest(getSettings()));
+  ipcMain.handle('webPortal:status', () => {
+    const s = getSettings();
+    const st = webPortal.getStatus(s);
+    st.urls = st.listening ? portalPublicUrls(s, pickLanIpv4()) : [];
+    return st;
+  });
 
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('app:getThreadInfo', () => {
@@ -1843,6 +1978,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     telegramBot.stop();
+    webPortal.stop();
     void vpnManager.disconnect();
     downloadEngine.destroy();
     void destroySearchPool();
