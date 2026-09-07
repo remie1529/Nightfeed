@@ -284,6 +284,10 @@ export interface TelegramStatus {
   lastUpdateId: number | null;
   lastError: string | null;
   lastOkAt: string | null;
+  /** Parsed Admin chat IDs currently loaded from settings. */
+  adminChatIdCount: number;
+  /** Parsed Requests chat IDs currently loaded from settings. */
+  requestChatIdCount: number;
 }
 
 export interface UpdateStatus {

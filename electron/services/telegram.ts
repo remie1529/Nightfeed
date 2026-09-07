@@ -39,13 +39,26 @@ export type TelegramHandlers = {
   callback?: CallbackHandler;
 };
 
+/** Normalize unicode dashes/minus and strip junk; keep signed numeric chat ids. */
+export function normalizeChatIdToken(raw: string): string | null {
+  if (raw == null) return null;
+  // Unicode minus/dashes → ASCII hyphen-minus; drop zero-width / BOM junk
+  let s = String(raw)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u2212\u2010-\u2015\uFE58\uFE63\uFF0D]/g, '-')
+    .trim();
+  if (!s) return null;
+  const m = s.match(/-?\d+/);
+  return m ? m[0] : null;
+}
+
 export function parseChatIds(raw: string): Set<string> {
-  return new Set(
-    (raw || '')
-      .split(/[\s,;]+/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
+  const out = new Set<string>();
+  for (const token of (raw || '').split(/[\s,;]+/)) {
+    const id = normalizeChatIdToken(token);
+    if (id) out.add(id);
+  }
+  return out;
 }
 
 /** Resolve admin + requests lists with legacy telegramAllowedChatIds migration. */
@@ -65,12 +78,30 @@ export function resolveTelegramChatLists(settings: AppSettings): {
   };
 }
 
-export function telegramRoleForChat(settings: AppSettings, chatId: number | string): TelegramRole {
+export function telegramRoleForChat(
+  settings: AppSettings,
+  chatId: number | string,
+  fromId?: number | string | null
+): TelegramRole {
   const { admin, requests } = resolveTelegramChatLists(settings);
-  const id = String(chatId);
-  if (admin.has(id)) return 'admin';
-  if (requests.has(id)) return 'requests';
+  const candidates = [chatId, fromId]
+    .filter((v) => v != null && v !== '')
+    .map((v) => normalizeChatIdToken(String(v)))
+    .filter((v): v is string => !!v);
+  for (const id of candidates) {
+    if (admin.has(id)) return 'admin';
+  }
+  for (const id of candidates) {
+    if (requests.has(id)) return 'requests';
+  }
   return 'unknown';
+}
+
+function unknownChatHint(chatId: number | string): string {
+  return (
+    `Your chat ID: ${chatId}\n\n` +
+    'Add this exact ID under Admin or Requests in Settings, then Save.'
+  );
 }
 
 function maskToken(_token: string): string {
@@ -105,6 +136,8 @@ export class TelegramBot {
       lastUpdateId: this.offset || null,
       lastError: this.lastError,
       lastOkAt: this.lastOkAt,
+      adminChatIdCount: admin.size,
+      requestChatIdCount: requests.size,
     };
   }
 
@@ -263,7 +296,7 @@ export class TelegramBot {
           message?: {
             message_id: number;
             text?: string;
-            chat: { id: number };
+            chat: { id: number; type?: string };
             from?: { id: number; first_name?: string; username?: string };
           };
           callback_query?: {
@@ -287,11 +320,15 @@ export class TelegramBot {
         const msg = update.message;
         if (!msg?.text) continue;
         const chatId = msg.chat.id;
+        const fromId = msg.from?.id;
         const fromName =
           msg.from?.username ||
           msg.from?.first_name ||
-          (msg.from?.id != null ? String(msg.from.id) : undefined);
-        await this.handleMessage(settings, chatId, msg.text.trim(), fromName);
+          (fromId != null ? String(fromId) : undefined);
+        // Private chats: also try matching from.id (usually same as chat.id).
+        const matchFromId =
+          msg.chat.type === 'private' && fromId != null ? fromId : undefined;
+        await this.handleMessage(settings, chatId, msg.text.trim(), fromName, matchFromId);
       }
     } finally {
       clearTimeout(timer);
@@ -316,7 +353,7 @@ export class TelegramBot {
     const token = settings.telegramBotToken.trim();
     const chatId = cq.message?.chat.id ?? cq.from?.id;
     if (chatId == null) return;
-    const role = telegramRoleForChat(settings, chatId);
+    const role = telegramRoleForChat(settings, chatId, cq.from?.id);
     const reply = this.makeReply(token);
 
     // Always ack the spinner
@@ -327,7 +364,7 @@ export class TelegramBot {
     }
 
     if (role === 'unknown') {
-      await reply(chatId, `Your chat ID: ${chatId}`);
+      await reply(chatId, unknownChatHint(chatId));
       return;
     }
     if (role !== 'admin') {
@@ -356,15 +393,16 @@ export class TelegramBot {
     settings: AppSettings,
     chatId: number,
     text: string,
-    fromName?: string
+    fromName?: string,
+    fromId?: number
   ) {
     const token = settings.telegramBotToken.trim();
     const reply = this.makeReply(token);
-    const role = telegramRoleForChat(settings, chatId);
+    const role = telegramRoleForChat(settings, chatId, fromId);
 
-    // Critical: unknown chats only ever see their chat id.
+    // Critical: unknown chats only ever see their chat id (+ Save hint).
     if (role === 'unknown') {
-      await reply(chatId, `Your chat ID: ${chatId}`);
+      await reply(chatId, unknownChatHint(chatId));
       return;
     }
 

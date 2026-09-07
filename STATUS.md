@@ -1,17 +1,16 @@
 ## Nightfeed status
 
-**Current:** v1.5.8 — Manual mass-import from library folders (Scan folders & import…).
+**Current:** v1.6.1 — Harden Telegram chat-ID matching (Requests/Admin lists).
 
-# Status v1.5.8
+# Status v1.6.1
 
-## Works
-- Settings / Library / Movies: **Scan folders & import…** (manual only — never on launch or timer)
-- Scope: TV root, movie root, or both
-- Preview with match status (will add / already in library / no match / ambiguous)
-- Confirm → TVMaze shows + IMDb movies; skip already present; local files marked downloaded via existing path logic
-- Progress + summary (added / skipped / failed)
-- Read-only scan (no delete/move); UNC paths respected via configured roots
+## Fix
+- `parseChatIds` / `telegramRoleForChat`: normalize unicode dashes, extract `-?\d+`, compare normalized forms
+- Unknown-chat reply includes Save hint (Admin or Requests)
+- Settings shows loaded Admin/Requests ID counts after Save
+- Private chats also match `from.id`
 
-## Limitations
-- Conservative metadata matching; ambiguous titles need user pick from alternatives
-- Large libraries take time (rate-limited TVMaze/IMDb lookups)
+## Works (carry-over)
+- Library list performance + season bulk status (v1.6.0)
+- Telegram Admin/Requests approve/deny workflow
+- Manual mass-import, OpenVPN torrent-only split tunnel, auto-updates via GitHub Releases
