@@ -228,6 +228,8 @@ export interface TelegramRequest {
   title: string;
   year?: number | null;
   overview?: string;
+  /** Absolute poster image URL (TVMaze / IMDb). */
+  posterUrl?: string | null;
   requesterChatId: number;
   requesterName?: string;
   status: TelegramRequestStatus;

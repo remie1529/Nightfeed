@@ -4,10 +4,11 @@ import ShowDetail from './views/ShowDetail';
 import Movies from './views/Movies';
 import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
+import Requests from './views/Requests';
 import SettingsView from './views/Settings';
 import type { DownloadItem, Movie } from './lib/types';
 
-type View = 'library' | 'movies' | 'downloads' | 'settings' | 'show' | 'movie';
+type View = 'library' | 'movies' | 'downloads' | 'requests' | 'settings' | 'show' | 'movie';
 
 interface Toast {
   id: number;
@@ -22,6 +23,8 @@ export default function App() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [libraryKey, setLibraryKey] = useState(0);
   const [moviesKey, setMoviesKey] = useState(0);
+  const [requestsKey, setRequestsKey] = useState(0);
+  const [pendingRequests, setPendingRequests] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [appVersion, setAppVersion] = useState('');
 
@@ -44,11 +47,25 @@ export default function App() {
         setToasts((prev) => prev.filter((t) => t.id !== id));
       }, 4500);
     });
+    const refreshPending = () => {
+      window.torrentAPI
+        .getPendingRequestCount?.()
+        .then((n) => setPendingRequests(Number(n) || 0))
+        .catch(() => undefined);
+    };
+    refreshPending();
+    const offReq = window.torrentAPI.onRequestsChanged?.(() => {
+      setRequestsKey((k) => k + 1);
+      refreshPending();
+    });
+    const pendingTimer = setInterval(refreshPending, 20000);
     return () => {
       offDl();
       offLib();
       offMovies?.();
       offToast();
+      offReq?.();
+      clearInterval(pendingTimer);
     };
   }, []);
 
@@ -90,6 +107,13 @@ export default function App() {
           onClick={() => setView('downloads')}
         >
           Downloads{activeDownloads ? ` (${activeDownloads})` : ''}
+        </button>
+        <button
+          className={`nav-item ${view === 'requests' ? 'active' : ''}`}
+          onClick={() => setView('requests')}
+        >
+          Requests
+          {pendingRequests > 0 ? <span className="nav-badge">{pendingRequests}</span> : null}
         </button>
         <button
           className={`nav-item ${view === 'settings' ? 'active' : ''}`}
@@ -140,6 +164,7 @@ export default function App() {
           />
         )}
         {view === 'downloads' && <Downloads items={downloads} />}
+        {view === 'requests' && <Requests refreshToken={requestsKey} />}
         {view === 'settings' && <SettingsView />}
       </main>
       <div className="toast-stack" aria-live="polite">
