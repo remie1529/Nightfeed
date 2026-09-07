@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import {
+  episodeKey,
   exportBackupData,
   getMovies,
   getSettings,
@@ -51,6 +52,7 @@ import {
   Movie,
   Resolution,
   Show,
+  ShowListItem,
   TelegramRequest,
   TorrentCandidate,
   UpdateStatus,
@@ -359,7 +361,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
         candidates,
         triedInfoHashes: triedList,
       });
-      mainWindow?.webContents.send('library:changed');
+      emitLibraryChanged();
     }
     pushDownloads({ persist: 'now' });
   } catch (err) {
@@ -384,6 +386,56 @@ async function maybeFtpUpload(localPath: string | undefined, label: string): Pro
 
 function withLocalStatuses(show: Show): Show {
   return applyLocalStatuses(show, getSettings().libraryRoot, downloadingKeys());
+}
+
+let libraryChangedTimer: NodeJS.Timeout | null = null;
+/** Coalesce rapid library:changed during mass import / bulk ops. */
+function emitLibraryChanged(immediate = false) {
+  if (immediate) {
+    if (libraryChangedTimer) {
+      clearTimeout(libraryChangedTimer);
+      libraryChangedTimer = null;
+    }
+    mainWindow?.webContents.send('library:changed');
+    return;
+  }
+  if (libraryChangedTimer) clearTimeout(libraryChangedTimer);
+  libraryChangedTimer = setTimeout(() => {
+    libraryChangedTimer = null;
+    mainWindow?.webContents.send('library:changed');
+  }, 200);
+}
+
+/** Grid payload: counts from stored statuses — no disk scan, no season trees over IPC. */
+function toShowListItem(show: Show, downloading: Set<string>): ShowListItem {
+  let missingCount = 0;
+  let episodeCount = 0;
+  let downloadedCount = 0;
+  for (const season of show.seasons || []) {
+    for (const ep of season.episodes || []) {
+      episodeCount += 1;
+      const key = episodeKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
+      if (downloading.has(key)) continue;
+      if (ep.status === 'missing' || ep.status === 'aired') missingCount += 1;
+      if (ep.status === 'downloaded') downloadedCount += 1;
+    }
+  }
+  return {
+    id: show.id,
+    tmdbId: show.tmdbId,
+    name: show.name,
+    posterPath: show.posterPath,
+    status: show.status,
+    firstAirDate: show.firstAirDate,
+    missingCount,
+    episodeCount,
+    downloadedCount,
+  };
+}
+
+function listShowSummaries(): ShowListItem[] {
+  const downloading = downloadingKeys();
+  return getShows().map((s) => toShowListItem(s, downloading));
 }
 
 async function refreshOne(show: Show): Promise<Show> {
@@ -554,7 +606,7 @@ async function refreshAllShows(): Promise<Show[]> {
       updated.push(show);
     }
   }
-  mainWindow?.webContents.send('library:changed');
+  emitLibraryChanged();
   await autoDownloadForShows(updated);
   return updated;
 }
@@ -584,7 +636,6 @@ async function importShowFromScan(mazeId: number, folderPath: string): Promise<S
       const updated = { ...existing, libraryPath: folderPath };
       upsertShow(updated);
       const refreshed = await refreshOne(updated);
-      mainWindow?.webContents.send('library:changed');
       return refreshed;
     }
     return withLocalStatuses(existing);
@@ -606,7 +657,6 @@ async function importShowFromScan(mazeId: number, folderPath: string): Promise<S
   show = { ...show, libraryPath: folderPath || show.libraryPath };
   show = withLocalStatuses(show);
   upsertShow(show);
-  mainWindow?.webContents.send('library:changed');
   return show;
 }
 
@@ -662,7 +712,15 @@ async function runFolderScanImport(items: FolderScanImportItem[]): Promise<Folde
     addedTitles: [],
   };
   const selected = (items || []).filter((i) => i.selected && i.matchId);
-  for (const item of selected) {
+  const total = selected.length;
+  for (let i = 0; i < selected.length; i++) {
+    const item = selected[i];
+    mainWindow?.webContents.send('library:scanProgress', {
+      current: i + 1,
+      total,
+      phase: 'importing',
+      label: item.kind === 'show' ? `TV #${item.matchId}` : `Movie #${item.matchId}`,
+    });
     try {
       if (item.kind === 'show') {
         const before = getShows().some((s) => s.tmdbId === item.matchId);
@@ -689,6 +747,18 @@ async function runFolderScanImport(items: FolderScanImportItem[]): Promise<Folde
         `${item.kind} ${item.matchId}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
+    // Yield between items so UI stays responsive on large imports.
+    await new Promise<void>((r) => setImmediate(r));
+  }
+  mainWindow?.webContents.send('library:scanProgress', {
+    current: total,
+    total,
+    phase: 'done',
+    label: 'Import finished',
+  });
+  emitLibraryChanged(true);
+  if (result.added || result.failed) {
+    mainWindow?.webContents.send('movies:changed');
   }
   return result;
 }
@@ -713,7 +783,7 @@ async function addShowWithPolicy(mazeId: number, policy: AddShowPolicy = 'manual
     void autoDownloadForShows([show]);
   }
 
-  mainWindow?.webContents.send('library:changed');
+  emitLibraryChanged();
   return withLocalStatuses(show);
 }
 
@@ -1267,9 +1337,11 @@ function registerIpc() {
     return searchShowsMeta(query || '');
   });
 
-  ipcMain.handle('library:list', () => {
-    const settings = getSettings();
-    return getShows().map((s) => applyLocalStatuses(s, settings.libraryRoot, downloadingKeys()));
+  ipcMain.handle('library:list', async () => {
+    // Lightweight grid: no per-episode disk scans / no season trees.
+    // Yield once so we never block a progress flush turn on huge libraries.
+    await new Promise<void>((r) => setImmediate(r));
+    return listShowSummaries();
   });
 
   ipcMain.handle('library:get', (_e, tmdbId: number) => {
@@ -1317,7 +1389,7 @@ function registerIpc() {
     if (!show) throw new Error('Show not found');
     const updated = await refreshOne(show);
     await autoDownloadForShows([updated]);
-    mainWindow?.webContents.send('library:changed');
+    emitLibraryChanged();
     return updated;
   });
 
@@ -1341,7 +1413,36 @@ function registerIpc() {
       setEpisodeOverride(tmdbId, season, episode, status);
       const updated = withLocalStatuses(show);
       upsertShow(updated);
-      mainWindow?.webContents.send('library:changed');
+      emitLibraryChanged();
+      return updated;
+    }
+  );
+
+  ipcMain.handle(
+    'library:setSeasonStatus',
+    (_e, tmdbId: number, season: number, status: EpisodeOverrideStatus) => {
+      const show = getShows().find((s) => s.tmdbId === tmdbId);
+      if (!show) throw new Error('Show not found');
+      const allowed: EpisodeOverrideStatus[] = ['missing', 'downloaded', 'ignored', 'upcoming'];
+      if (!allowed.includes(status)) {
+        throw new Error(`Invalid status: ${status}`);
+      }
+      const seasonObj = show.seasons.find((s) => s.seasonNumber === season);
+      if (!seasonObj) throw new Error(`Season ${season} not found`);
+      const entries: Record<string, EpisodeOverrideStatus> = {};
+      for (const ep of seasonObj.episodes || []) {
+        entries[episodeKey(tmdbId, ep.seasonNumber, ep.episodeNumber)] = status;
+      }
+      if (Object.keys(entries).length) {
+        setEpisodeOverridesBulk(entries);
+      }
+      const updated = withLocalStatuses(show);
+      upsertShow(updated);
+      emitLibraryChanged();
+      notify(
+        `Season ${season}: set ${Object.keys(entries).length} episode(s) to ${status}`,
+        'ok'
+      );
       return updated;
     }
   );
@@ -1569,7 +1670,7 @@ function registerIpc() {
     applyLoginItem(!!settings.launchOnStartup);
     telegramBot.sync(settings);
     scheduleRefresh();
-    mainWindow?.webContents.send('library:changed');
+    emitLibraryChanged();
     mainWindow?.webContents.send('movies:changed');
     pushDownloads({ persist: 'skip' });
     return { ok: true, ...counts, path: filePaths[0] };
@@ -1699,7 +1800,7 @@ app.whenReady().then(async () => {
       if (show) {
         upsertShow(withLocalStatuses(show));
       }
-      mainWindow?.webContents.send('library:changed');
+      emitLibraryChanged();
     }
     if (item?.name) {
       notify(`Finished: ${item.name}`, 'ok');

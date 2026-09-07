@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Poster from './Poster';
 
 type Scope = 'tv' | 'movies' | 'both';
@@ -60,6 +60,22 @@ export default function FolderScanImport({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [rows, setRows] = useState<Candidate[]>([]);
   const [summary, setSummary] = useState<ImportResult | null>(null);
+
+  useEffect(() => {
+    if (phase !== 'importing' && phase !== 'scanning') return;
+    const off = window.torrentAPI.onScanProgress?.(
+      (payload: { current: number; total: number; phase: string; label?: string }) => {
+        if (!payload) return;
+        const label = payload.label ? ` — ${payload.label}` : '';
+        if (payload.total > 0) {
+          setProgress(`Importing ${payload.current}/${payload.total}${label}`);
+        } else {
+          setProgress(payload.label || 'Working…');
+        }
+      }
+    );
+    return () => off?.();
+  }, [phase]);
 
   const counts = useMemo(() => {
     const c = { will_add: 0, already_in_library: 0, no_match: 0, ambiguous: 0, selected: 0 };

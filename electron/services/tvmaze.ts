@@ -1,5 +1,5 @@
 import { Episode, EpisodeOverrideStatus, EpisodeStatus, Season, Show } from '../types';
-import { findLocalEpisode } from './paths';
+import { indexLocalEpisodes } from './paths';
 import { episodeKey, getEpisodeOverrides } from './store';
 
 export { searchShows, type MazeSearchItem } from './tvmaze-search';
@@ -136,6 +136,8 @@ export async function fetchShowDetail(
     ...seasonsMeta.filter((s) => s.number > 0).map((s) => s.number),
   ]);
 
+  const localIndex = indexLocalEpisodes(shell, libraryRoot);
+
   const seasons: Season[] = [...seasonNumbers]
     .sort((a, b) => a - b)
     .map((seasonNumber) => {
@@ -145,12 +147,7 @@ export async function fetchShowDetail(
       );
       const mapped: Episode[] = eps.map((ep) => {
         const key = episodeKey(mazeId, ep.season, ep.number as number);
-        const localPath = findLocalEpisode(
-          shell,
-          libraryRoot,
-          ep.season,
-          ep.number as number
-        );
+        const localPath = localIndex.get(`${ep.season}:${ep.number as number}`);
         const status = resolveEpisodeStatus(
           ep.airdate,
           localPath,
@@ -192,11 +189,13 @@ export function applyLocalStatuses(
   downloadingKeys: Set<string>
 ): Show {
   const overrides = getEpisodeOverrides();
+  // One-pass FS index for the whole show (not per-episode readdir).
+  const localIndex = indexLocalEpisodes(show, libraryRoot);
   const seasons = show.seasons.map((season) => ({
     ...season,
     episodes: season.episodes.map((ep) => {
       const key = episodeKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
-      const localPath = findLocalEpisode(show, libraryRoot, ep.seasonNumber, ep.episodeNumber);
+      const localPath = localIndex.get(`${ep.seasonNumber}:${ep.episodeNumber}`);
       const status = resolveEpisodeStatus(
         ep.airDate,
         localPath,

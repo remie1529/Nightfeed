@@ -5,7 +5,7 @@ import Movies from './views/Movies';
 import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import SettingsView from './views/Settings';
-import type { DownloadItem, Movie, Show } from './lib/types';
+import type { DownloadItem, Movie } from './lib/types';
 
 type View = 'library' | 'movies' | 'downloads' | 'settings' | 'show' | 'movie';
 
@@ -52,8 +52,8 @@ export default function App() {
     };
   }, []);
 
-  const openShow = (show: Show) => {
-    setSelectedId(show.tmdbId);
+  const openShow = (tmdbId: number) => {
+    setSelectedId(tmdbId);
     setView('show');
   };
 
@@ -105,7 +105,7 @@ export default function App() {
       <main className="main">
         {view === 'library' && (
           <Library
-            key={libraryKey}
+            refreshToken={libraryKey}
             onOpenShow={openShow}
             onRefreshDone={() => setLibraryKey((k) => k + 1)}
           />

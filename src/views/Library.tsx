@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Poster from '../components/Poster';
-import type { AddShowPolicy, Show, MazeSearchItem } from '../lib/types';
+import type { AddShowPolicy, MazeSearchItem, ShowListItem } from '../lib/types';
 import FolderScanImport from '../components/FolderScanImport';
 
 export default function Library({
   onOpenShow,
   onRefreshDone,
+  refreshToken = 0,
 }: {
-  onOpenShow: (show: Show) => void;
+  onOpenShow: (tmdbId: number) => void;
   onRefreshDone: () => void;
+  refreshToken?: number;
 }) {
-  const [shows, setShows] = useState<Show[]>([]);
+  const [shows, setShows] = useState<ShowListItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<MazeSearchItem[]>([]);
@@ -19,15 +22,49 @@ export default function Library({
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('');
   const [pendingAdd, setPendingAdd] = useState<MazeSearchItem | null>(null);
+  const loadGen = useRef(0);
+  const hasShowsRef = useRef(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = async () => {
-    const list = (await window.torrentAPI.getShows()) as Show[];
-    setShows(list);
-  };
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
+    const gen = ++loadGen.current;
+    if (!opts?.soft && !hasShowsRef.current) {
+      setLoading(true);
+    }
+    try {
+      const list = (await window.torrentAPI.getShows()) as ShowListItem[];
+      if (gen !== loadGen.current) return;
+      const next = Array.isArray(list) ? list : [];
+      hasShowsRef.current = next.length > 0;
+      setShows(next);
+      setError(null);
+    } catch (e) {
+      if (gen !== loadGen.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (gen === loadGen.current) setLoading(false);
+    }
+  }, []);
+
+  const scheduleLoad = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      void load({ soft: true });
+    }, 180);
+  }, [load]);
 
   useEffect(() => {
-    load().catch((e) => setError(e.message || String(e)));
-  }, []);
+    void load();
+  }, [load, refreshToken]);
+
+  useEffect(() => {
+    const off = window.torrentAPI.onLibraryChanged?.(() => scheduleLoad());
+    return () => {
+      off?.();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [scheduleLoad]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -57,11 +94,11 @@ export default function Library({
     setError(null);
     setPendingAdd(null);
     try {
-      const show = (await window.torrentAPI.addShow(id, policy)) as Show;
+      const show = (await window.torrentAPI.addShow(id, policy)) as { tmdbId: number };
       setResults([]);
       setQuery('');
-      await load();
-      onOpenShow(show);
+      await load({ soft: true });
+      onOpenShow(show.tmdbId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -74,7 +111,7 @@ export default function Library({
     setError(null);
     try {
       await window.torrentAPI.refreshAll();
-      await load();
+      await load({ soft: true });
       onRefreshDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -83,15 +120,29 @@ export default function Library({
     }
   };
 
+  const showEmpty = !loading && filtered.length === 0;
+  const showSkeleton = loading && shows.length === 0;
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1>Library</h1>
-          <p>{shows.length} show{shows.length === 1 ? '' : 's'} tracked</p>
+          <p>
+            {loading && shows.length === 0
+              ? 'Loading…'
+              : `${shows.length} show${shows.length === 1 ? '' : 's'} tracked`}
+            {loading && shows.length > 0 ? ' · refreshing…' : ''}
+          </p>
         </div>
         <div className="toolbar">
-          <FolderScanImport defaultScope="tv" onDone={() => { void load(); onRefreshDone(); }} />
+          <FolderScanImport
+            defaultScope="tv"
+            onDone={() => {
+              void load({ soft: true });
+              onRefreshDone();
+            }}
+          />
           <button onClick={refreshAll} disabled={refreshing || shows.length === 0}>
             {refreshing ? 'Refreshing…' : 'Check new episodes'}
           </button>
@@ -165,7 +216,17 @@ export default function Library({
         </div>
       )}
 
-      {filtered.length === 0 ? (
+      {showSkeleton ? (
+        <div className="poster-grid" aria-busy="true" aria-label="Loading library">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="poster-card skeleton-card">
+              <div className="skeleton-poster" />
+              <div className="skeleton-line" />
+              <div className="skeleton-line short" />
+            </div>
+          ))}
+        </div>
+      ) : showEmpty ? (
         <div className="empty-state">
           <h2>No shows yet</h2>
           <p>
@@ -174,30 +235,14 @@ export default function Library({
           </p>
         </div>
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))',
-            gap: '1.1rem',
-          }}
-        >
+        <div className="poster-grid">
           {filtered.map((show) => {
-            const missing = show.seasons
-              .flatMap((s) => s.episodes)
-              .filter((e) => e.status === 'missing').length;
+            const missing = show.missingCount || 0;
             return (
               <button
                 key={show.tmdbId}
-                onClick={() => onOpenShow(show)}
-                style={{
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
-                  padding: '0.65rem',
-                  textAlign: 'left',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.55rem',
-                }}
+                className="poster-card"
+                onClick={() => onOpenShow(show.tmdbId)}
               >
                 <Poster path={show.posterPath} alt={show.name} width={140} height={210} />
                 <div>

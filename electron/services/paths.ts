@@ -206,3 +206,62 @@ export function findLocalMovie(movie: Movie, movieLibraryRoot: string): string |
     return undefined;
   }
 }
+
+/**
+ * One-pass disk index for a show: readdir show root + each season folder once,
+ * then map `${season}:${episode}` → file path. Used by applyLocalStatuses
+ * instead of per-episode scans.
+ */
+export function indexLocalEpisodes(
+  show: Show,
+  libraryRoot: string
+): Map<string, string> {
+  const found = new Map<string, string>();
+  const showRoot = getShowRoot(show, libraryRoot);
+  if (!fs.existsSync(showRoot)) return found;
+
+  const seasonDirs: Array<{ seasonNumber: number; dir: string }> = [];
+  try {
+    for (const entry of fs.readdirSync(showRoot)) {
+      const full = path.join(showRoot, entry);
+      try {
+        if (!fs.statSync(full).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      for (const re of SEASON_PATTERNS) {
+        const m = entry.match(re);
+        if (m) {
+          seasonDirs.push({ seasonNumber: parseInt(m[1], 10), dir: full });
+          break;
+        }
+      }
+    }
+  } catch {
+    return found;
+  }
+
+  const epRe = /S(\d{1,2})E(\d{1,3})/i;
+  for (const { seasonNumber, dir } of seasonDirs) {
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      const ext = path.extname(file).toLowerCase();
+      if (!VIDEO_EXTS.has(ext)) continue;
+      const m = file.match(epRe);
+      if (!m) continue;
+      const sn = parseInt(m[1], 10);
+      const en = parseInt(m[2], 10);
+      if (sn !== seasonNumber) continue;
+      const key = `${sn}:${en}`;
+      if (!found.has(key)) {
+        found.set(key, path.join(dir, file));
+      }
+    }
+  }
+  return found;
+}

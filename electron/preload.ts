@@ -30,6 +30,11 @@ const api = {
     episode: number,
     status: 'missing' | 'downloaded' | 'ignored' | 'upcoming'
   ) => ipcRenderer.invoke('library:setEpisodeStatus', mazeId, season, episode, status),
+  setSeasonStatus: (
+    mazeId: number,
+    season: number,
+    status: 'missing' | 'downloaded' | 'ignored' | 'upcoming'
+  ) => ipcRenderer.invoke('library:setSeasonStatus', mazeId, season, status),
 
   searchTorrents: (mazeId: number, season: number, episode: number) =>
     ipcRenderer.invoke('search:episode', mazeId, season, episode),
@@ -90,6 +95,17 @@ const api = {
     const listener = () => cb();
     ipcRenderer.on('library:changed', listener);
     return () => ipcRenderer.removeListener('library:changed', listener);
+  },
+
+  onScanProgress: (
+    cb: (payload: { current: number; total: number; phase: string; label?: string }) => void
+  ) => {
+    const listener = (
+      _: unknown,
+      payload: { current: number; total: number; phase: string; label?: string }
+    ) => cb(payload);
+    ipcRenderer.on('library:scanProgress', listener);
+    return () => ipcRenderer.removeListener('library:scanProgress', listener);
   },
 
   onMoviesChanged: (cb: () => void) => {

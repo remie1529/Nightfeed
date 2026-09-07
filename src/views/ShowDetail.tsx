@@ -43,6 +43,7 @@ export default function ShowDetail({
   const [searching, setSearching] = useState(false);
   const [starting, setStarting] = useState<string | null>(null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
+  const [seasonBusy, setSeasonBusy] = useState(false);
 
   const load = async () => {
     const s = (await window.torrentAPI.getShow(tmdbId)) as Show | null;
@@ -100,6 +101,27 @@ export default function ShowDetail({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStatusBusy(null);
+    }
+  };
+
+  const changeSeasonStatus = async (status: EpisodeOverrideStatus) => {
+    if (season == null) return;
+    const seasonObj = show?.seasons.find((s) => s.seasonNumber === season);
+    const count = seasonObj?.episodes?.length || 0;
+    if (!count) return;
+    const label = status.charAt(0).toUpperCase() + status.slice(1);
+    if (!window.confirm(`Set all ${count} episode(s) in Season ${season} to ${label}?`)) {
+      return;
+    }
+    setSeasonBusy(true);
+    setError(null);
+    try {
+      const s = (await window.torrentAPI.setSeasonStatus(tmdbId, season, status)) as Show;
+      setShow(s);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSeasonBusy(false);
     }
   };
 
@@ -235,6 +257,34 @@ export default function ShowDetail({
             Season {s.seasonNumber}
           </button>
         ))}
+        <div style={{ flex: 1 }} />
+        {season != null && (
+          <label className="season-bulk" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: 'var(--text-faint)', fontSize: '0.8rem' }}>
+              Set all in season
+            </span>
+            <select
+              disabled={seasonBusy || !(currentSeason?.episodes?.length)}
+              defaultValue=""
+              key={`bulk-${season}-${show.lastRefreshedAt || ''}-${currentSeason?.episodes?.length || 0}`}
+              onChange={(e) => {
+                const v = e.target.value as EpisodeOverrideStatus | '';
+                e.target.value = '';
+                if (v) void changeSeasonStatus(v);
+              }}
+              title="Set status for every episode in this season"
+            >
+              <option value="" disabled>
+                {seasonBusy ? 'Updating…' : 'Choose status…'}
+              </option>
+              {MANUAL_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="table-wrap">

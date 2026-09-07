@@ -142,6 +142,19 @@ export interface Show {
   lastRefreshedAt?: string;
 }
 
+/** Lightweight library grid row — no season trees. */
+export interface ShowListItem {
+  id: number;
+  tmdbId: number;
+  name: string;
+  posterPath: string | null;
+  status: string;
+  firstAirDate: string | null;
+  missingCount: number;
+  episodeCount: number;
+  downloadedCount: number;
+}
+
 export interface Movie {
   id: number;
   /** Numeric IMDb title id (tt digits); legacy field name tmdbId kept for store compatibility */
