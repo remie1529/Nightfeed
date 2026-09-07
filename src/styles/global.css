@@ -593,3 +593,56 @@ table.dense tr:hover td {
 .scan-already_in_library { color: var(--text-faint); border-color: #3a3a3a; background: #1a1a1a; }
 .scan-no_match { color: #d4a0a0; border-color: #5a3d3d; background: #241a1a; }
 .scan-ambiguous { color: #e0c080; border-color: #5a4a2a; background: #241e14; }
+
+
+/* Library poster grid — content-visibility helps with 200+ cards */
+.poster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 1.1rem;
+}
+
+.poster-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  padding: 0.65rem;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
+
+.poster-card:hover {
+  border-color: var(--border-strong);
+}
+
+.skeleton-card {
+  pointer-events: none;
+}
+
+.skeleton-poster {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #1a1a1a 25%, #242424 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+  background: #1f1f1f;
+  margin-top: 2px;
+}
+
+.skeleton-line.short {
+  width: 55%;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

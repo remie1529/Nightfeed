@@ -29,5 +29,15 @@ export default function Poster({
       </div>
     );
   }
-  return <img className="poster" src={src} alt={alt} width={width} height={height} />;
+  return (
+    <img
+      className="poster"
+      src={src}
+      alt={alt}
+      width={width}
+      height={height}
+      loading="lazy"
+      decoding="async"
+    />
+  );
 }
