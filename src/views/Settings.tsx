@@ -829,6 +829,7 @@ export default function SettingsView() {
           <div className="hint">
             Comma-separated. Admins get approval notifications and full bot commands
             (/status /shows /movies /check /downloads /add /approve /deny /help).
+            Paste the exact ID the bot replies with. Click <strong>Save</strong> after editing.
           </div>
         </div>
 
@@ -841,13 +842,19 @@ export default function SettingsView() {
           />
           <div className="hint">
             Comma-separated. These users can only submit movie/TV requests
-            (/request show|movie &lt;name&gt;). Unknown chats only receive their chat ID.
+            (/request show|movie &lt;name&gt;). Paste the exact ID from the bot reply.
+            You must click <strong>Save</strong> or the lists will not load.
           </div>
         </div>
 
         <div className="field">
           <label>Bot status</label>
           <div className="status-line">{tgLabel}</div>
+          <div className="hint">
+            Loaded IDs — Admin: {tgStatus?.adminChatIdCount ?? 0}, Requests:{' '}
+            {tgStatus?.requestChatIdCount ?? 0}
+            {' '}(after Save). If counts stay 0, the lists did not stick.
+          </div>
           {tgStatus?.lastOkAt && (
             <div className="hint">Last OK: {new Date(tgStatus.lastOkAt).toLocaleString()}</div>
           )}
@@ -865,7 +872,9 @@ export default function SettingsView() {
             )}
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            Message the bot from a new chat to see Your chat ID: … then paste it above.
+            Message the bot (DM or group) to see Your chat ID: … then paste that exact ID under
+            Admin or Requests and click <strong>Save</strong>. Private chat IDs are usually positive;
+            group/supergroup IDs are negative (start with -).
           </div>
         </div>
       </div>

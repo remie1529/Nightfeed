@@ -237,6 +237,8 @@ export interface TelegramStatus {
   lastUpdateId: number | null;
   lastError: string | null;
   lastOkAt: string | null;
+  adminChatIdCount: number;
+  requestChatIdCount: number;
 }
 
 export interface UpdateStatus {
