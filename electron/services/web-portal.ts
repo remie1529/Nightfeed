@@ -25,6 +25,7 @@ export type WebPortalSubmitInput = {
   title: string;
   year?: number | null;
   overview?: string;
+  posterUrl?: string | null;
   requesterName?: string;
 };
 
@@ -37,6 +38,8 @@ export type WebPortalDeps = {
     input: WebPortalSubmitInput
   ) => Promise<{ ok: boolean; message: string; request?: TelegramRequest }>;
   listRequests: () => TelegramRequest[];
+  /** Backfill missing posterUrl from TVMaze/IMDb when possible. */
+  enrichRequests?: (requests: TelegramRequest[]) => Promise<TelegramRequest[]>;
   resolveRequest: (
     id: string,
     action: 'approved' | 'denied'
@@ -205,6 +208,12 @@ button.ok { border-color: var(--ok); color: #c8e0c8; }
   vertical-align: top;
 }
 .table th { color: var(--text-dim); font-weight: 500; font-size: 0.8rem; }
+.req-cell { display: flex; gap: 0.75rem; align-items: flex-start; }
+.req-poster {
+  width: 40px; height: 60px; object-fit: cover; border-radius: 4px;
+  background: #0a0a0a; flex-shrink: 0;
+}
+.req-poster.ph { display: grid; place-items: center; color: var(--text-dim); font-size: 0.65rem; }
 `;
 }
 
@@ -250,10 +259,6 @@ function requestPageHtml(): string {
       <button type="button" class="primary" id="searchBtn">Search</button>
     </div>
     <div class="hint">TV via TVMaze · Movies via IMDb. No login required.</div>
-  </div>
-  <div class="field">
-    <label>Your name (optional)</label>
-    <input id="requesterName" placeholder="Shown to admins" />
   </div>
   <div id="msg"></div>
   <div id="results" class="card" style="display:none;margin-top:1rem;padding-top:0.4rem"></div>
@@ -320,7 +325,8 @@ function requestPageHtml(): string {
           '</div><div class="result-meta">' + escape((it.overview || '').slice(0, 160)) +
           '</div><div style="margin-top:0.45rem"><button type="button" class="primary submit-btn" data-id="' +
           it.id + '" data-title="' + escape(title) + '" data-year="' + escape(String(year || '')) +
-          '" data-overview="' + escape(it.overview || '') + '">Request</button></div></div></div>';
+          '" data-overview="' + escape(it.overview || '') + '" data-poster="' + escape(poster) +
+          '">Request</button></div></div></div>';
       }).join('');
       box.querySelectorAll('.submit-btn').forEach((btn) => {
         btn.addEventListener('click', () => submitOne(btn));
@@ -338,7 +344,7 @@ function requestPageHtml(): string {
       title: btn.getAttribute('data-title') || '',
       year: btn.getAttribute('data-year') ? Number(btn.getAttribute('data-year')) : null,
       overview: btn.getAttribute('data-overview') || '',
-      requesterName: $('requesterName').value.trim() || undefined
+      posterUrl: btn.getAttribute('data-poster') || undefined
     };
     btn.disabled = true;
     msg('Submitting…');
@@ -390,15 +396,24 @@ function adminLoginHtml(error?: string): string {
 }
 
 function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): string {
+  const posterHtml = (r: TelegramRequest) => {
+    const url = (r.posterUrl || '').trim();
+    if (url) {
+      return `<img class="req-poster" src="${escapeHtml(url)}" alt="" loading="lazy" />`;
+    }
+    return `<div class="req-poster ph">No art</div>`;
+  };
   const row = (r: TelegramRequest, actions: boolean) => {
     const type = r.mediaType === 'movie' ? 'Movie' : 'TV';
     const year = r.year ? ` (${r.year})` : '';
-    const who = r.requesterName || (r.requesterChatId ? `tg:${r.requesterChatId}` : 'web');
+    const who = r.requesterName || (r.requesterChatId ? `tg:${r.requesterChatId}` : 'Web');
     const src = r.source === 'web' ? 'web' : 'telegram';
     return `<tr>
       <td><code>${escapeHtml(r.id)}</code></td>
-      <td>${escapeHtml(type)}: ${escapeHtml(r.title)}${escapeHtml(year)}
-        <div class="hint">${escapeHtml(src)} · ${escapeHtml(who)}</div></td>
+      <td><div class="req-cell">${posterHtml(r)}<div>
+        <div>${escapeHtml(type)}: ${escapeHtml(r.title)}${escapeHtml(year)}</div>
+        <div class="hint">${escapeHtml(src)} · ${escapeHtml(who)}</div>
+      </div></div></td>
       <td><span class="badge ${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
       <td>${
         actions
@@ -632,7 +647,14 @@ export class WebPortalServer {
           this.send(res, 200, adminLoginHtml());
           return;
         }
-        const all = this.deps.listRequests();
+        let all = this.deps.listRequests();
+        if (this.deps.enrichRequests) {
+          try {
+            all = await this.deps.enrichRequests(all);
+          } catch {
+            // keep unenriched
+          }
+        }
         const pending = all.filter((r) => r.status === 'pending').slice(-50).reverse();
         const recent = all
           .filter((r) => r.status !== 'pending')
@@ -725,6 +747,7 @@ export class WebPortalServer {
           title: String(body.title),
           year: body.year ?? null,
           overview: body.overview,
+          posterUrl: body.posterUrl || null,
           requesterName: body.requesterName,
         });
         this.sendJson(res, result.ok ? 200 : 400, result);

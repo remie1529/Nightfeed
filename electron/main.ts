@@ -609,6 +609,58 @@ function formatRequestLine(r: TelegramRequest): string {
   return `[${r.id}] ${type}: ${r.title}${year} — ${r.status}`;
 }
 
+function emitRequestsChanged() {
+  mainWindow?.webContents.send('requests:changed');
+}
+
+/** Resolve poster for a request from library or TVMaze/IMDb; persist if found. */
+async function resolveRequestPoster(req: TelegramRequest): Promise<string | null> {
+  if ((req.posterUrl || '').trim()) return req.posterUrl || null;
+  try {
+    if (req.mediaType === 'show') {
+      const inLib = getShows().find((s) => s.tmdbId === req.mediaId);
+      if (inLib?.posterPath) return inLib.posterPath;
+      const res = await fetch(`https://api.tvmaze.com/shows/${req.mediaId}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return null;
+      const detail = (await res.json()) as {
+        image?: { medium?: string | null; original?: string | null } | null;
+      };
+      return detail.image?.medium || detail.image?.original || null;
+    }
+    const inLib = getMovies().find((m) => m.tmdbId === req.mediaId);
+    if (inLib?.posterPath) return inLib.posterPath;
+    const settings = getSettings();
+    const detail = await fetchMovieDetail(req.mediaId, settings.movieLibraryRoot || '', null);
+    return detail.posterPath || null;
+  } catch {
+    return null;
+  }
+}
+
+async function enrichTelegramRequests(requests: TelegramRequest[]): Promise<TelegramRequest[]> {
+  const out: TelegramRequest[] = [];
+  let changed = false;
+  for (const req of requests) {
+    if ((req.posterUrl || '').trim()) {
+      out.push(req);
+      continue;
+    }
+    const posterUrl = await resolveRequestPoster(req);
+    if (posterUrl) {
+      const updated = { ...req, posterUrl };
+      upsertTelegramRequest(updated);
+      out.push(updated);
+      changed = true;
+    } else {
+      out.push(req);
+    }
+  }
+  if (changed) emitRequestsChanged();
+  return out;
+}
+
 function pickLanIpv4(): string | null {
   try {
     const nets = os.networkInterfaces();
@@ -1115,6 +1167,7 @@ function wireTelegram() {
           title: best.name,
           year,
           overview: best.overview,
+          posterUrl: best.posterUrl || null,
           requesterChatId: chatId,
           requesterName: meta?.fromName,
           source: 'telegram',
@@ -1135,6 +1188,7 @@ function wireTelegram() {
         title: best.title,
         year: best.releaseYear,
         overview: best.overview,
+        posterUrl: best.posterUrl || null,
         requesterChatId: chatId,
         requesterName: meta?.fromName,
         source: 'telegram',
@@ -1238,6 +1292,7 @@ function wireWebPortal() {
         source: 'web',
       }),
     listRequests: () => getTelegramRequests(),
+    enrichRequests: (requests) => enrichTelegramRequests(requests),
     resolveRequest: async (id, action) => resolveTelegramRequest(id, action, 0),
   });
   webPortal.sync(ensureWebPortalSecrets(getSettings()));
@@ -1250,6 +1305,7 @@ async function submitPendingMediaRequest(input: {
   title: string;
   year?: number | null;
   overview?: string;
+  posterUrl?: string | null;
   requesterChatId: number;
   requesterName?: string;
   source: 'telegram' | 'web';
@@ -1290,18 +1346,20 @@ async function submitPendingMediaRequest(input: {
     title: input.title,
     year: input.year ?? null,
     overview: input.overview,
+    posterUrl: input.posterUrl || null,
     requesterChatId: input.requesterChatId,
-    requesterName: input.requesterName,
+    requesterName: input.source === 'web' ? undefined : input.requesterName,
     status: 'pending',
     createdAt: new Date().toISOString(),
     source: input.source,
   };
   upsertTelegramRequest(req);
+  emitRequestsChanged();
 
   const typeLabel = input.mediaType === 'movie' ? 'Movie' : 'TV show';
   const who =
     input.source === 'web'
-      ? `Web${input.requesterName ? `: ${input.requesterName}` : ''}`
+      ? 'Web'
       : `${input.requesterName || '—'} (${input.requesterChatId})`;
   const adminText = [
     input.source === 'web' ? 'New web portal request' : 'New Telegram request',
@@ -1341,6 +1399,7 @@ async function resolveTelegramRequest(
       resolvedByChatId: adminChatId,
     };
     upsertTelegramRequest(updated);
+    emitRequestsChanged();
     try {
       await telegramBot.notifyChat(
         settings,
@@ -1374,8 +1433,10 @@ async function resolveTelegramRequest(
         resolvedAt: new Date().toISOString(),
         resolvedByChatId: adminChatId,
         title: show.name || req.title,
+        posterUrl: req.posterUrl || show.posterPath || null,
       };
       upsertTelegramRequest(updated);
+      emitRequestsChanged();
       try {
         await telegramBot.notifyChat(settings, req.requesterChatId, `Approved: ${show.name}`);
       } catch {
@@ -1398,8 +1459,10 @@ async function resolveTelegramRequest(
       resolvedAt: new Date().toISOString(),
       resolvedByChatId: adminChatId,
       title: movie.title || req.title,
+      posterUrl: req.posterUrl || movie.posterPath || null,
     };
     upsertTelegramRequest(updated);
+    emitRequestsChanged();
     try {
       await telegramBot.notifyChat(settings, req.requesterChatId, `Approved: ${movie.title}`);
     } catch {
@@ -1807,6 +1870,22 @@ function registerIpc() {
 
     ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
   ipcMain.handle('telegram:test', async () => telegramBot.sendTest(getSettings()));
+  ipcMain.handle('requests:list', async () => {
+    const all = getTelegramRequests();
+    return enrichTelegramRequests(all);
+  });
+  ipcMain.handle('requests:pendingCount', () => {
+    return getTelegramRequests().filter((r) => r.status === 'pending').length;
+  });
+  ipcMain.handle(
+    'requests:resolve',
+    async (_e, id: string, action: 'approved' | 'denied') => {
+      if (action !== 'approved' && action !== 'denied') {
+        return { ok: false, message: 'Invalid action' };
+      }
+      return resolveTelegramRequest(String(id || ''), action, 0);
+    }
+  );
   ipcMain.handle('webPortal:status', () => {
     const s = getSettings();
     const st = webPortal.getStatus(s);

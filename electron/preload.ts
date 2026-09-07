@@ -69,6 +69,10 @@ const api = {
 
   getTelegramStatus: () => ipcRenderer.invoke('telegram:status'),
   sendTelegramTest: () => ipcRenderer.invoke('telegram:test'),
+  listRequests: () => ipcRenderer.invoke('requests:list'),
+  getPendingRequestCount: () => ipcRenderer.invoke('requests:pendingCount'),
+  resolveRequest: (id: string, action: 'approved' | 'denied') =>
+    ipcRenderer.invoke('requests:resolve', id, action),
   getWebPortalStatus: () => ipcRenderer.invoke('webPortal:status'),
 
   exportBackup: () => ipcRenderer.invoke('backup:export'),
@@ -131,6 +135,12 @@ const api = {
     const listener = (_: unknown, status: unknown) => cb(status);
     ipcRenderer.on('vpn:status', listener);
     return () => ipcRenderer.removeListener('vpn:status', listener);
+  },
+
+  onRequestsChanged: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('requests:changed', listener);
+    return () => ipcRenderer.removeListener('requests:changed', listener);
   },
 
   posterUrl: (path: string | null, _size?: string) => {

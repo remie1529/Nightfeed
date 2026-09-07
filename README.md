@@ -22,6 +22,7 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 
 - **TV library** — search & track shows via [TVMaze](https://www.tvmaze.com/) (no API key)
 - **Movies** — search & metadata via IMDb.com scrape (no API key); separate movie library folder
+- **Requests** — in-app Requests tab + web/Telegram request workflow with posters and approve/deny
 - **Embedded downloads** — WebTorrent in an Electron `utilityProcess` when available
 - **Multi-thread search** — torrent index fetch/merge/rank on `worker_threads`; library zoekfunctie (TVMaze / IMDb) on its own worker so search stays responsive during downloads
 - **Multi-source torrents** — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, AnimeTosho, Nyaa, LimeTorrents; optional Jackett
@@ -66,6 +67,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 ---
 
 ## Version
+
+**1.7.1** — In-app Requests tab; posters on admin/app requests; public request page no longer asks for a name.
 
 **1.7.0** — Local web request/admin portal; hyphenated Telegram request commands.
 
