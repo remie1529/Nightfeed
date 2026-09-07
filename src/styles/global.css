@@ -410,10 +410,25 @@ table.dense tr:hover td {
   cursor: pointer;
 }
 
-.toggle-row input[type="checkbox"] {
+.toggle-row input[type="checkbox"],
+.toggle-row input[type="radio"] {
   width: 16px;
   height: 16px;
+  flex: 0 0 16px;
   accent-color: var(--accent);
+}
+
+.choice-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.choice-stack .toggle-row {
+  width: auto;
+  max-width: 100%;
+  justify-content: flex-start;
 }
 
 .status-line {
@@ -455,11 +470,6 @@ table.dense tr:hover td {
 
 .modal-sm { width: min(520px, 100%); }
 
-.choice-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-}
 
 .choice-card {
   display: flex;
