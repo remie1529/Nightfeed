@@ -102,6 +102,11 @@ export function getSettings(): AppSettings {
   ) {
     merged.telegramAdminChatIds = merged.telegramAllowedChatIds;
   }
+  if (typeof merged.webPortalEnabled !== 'boolean') merged.webPortalEnabled = false;
+  if (!merged.webPortalPort || merged.webPortalPort < 1) merged.webPortalPort = 8787;
+  if (merged.webPortalBind !== 'lan') merged.webPortalBind = 'localhost';
+  if (merged.webPortalAdminPasswordHash == null) merged.webPortalAdminPasswordHash = '';
+  if (merged.webPortalSessionSecret == null) merged.webPortalSessionSecret = '';
   return merged;
 }
 
@@ -293,6 +298,11 @@ export function importBackupData(raw: unknown): { shows: number; movies: number 
   nextSettings.torrentSources = migrateTorrentSources(data.settings as Partial<AppSettings>);
   if (nextSettings.telegramAdminChatIds == null) nextSettings.telegramAdminChatIds = '';
   if (nextSettings.telegramRequestChatIds == null) nextSettings.telegramRequestChatIds = '';
+  if (typeof nextSettings.webPortalEnabled !== 'boolean') nextSettings.webPortalEnabled = false;
+  if (!nextSettings.webPortalPort || nextSettings.webPortalPort < 1) nextSettings.webPortalPort = 8787;
+  if (nextSettings.webPortalBind !== 'lan') nextSettings.webPortalBind = 'localhost';
+  if (nextSettings.webPortalAdminPasswordHash == null) nextSettings.webPortalAdminPasswordHash = '';
+  if (nextSettings.webPortalSessionSecret == null) nextSettings.webPortalSessionSecret = '';
   if (
     !(nextSettings.telegramAdminChatIds || '').trim() &&
     !(nextSettings.telegramRequestChatIds || '').trim() &&

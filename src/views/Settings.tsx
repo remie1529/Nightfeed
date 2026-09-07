@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus, VpnStatus } from '../lib/types';
+import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus, VpnStatus, WebPortalStatus } from '../lib/types';
 import FolderScanImport from '../components/FolderScanImport';
 import { DEFAULT_TORRENT_SOURCES } from '../lib/types';
 
@@ -51,6 +51,11 @@ const empty: AppSettings = {
   vpnUsername: '',
   vpnPassword: '',
   vpnRequireForTorrents: false,
+  webPortalEnabled: false,
+  webPortalPort: 8787,
+  webPortalBind: 'localhost',
+  webPortalAdminPasswordHash: '',
+  webPortalSessionSecret: '',
 };
 
 export default function SettingsView() {
@@ -75,11 +80,22 @@ export default function SettingsView() {
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
   const [vpnStatus, setVpnStatus] = useState<VpnStatus | null>(null);
   const [vpnBusy, setVpnBusy] = useState(false);
+  const [webPortalPassword, setWebPortalPassword] = useState('');
+  const [portalStatus, setPortalStatus] = useState<WebPortalStatus | null>(null);
 
   const refreshTg = async () => {
     try {
       const s = (await window.torrentAPI.getTelegramStatus()) as TelegramStatus;
       setTgStatus(s);
+    } catch {
+      // ignore
+    }
+  };
+
+  const refreshPortal = async () => {
+    try {
+      const s = (await window.torrentAPI.getWebPortalStatus?.()) as WebPortalStatus | undefined;
+      if (s) setPortalStatus(s);
     } catch {
       // ignore
     }
@@ -111,9 +127,11 @@ export default function SettingsView() {
     window.torrentAPI.getUpdateStatus?.().then((s) => setUpdateStatus(s as UpdateStatus)).catch(() => undefined);
     refreshTg();
     void refreshVpn();
+    void refreshPortal();
     const id = setInterval(() => {
       void refreshTg();
       void refreshVpn();
+      void refreshPortal();
     }, 4000);
     const off = window.torrentAPI.onUpdateStatus?.((s) => setUpdateStatus(s as UpdateStatus));
     const offVpn = window.torrentAPI.onVpnStatus?.((s) => setVpnStatus(s as VpnStatus));
@@ -128,11 +146,19 @@ export default function SettingsView() {
     setError(null);
     setTgTestMsg(null);
     try {
-      const next = (await window.torrentAPI.setSettings(settings)) as AppSettings;
+      const payload: Record<string, unknown> = { ...settings };
+      if (webPortalPassword.trim()) {
+        payload.webPortalAdminPassword = webPortalPassword.trim();
+      }
+      // Never send session secret edits from UI; main owns it.
+      delete payload.webPortalSessionSecret;
+      const next = (await window.torrentAPI.setSettings(payload)) as AppSettings;
       setLocal({ ...empty, ...next });
+      setWebPortalPassword('');
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
       await refreshTg();
+      await refreshPortal();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -326,7 +352,7 @@ export default function SettingsView() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <p>TV & movie libraries, downloads, VPN, auto-download, startup, Telegram, updates</p>
+          <p>TV & movie libraries, downloads, VPN, auto-download, startup, Telegram, web portal, updates</p>
         </div>
         <div className="toolbar">
           {saved && <span style={{ color: 'var(--ok)' }}>Saved</span>}
@@ -842,7 +868,7 @@ export default function SettingsView() {
           />
           <div className="hint">
             Comma-separated. These users can only submit movie/TV requests
-            (/request show|movie &lt;name&gt;). Paste the exact ID from the bot reply.
+            (/request-show /request-movie &lt;name&gt;). Paste the exact ID from the bot reply.
             You must click <strong>Save</strong> or the lists will not load.
           </div>
         </div>
@@ -875,6 +901,89 @@ export default function SettingsView() {
             Message the bot (DM or group) to see Your chat ID: … then paste that exact ID under
             Admin or Requests and click <strong>Save</strong>. Private chat IDs are usually positive;
             group/supergroup IDs are negative (start with -).
+          </div>
+        </div>
+
+        <div className="settings-section">Web portal</div>
+
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.webPortalEnabled}
+              onChange={(e) => setLocal({ ...settings, webPortalEnabled: e.target.checked })}
+            />
+            <span>Enable local web portal</span>
+          </label>
+          <div className="hint">
+            Runs a small HTTP server from the app (no login on Request page). Save to start/stop.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Port</label>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={settings.webPortalPort ?? 8787}
+            onChange={(e) =>
+              setLocal({ ...settings, webPortalPort: Number(e.target.value) || 8787 })
+            }
+          />
+        </div>
+
+        <div className="field">
+          <label>Bind address</label>
+          <select
+            value={settings.webPortalBind === 'lan' ? 'lan' : 'localhost'}
+            onChange={(e) =>
+              setLocal({
+                ...settings,
+                webPortalBind: e.target.value === 'lan' ? 'lan' : 'localhost',
+              })
+            }
+          >
+            <option value="localhost">Localhost only (127.0.0.1)</option>
+            <option value="lan">LAN (0.0.0.0)</option>
+          </select>
+          <div className="hint">
+            Localhost is safer. LAN lets other devices on your network open the Request page.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Admin password</label>
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={webPortalPassword}
+            onChange={(e) => setWebPortalPassword(e.target.value)}
+            placeholder={
+              settings.webPortalAdminPasswordHash || portalStatus?.passwordSet
+                ? '•••••••• (leave blank to keep)'
+                : 'Set a password'
+            }
+          />
+          <div className="hint">
+            Stored as a hash only — plaintext is never logged. Required for /admin.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Portal URL</label>
+          <div className="status-line">
+            {portalStatus?.listening
+              ? (portalStatus.urls || []).join(' · ') || `http://127.0.0.1:${settings.webPortalPort || 8787}/`
+              : settings.webPortalEnabled
+                ? portalStatus?.lastError
+                  ? `Not listening — ${portalStatus.lastError}`
+                  : 'Enabled — Save / wait for listen…'
+                : 'Disabled'}
+          </div>
+          <div className="hint">
+            Public request page: <code>/</code> or <code>/request</code>. Admin: <code>/admin</code> (password).
+            {settings.webPortalBind === 'lan' ? ' On LAN, use this PC’s IP in the URL.' : ''}
           </div>
         </div>
       </div>

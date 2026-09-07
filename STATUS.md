@@ -1,16 +1,17 @@
 ## Nightfeed status
 
-**Current:** v1.6.1 — Harden Telegram chat-ID matching (Requests/Admin lists).
+**Current:** v1.7.0 — Local web request/admin portal + hyphenated Telegram commands.
 
-# Status v1.6.1
+# Status v1.7.0
 
-## Fix
-- `parseChatIds` / `telegramRoleForChat`: normalize unicode dashes, extract `-?\d+`, compare normalized forms
-- Unknown-chat reply includes Save hint (Admin or Requests)
-- Settings shows loaded Admin/Requests ID counts after Save
-- Private chats also match `from.id`
+## New
+- Local HTTP web portal (default port 8787): public `/` `/request`, admin `/admin` with hashed password + session cookie
+- Settings: enable portal, port, bind (localhost/LAN), admin password, show portal URL
+- Web requests create the same pending TelegramRequest records; admin chats get approve/deny notify when configured
+- Telegram: `/request-show` / `/request-movie` (legacy `/request show|movie` still accepted); /help documents hyphen forms only
 
 ## Works (carry-over)
-- Library list performance + season bulk status (v1.6.0)
+- Negative Telegram group chat IDs (hardened in 1.6.1) with web + telegram
+- Library list performance + season bulk status
 - Telegram Admin/Requests approve/deny workflow
 - Manual mass-import, OpenVPN torrent-only split tunnel, auto-updates via GitHub Releases

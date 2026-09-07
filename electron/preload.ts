@@ -69,6 +69,7 @@ const api = {
 
   getTelegramStatus: () => ipcRenderer.invoke('telegram:status'),
   sendTelegramTest: () => ipcRenderer.invoke('telegram:test'),
+  getWebPortalStatus: () => ipcRenderer.invoke('webPortal:status'),
 
   exportBackup: () => ipcRenderer.invoke('backup:export'),
   importBackup: () => ipcRenderer.invoke('backup:import'),

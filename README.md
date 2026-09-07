@@ -27,7 +27,8 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 - **Multi-source torrents** — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, AnimeTosho, Nyaa, LimeTorrents; optional Jackett
 - **Auto-download** — missing episodes on a schedule; skip ignored
 - **FTP upload** — optional upload when a download finishes
-- **Telegram bot** — admin commands + request-only chats (approve/deny movie & TV requests)
+- **Telegram bot** — admin commands + request-only chats (`/request-show` / `/request-movie`, approve/deny)
+- **Web portal** — local request page + admin approve/deny UI (optional LAN bind)
 - **Backup** — export/import settings + TV + movie libraries (JSON; includes secrets — keep private)
 - **Manual folder import** — Scan library folders & import (preview + confirm; never auto)
 - **UNC paths** — Windows network library roots supported
@@ -66,8 +67,10 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 ## Version
 
-**1.5.7** — Telegram Admin vs Requests chat IDs; /request show|movie with approve/deny and download-finished notify.
+**1.7.0** — Local web request/admin portal; hyphenated Telegram request commands.
 
-**1.5.6** — app icon; OpenVPN torrent-only split (route-nopull + WebTorrent interface bind).
+**1.6.1** — Harden Telegram chat-ID matching (Requests/Admin lists).
 
-**1.5.5** — library search stays responsive during downloads; hide native menu bar; backup export/import; README refresh.
+**1.6.0** — Fast Library list + season bulk status.
+
+**1.5.7** — Telegram Admin vs Requests chat IDs; request workflow with approve/deny.
