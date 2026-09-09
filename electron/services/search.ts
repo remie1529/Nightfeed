@@ -8,28 +8,72 @@ export function buildQuery(showName: string, season: number, episode: number): s
   return `${showName} S${pad2(season)}E${pad2(episode)}`;
 }
 
+/** Auto-download / retry skip torrents at or below this — 0–5 seeders almost never complete. */
+export const MIN_AUTO_SEEDERS = 8;
+
 export function detectResolution(title: string): Resolution | null {
-  const t = title.toLowerCase();
-  if (/\b(2160p|4k|uhd)\b/.test(t)) return '2160p';
-  if (/\b1080p\b/.test(t)) return '1080p';
-  if (/\b720p\b/.test(t)) return '720p';
+  const t = (title || '').toLowerCase().replace(/[._]/g, ' ');
+  if (/\b(2160p|3840\s*[x×]\s*2160|uhd|4k)\b/.test(t)) return '2160p';
+  if (/\b(1080p|1080i|1920\s*[x×]\s*1080|full\s*hd|\bfhd\b)\b/.test(t)) return '1080p';
+  if (/\b(720p|1280\s*[x×]\s*720)\b/.test(t)) return '720p';
   return null;
 }
 
+export function isJunkRelease(title: string): boolean {
+  const t = (title || '').toLowerCase().replace(/[._]/g, ' ');
+  return /\b(camrip|hdcam|\bcam\b|telesync|\bts\b|\btc\b|dvdscr|screener|\bscr\b|workprint|\bwp\b|r5|trailer|teaser|\bsample\b)\b/.test(
+    t
+  );
+}
+
+function isMultiEpisodePack(title: string): boolean {
+  const t = (title || '').replace(/[._]/g, ' ');
+  if (/s\d{2}e\d{2}\s*[-–to]+\s*(s\d{2}e)?\d{2}/i.test(t)) return true;
+  if (/\be\d{2}\s*[-–]\s*e\d{2}\b/i.test(t)) return true;
+  if (/\bcomplete\s+(season|series)\b/i.test(t)) return true;
+  if (/\bseason\s+\d+\b/i.test(t) && !/s\d{2}e\d{2}/i.test(t)) return true;
+  return false;
+}
+
+function sizeOkForAuto(size: number, kind: 'episode' | 'movie'): boolean {
+  if (!size) return true;
+  if (kind === 'episode') return size >= 80 * 1024 * 1024 && size <= 8 * 1024 * 1024 * 1024;
+  return size >= 400 * 1024 * 1024 && size <= 50 * 1024 * 1024 * 1024;
+}
+
 export function rankResults(results: SearchResult[], preferred: Resolution): SearchResult[] {
-  const order: Resolution[] = preferred === '2160p'
-    ? ['2160p', '1080p', '720p']
-    : preferred === '720p'
-      ? ['720p', '1080p', '2160p']
-      : ['1080p', '720p', '2160p'];
-
   const score = (r: SearchResult): number => {
-    const resIdx = r.resolution ? order.indexOf(r.resolution) : order.length;
-    const resScore = (order.length - resIdx) * 1_000_000;
-    return resScore + (r.seeders || 0) * 10 + Math.min(r.leechers || 0, 50);
+    const seeds = r.seeders || 0;
+    let s = 0;
+    if (r.resolution === preferred) s += 5_000_000;
+    else if (r.resolution) s += 150_000;
+    if (seeds <= 0) s -= 4_000_000;
+    else if (seeds < MIN_AUTO_SEEDERS) s -= 2_000_000;
+    else s += Math.min(seeds, 8000) * 25;
+    if (isJunkRelease(r.title || '')) s -= 8_000_000;
+    s += Math.min(r.leechers || 0, 80);
+    return s;
   };
+  return [...results].sort((a, b) => score(b) - score(a) || (b.seeders || 0) - (a.seeders || 0));
+}
 
-  return [...results].sort((a, b) => score(b) - score(a));
+/** Best torrent for auto-download: preferred resolution, enough seeders, not junk/cam. */
+export function pickAutoDownload(
+  results: SearchResult[],
+  preferred: Resolution,
+  kind: 'episode' | 'movie' = 'episode'
+): SearchResult | null {
+  const pool = (results || []).filter((r) => {
+    if (!r?.magnet) return false;
+    if ((r.seeders || 0) < MIN_AUTO_SEEDERS) return false;
+    if (r.resolution !== preferred) return false;
+    if (isJunkRelease(r.title || '')) return false;
+    if (!sizeOkForAuto(r.size || 0, kind)) return false;
+    return true;
+  });
+  if (!pool.length) return null;
+  pool.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
+  return pool[0];
 }
 
 const TRACKERS = [
@@ -626,7 +670,10 @@ export async function searchEpisodeTorrents(
   await Promise.all(runners);
 
   const merged = mergeByInfoHash(groups);
-  const ranked = rankResults(merged, preferred);
+  const episodeOnly = merged.filter(
+    (r) => titleMatchesEpisode(r.title || '', season, episode) && !isMultiEpisodePack(r.title || '')
+  );
+  const ranked = rankResults(episodeOnly.length ? episodeOnly : merged, preferred);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
   return { results: ranked, query, error };
@@ -685,7 +732,8 @@ export async function searchMovieTorrents(
   await Promise.all(runners);
 
   const merged = mergeByInfoHash(groups);
-  const ranked = rankResults(merged, preferred);
+  const cleaned = merged.filter((r) => !/\b(trailer|teaser)\b/i.test(r.title || ''));
+  const ranked = rankResults(cleaned.length ? cleaned : merged, preferred);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
   return { results: ranked, query, error };
