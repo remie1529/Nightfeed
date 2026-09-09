@@ -53,6 +53,7 @@ class UtilityEngineProxy extends EventEmitter {
         this.ready = false;
         if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
       }
+      this.startPromise = null;
       return false;
     })();
     return this.startPromise;
@@ -78,7 +79,7 @@ class UtilityEngineProxy extends EventEmitter {
           this.child = null;
           this.ready = false;
           resolve(false);
-        }, 12000);
+        }, 20000);
 
         child.on('message', (msg: any) => {
           if (msg?.type === 'ready') {

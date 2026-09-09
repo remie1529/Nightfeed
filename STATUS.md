@@ -1,17 +1,16 @@
 ## Nightfeed status
 
-**Current:** v1.7.4 — Stop WebTorrent uTP ENOBUFS crash on update/downloads.
+**Current:** v1.7.5 — Keep UI responsive: max 3 active torrents, no full-app re-render on progress.
 
-# Status v1.7.4
+# Status v1.7.5
 
 ## New
-- Disable uTP (UDP) — Windows `utp-native` was throwing uncaught **no buffer space available** during peer connect
-- Cap torrent peer connections at 80
-- Ignore that socket error so it cannot take down the main process
-- Pause torrents and VPN before **Restart to install** an update
+- Only **3 torrents** download in WebTorrent at once; the rest stay queued until a slot frees
+- Progress updates no longer re-render Library/Settings; Downloads page owns its own list
+- Unpack native `.node` addons so torrent **utilityProcess** can stay off the UI thread
+- Yield the main process during library/movie loads and full refresh
 
 ## Works (carry-over)
-- OpenVPN 2.7 handshake / Interactive Service / UAC
-- In-app Requests tab + admin/web posters
-- Local HTTP web portal + Telegram approve/deny
-- Library performance, mass-import, auto-updates
+- OpenVPN 2.7 / Interactive Service / UAC
+- uTP disabled (Windows ENOBUFS)
+- Requests tab, web portal, Telegram, auto-updates

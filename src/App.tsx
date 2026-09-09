@@ -20,7 +20,7 @@ export default function App() {
   const [view, setView] = useState<View>('library');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null);
-  const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [activeDownloads, setActiveDownloads] = useState(0);
   const [libraryKey, setLibraryKey] = useState(0);
   const [moviesKey, setMoviesKey] = useState(0);
   const [requestsKey, setRequestsKey] = useState(0);
@@ -30,9 +30,15 @@ export default function App() {
 
   useEffect(() => {
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || ''))).catch(() => undefined);
-    window.torrentAPI.getDownloads().then(setDownloads).catch(() => undefined);
+    const countActive = (items: DownloadItem[]) =>
+      items.filter((d) => d.status === 'downloading' || d.status === 'queued' || d.status === 'paused').length;
+    window.torrentAPI
+      .getDownloads()
+      .then((items) => setActiveDownloads(countActive(items as DownloadItem[])))
+      .catch(() => undefined);
     const offDl = window.torrentAPI.onDownloadsUpdate((items) => {
-      setDownloads(items as DownloadItem[]);
+      const n = countActive(items as DownloadItem[]);
+      setActiveDownloads((prev) => (prev === n ? prev : n));
     });
     const offLib = window.torrentAPI.onLibraryChanged(() => {
       setLibraryKey((k) => k + 1);
@@ -78,10 +84,6 @@ export default function App() {
     setSelectedMovieId(movie.tmdbId);
     setView('movie');
   };
-
-  const activeDownloads = downloads.filter(
-    (d) => d.status === 'downloading' || d.status === 'queued' || d.status === 'paused'
-  ).length;
 
   return (
     <div className="app-shell">
@@ -163,7 +165,7 @@ export default function App() {
             }}
           />
         )}
-        {view === 'downloads' && <Downloads items={downloads} />}
+        {view === 'downloads' && <Downloads />}
         {view === 'requests' && <Requests refreshToken={requestsKey} />}
         {view === 'settings' && <SettingsView />}
       </main>
