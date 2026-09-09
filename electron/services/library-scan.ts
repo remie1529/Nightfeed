@@ -9,7 +9,7 @@ import { Movie, Show } from '../types';
 import { searchShowsMeta, searchMoviesMeta } from './metadata-pool';
 import type { MazeSearchItem } from './tvmaze-search';
 import type { MovieSearchItem } from './imdb';
-import { sanitizeName } from './paths';
+import { sanitizeName, uniqueRoots } from './paths';
 
 const VIDEO_EXTS = new Set([
   '.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.flv', '.webm',
@@ -376,24 +376,30 @@ export async function buildScanPreview(
 ): Promise<FolderScanPreview> {
   const errors: string[] = [];
   const candidates: FolderScanCandidate[] = [];
-  const tvRoot = (libraryRoot || '').trim();
-  const movieRoot = (movieLibraryRoot || '').trim();
+  const tvRoots = uniqueRoots(libraryRoot);
+  const movieRoots = uniqueRoots(movieLibraryRoot);
+  const tvRoot = tvRoots[0] || '';
+  const movieRoot = movieRoots[0] || '';
 
-  if ((scope === 'tv' || scope === 'both') && !tvRoot) {
+  if ((scope === 'tv' || scope === 'both') && !tvRoots.length) {
     errors.push('TV library root is not set');
   }
-  if ((scope === 'movies' || scope === 'both') && !movieRoot) {
+  if ((scope === 'movies' || scope === 'both') && !movieRoots.length) {
     errors.push('Movie library root is not set');
   }
-  if ((scope === 'tv' || scope === 'both') && tvRoot && !fs.existsSync(tvRoot)) {
-    errors.push(`TV library root not found: ${tvRoot}`);
+  for (const r of tvRoots) {
+    if ((scope === 'tv' || scope === 'both') && r && !fs.existsSync(r)) {
+      errors.push(`TV library root not found: ${r}`);
+    }
   }
-  if ((scope === 'movies' || scope === 'both') && movieRoot && !fs.existsSync(movieRoot)) {
-    errors.push(`Movie library root not found: ${movieRoot}`);
+  for (const r of movieRoots) {
+    if ((scope === 'movies' || scope === 'both') && r && !fs.existsSync(r)) {
+      errors.push(`Movie library root not found: ${r}`);
+    }
   }
 
   if (scope === 'tv' || scope === 'both') {
-    const folders = detectTvFolders(tvRoot);
+    const folders = tvRoots.flatMap((r) => detectTvFolders(r));
     onProgress?.(`Scanning ${folders.length} TV folders…`);
     for (let i = 0; i < folders.length; i++) {
       const folder = folders[i];
@@ -465,7 +471,7 @@ export async function buildScanPreview(
   }
 
   if (scope === 'movies' || scope === 'both') {
-    const entries = detectMovieEntries(movieRoot);
+    const entries = movieRoots.flatMap((r) => detectMovieEntries(r));
     onProgress?.(`Scanning ${entries.length} movie entries…`);
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];

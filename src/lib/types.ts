@@ -47,7 +47,9 @@ export interface AppSettings {
   /** @deprecated Movies use IMDb scrape (no key). Kept for older settings files. */
   tmdbApiKey?: string;
   libraryRoot: string;
+  libraryRoots: string[];
   movieLibraryRoot: string;
+  movieLibraryRoots: string[];
   defaultResolution: Resolution;
   defaultMovieResolution: Resolution;
   refreshIntervalMinutes: number;
@@ -65,6 +67,8 @@ export interface AppSettings {
   telegramAllowedChatIds: string;
   telegramAdminChatIds: string;
   telegramRequestChatIds: string;
+  telegramDailyBriefing: boolean;
+  telegramDailyBriefingHour: number;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
   /** Max WebTorrent peer connections (default 150). */

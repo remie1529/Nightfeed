@@ -338,19 +338,29 @@ export default function ShowDetail({
                     </div>
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <button
-                      disabled={ep.status === 'upcoming' || ep.status === 'downloaded'}
-                      onClick={() => openSearch(ep)}
-                      title={
-                        ep.status === 'upcoming'
-                          ? 'Not aired yet'
-                          : ep.status === 'ignored'
-                            ? 'Find download (ignored — auto-download skipped)'
-                            : 'Find download'
-                      }
-                    >
-                      Get
-                    </button>
+                    <div className="toolbar" style={{ justifyContent: 'flex-end', gap: 6 }}>
+                      {ep.status === 'downloaded' && (
+                        <button
+                          onClick={() => openSearch(ep)}
+                          title="See all available torrents and download a different copy"
+                        >
+                          Get other
+                        </button>
+                      )}
+                      <button
+                        disabled={ep.status === 'upcoming' || ep.status === 'downloaded'}
+                        onClick={() => openSearch(ep)}
+                        title={
+                          ep.status === 'upcoming'
+                            ? 'Not aired yet'
+                            : ep.status === 'ignored'
+                              ? 'Find download (ignored — auto-download skipped)'
+                              : 'Find download'
+                        }
+                      >
+                        Get
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

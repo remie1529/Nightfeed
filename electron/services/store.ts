@@ -7,6 +7,7 @@ import {
   DownloadItem,
   EpisodeOverrideStatus,
   Movie,
+  DownloadHistoryItem,
   Show,
   TelegramRequest,
 } from '../types';
@@ -20,6 +21,8 @@ export interface AppData {
   episodeOverrides: Record<string, EpisodeOverrideStatus>;
   /** Telegram movie/TV requests (pending / approved / denied). */
   telegramRequests: TelegramRequest[];
+  downloadHistory: DownloadHistoryItem[];
+  lastDailyBriefingDate: string;
 }
 
 const defaults: AppData = {
@@ -33,6 +36,8 @@ const defaults: AppData = {
   downloads: [],
   episodeOverrides: {},
   telegramRequests: [],
+  downloadHistory: [],
+  lastDailyBriefingDate: '',
 };
 
 export const store = new Store<AppData>({
@@ -75,6 +80,24 @@ export function getSettings(): AppSettings {
     merged.movieLibraryRoot =
       (raw as Partial<AppSettings>).movieLibraryRoot ||
       path.join(app.getPath('documents'), 'Movies');
+  }
+  const tvRoots = Array.isArray(merged.libraryRoots) ? merged.libraryRoots.filter((r) => !!(r || '').trim()) : [];
+  if (!tvRoots.length && merged.libraryRoot) tvRoots.push(merged.libraryRoot);
+  merged.libraryRoots = tvRoots;
+  merged.libraryRoot = tvRoots[0] || merged.libraryRoot || '';
+  const movieRoots = Array.isArray(merged.movieLibraryRoots)
+    ? merged.movieLibraryRoots.filter((r) => !!(r || '').trim())
+    : [];
+  if (!movieRoots.length && merged.movieLibraryRoot) movieRoots.push(merged.movieLibraryRoot);
+  merged.movieLibraryRoots = movieRoots;
+  merged.movieLibraryRoot = movieRoots[0] || merged.movieLibraryRoot || '';
+  if (typeof merged.telegramDailyBriefing !== 'boolean') merged.telegramDailyBriefing = false;
+  if (
+    typeof merged.telegramDailyBriefingHour !== 'number' ||
+    merged.telegramDailyBriefingHour < 0 ||
+    merged.telegramDailyBriefingHour > 23
+  ) {
+    merged.telegramDailyBriefingHour = 9;
   }
   if (!merged.defaultMovieResolution) {
     merged.defaultMovieResolution = merged.defaultResolution || '1080p';
@@ -122,6 +145,22 @@ export function setSettings(partial: Partial<AppSettings>): AppSettings {
     } else if (partial.telegramAllowedChatIds !== undefined && !(next.telegramAdminChatIds || '').trim()) {
       next.telegramAdminChatIds = next.telegramAllowedChatIds || '';
     }
+  }
+  if (Array.isArray(next.libraryRoots) && next.libraryRoots.length) {
+    next.libraryRoots = next.libraryRoots.map((r) => String(r || '').trim()).filter(Boolean);
+    next.libraryRoot = next.libraryRoots[0] || '';
+  } else if (next.libraryRoot) {
+    next.libraryRoots = [next.libraryRoot];
+  } else {
+    next.libraryRoots = [];
+  }
+  if (Array.isArray(next.movieLibraryRoots) && next.movieLibraryRoots.length) {
+    next.movieLibraryRoots = next.movieLibraryRoots.map((r) => String(r || '').trim()).filter(Boolean);
+    next.movieLibraryRoot = next.movieLibraryRoots[0] || '';
+  } else if (next.movieLibraryRoot) {
+    next.movieLibraryRoots = [next.movieLibraryRoot];
+  } else {
+    next.movieLibraryRoots = [];
   }
   store.set('settings', next);
   return next;
@@ -250,6 +289,27 @@ export function getTelegramRequest(id: string): TelegramRequest | undefined {
   return getTelegramRequests().find((r) => r.id === id);
 }
 
+export function getDownloadHistory(): DownloadHistoryItem[] {
+  return store.get('downloadHistory') || [];
+}
+
+export function appendDownloadHistory(item: DownloadHistoryItem): void {
+  const cutoff = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  const next = [...getDownloadHistory(), item].filter((h) => {
+    const t = Date.parse(h.at);
+    return Number.isFinite(t) && t >= cutoff;
+  });
+  store.set('downloadHistory', next.slice(-400));
+}
+
+export function getLastDailyBriefingDate(): string {
+  return store.get('lastDailyBriefingDate') || '';
+}
+
+export function setLastDailyBriefingDate(day: string): void {
+  store.set('lastDailyBriefingDate', day);
+}
+
 /** Full app data snapshot for backup (includes secrets from settings). */
 export function exportBackupData(): AppData & { exportedAt: string; app: string; version: number } {
   return {
@@ -259,6 +319,8 @@ export function exportBackupData(): AppData & { exportedAt: string; app: string;
     downloads: getDownloads(),
     episodeOverrides: getEpisodeOverrides(),
     telegramRequests: getTelegramRequests(),
+    downloadHistory: getDownloadHistory(),
+    lastDailyBriefingDate: getLastDailyBriefingDate(),
     exportedAt: new Date().toISOString(),
     app: 'Nightfeed',
     version: 1,
@@ -317,6 +379,11 @@ export function importBackupData(raw: unknown): { shows: number; movies: number 
   store.set('downloads', data.downloads);
   store.set('episodeOverrides', data.episodeOverrides);
   store.set('telegramRequests', (data as AppData).telegramRequests || []);
+  store.set('downloadHistory', Array.isArray((data as AppData).downloadHistory) ? (data as AppData).downloadHistory : []);
+  store.set(
+    'lastDailyBriefingDate',
+    typeof (data as AppData).lastDailyBriefingDate === 'string' ? (data as AppData).lastDailyBriefingDate : ''
+  );
 
   return { shows: data.shows.length, movies: (data.movies || []).length };
 }

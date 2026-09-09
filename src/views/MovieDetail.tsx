@@ -201,6 +201,11 @@ export default function MovieDetail({
             >
               {searching ? 'Searching…' : 'Download best'}
             </button>
+            {movie.status === 'downloaded' && (
+              <button onClick={openSearch} title="See all available torrents">
+                Get other
+              </button>
+            )}
             <button
               disabled={movie.status === 'downloaded' || movie.status === 'downloading'}
               onClick={openSearch}

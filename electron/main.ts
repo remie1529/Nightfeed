@@ -1,6 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { autoUpdater } from 'electron-updater';
 import {
   episodeKey,
@@ -13,8 +14,12 @@ import {
   importBackupData,
   removeMovie,
   removeShow,
+  appendDownloadHistory,
+  getDownloadHistory,
+  getLastDailyBriefingDate,
   saveDownloads,
   setEpisodeOverride,
+  setLastDailyBriefingDate,
   setEpisodeOverridesBulk,
   setSettings,
   upsertMovie,
@@ -49,6 +54,8 @@ import {
 } from './services/web-portal';
 import { uploadFinishedFile } from './services/ftp';
 import { vpnManager } from './services/vpn';
+import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
+import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
 import os from 'os';
 import {
@@ -72,6 +79,13 @@ import {
   UpdateStatus,
   VpnStatus,
 } from './types';
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'nfimg',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, bypassCSP: true },
+  },
+]);
 
 process.on('uncaughtException', (err) => {
   if (isIgnorableTorrentSocketError(err)) {
@@ -248,7 +262,9 @@ function torrentVpnHold(): boolean {
 
 function applyTorrentBindFromVpn(): void {
   downloadEngine.applySettings({
-    bindAddress: vpnManager.getBindAddress(),
+    // Do not bind sockets to the TUN IP — Windows routing then fails without a
+    // default route. OpenVPN pulls routes so torrent traffic uses the VPN.
+    bindAddress: null,
     vpnHold: torrentVpnHold(),
   });
 }
@@ -272,6 +288,38 @@ function alertVpnKillSwitch(detail: string): void {
   const msg = `Nightfeed VPN kill switch: ${detail} Torrents are paused until OpenVPN is connected.`;
   notify(msg, 'error');
   void telegramBot.notifyAdminChats(getSettings(), msg).catch(() => undefined);
+}
+
+function localDayStamp(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+async function maybeSendDailyBriefing(): Promise<void> {
+  const s = getSettings();
+  if (!s.telegramEnabled || !s.telegramDailyBriefing) return;
+  const hour = Math.min(23, Math.max(0, s.telegramDailyBriefingHour ?? 9));
+  const now = new Date();
+  if (now.getHours() < hour) return;
+  const today = localDayStamp(now);
+  if (getLastDailyBriefingDate() === today) return;
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const items = getDownloadHistory().filter((h) => {
+    const t = Date.parse(h.at);
+    return Number.isFinite(t) && t >= since;
+  });
+  setLastDailyBriefingDate(today);
+  if (!items.length) return;
+  const lines = [
+    `<b>Nightfeed daily briefing</b>`,
+    `${items.length} download${items.length === 1 ? '' : 's'} in the last 24 hours:`,
+    ...items.slice(0, 40).map((h) => `• ${escapeHtml(h.title)}`),
+  ];
+  if (items.length > 40) lines.push(`…and ${items.length - 40} more`);
+  const photo = items.find((h) => h.posterUrl)?.posterUrl || null;
+  await telegramBot.notifyAdminChats(s, lines.join('\n'), undefined, photo);
 }
 
 function startVpnFromSettings(): Promise<void> {
@@ -335,8 +383,33 @@ function slimMovieForDownload(movie: Movie): Movie {
   } as Movie;
 }
 
+function showForDownload(show: Show, seasonNumber: number): Show {
+  const roots = tvRoots();
+  return {
+    ...slimShowForDownload(show),
+    libraryPath: showRootForSeason(show, roots, seasonNumber),
+  };
+}
+
+function movieForDownload(movie: Movie): Movie {
+  const roots = movieRoots();
+  return {
+    ...slimMovieForDownload(movie),
+    libraryPath: getMovieRoot(movie, roots[0] || '', roots),
+  };
+}
+
+function tvRoots(s = getSettings()): string[] {
+  return uniqueRoots(s.libraryRoots, s.libraryRoot);
+}
+
+function movieRoots(s = getSettings()): string[] {
+  return uniqueRoots(s.movieLibraryRoots, s.movieLibraryRoot);
+}
+
 function withMovieLocalStatus(movie: Movie): Movie {
-  return applyMovieLocalStatus(movie, getSettings().movieLibraryRoot, downloadingMovieIds());
+  const s = getSettings();
+  return applyMovieLocalStatus(movie, s.movieLibraryRoot, downloadingMovieIds(), movieRoots(s));
 }
 
 
@@ -464,8 +537,8 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
       if (!movie) throw new Error('Movie not found');
       await downloadEngine.startMovie({
         magnet: next.magnet,
-        movie: slimMovieForDownload(movie),
-        movieLibraryRoot: settings.movieLibraryRoot,
+        movie: movieForDownload(movie),
+        movieLibraryRoot: movieRoots(settings)[0] || settings.movieLibraryRoot,
         candidates,
         triedInfoHashes: triedList,
       });
@@ -476,8 +549,8 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
       if (!show) throw new Error('Show not found');
       await downloadEngine.start({
         magnet: next.magnet,
-        show: slimShowForDownload(show),
-        libraryRoot: settings.libraryRoot,
+        show: showForDownload(show, item.seasonNumber),
+        libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
         seasonNumber: item.seasonNumber,
         episodeNumber: item.episodeNumber,
         episodeTitle: item.episodeTitle,
@@ -508,7 +581,8 @@ async function maybeFtpUpload(localPath: string | undefined, label: string): Pro
 }
 
 function withLocalStatuses(show: Show): Show {
-  return applyLocalStatuses(show, getSettings().libraryRoot, downloadingKeys());
+  const s = getSettings();
+  return applyLocalStatuses(show, s.libraryRoot, downloadingKeys(), tvRoots(s));
 }
 
 let libraryChangedTimer: NodeJS.Timeout | null = null;
@@ -567,7 +641,8 @@ async function refreshOne(show: Show): Promise<Show> {
     show.tmdbId,
     settings.libraryRoot,
     show,
-    downloadingKeys()
+    downloadingKeys(),
+    tvRoots(settings)
   );
   upsertShow(detailed);
   return detailed;
@@ -623,8 +698,8 @@ async function autoDownloadForShows(
           const candidates = toHealthyPreferredCandidates(results, preferred);
           await downloadEngine.start({
             magnet: best.magnet,
-            show: slimShowForDownload(show),
-            libraryRoot: settings.libraryRoot,
+            show: showForDownload(show, ep.seasonNumber),
+            libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
             seasonNumber: ep.seasonNumber,
             episodeNumber: ep.episodeNumber,
             episodeTitle: ep.name,
@@ -665,7 +740,8 @@ async function addMovieById(tmdbId: number): Promise<Movie> {
     tmdbId,
     settings.movieLibraryRoot,
     existing,
-    downloadingMovieIds()
+    downloadingMovieIds(),
+    movieRoots(settings)
   );
   upsertMovie(movie);
   mainWindow?.webContents.send('movies:changed');
@@ -695,8 +771,8 @@ async function autoDownloadMovie(
   const candidates = toHealthyPreferredCandidates(res.results, preferred);
   await downloadEngine.startMovie({
     magnet: best.magnet,
-    movie: slimMovieForDownload(movie),
-    movieLibraryRoot: settings.movieLibraryRoot,
+    movie: movieForDownload(movie),
+    movieLibraryRoot: movieRoots(settings)[0] || settings.movieLibraryRoot,
     candidates,
     triedInfoHashes: [],
     notifyChatId: notifyCtx?.notifyChatId,
@@ -741,7 +817,13 @@ async function resolveRequestPoster(req: TelegramRequest): Promise<string | null
     const inLib = getMovies().find((m) => m.tmdbId === req.mediaId);
     if (inLib?.posterPath) return inLib.posterPath;
     const settings = getSettings();
-    const detail = await fetchMovieDetail(req.mediaId, settings.movieLibraryRoot || '', null);
+    const detail = await fetchMovieDetail(
+      req.mediaId,
+      settings.movieLibraryRoot || '',
+      null,
+      new Set(),
+      movieRoots(settings)
+    );
     return detail.posterPath || null;
   } catch {
     return null;
@@ -802,7 +884,7 @@ function applySettingsSideEffects(next: AppSettings): void {
     maxConnections: next.maxConnections,
     maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: next.maxUploadSpeedKBps,
-    bindAddress: vpnManager.getBindAddress(),
+    bindAddress: null,
     vpnHold: !!(next.vpnEnabled && next.vpnRequireForTorrents && !vpnManager.isConnected()),
   });
   configureUpdaterFeed();
@@ -870,7 +952,7 @@ async function importShowFromScan(mazeId: number, folderPath: string): Promise<S
     seasons: [],
     addedAt: new Date().toISOString(),
   } as Show;
-  let show = await fetchShowDetail(mazeId, settings.libraryRoot, shell, downloadingKeys());
+  let show = await fetchShowDetail(mazeId, settings.libraryRoot, shell, downloadingKeys(), tvRoots(settings));
   show = { ...show, libraryPath: folderPath || show.libraryPath };
   show = withLocalStatuses(show);
   upsertShow(show);
@@ -911,7 +993,8 @@ async function importMovieFromScan(movieId: number, folderPath: string): Promise
     movieId,
     settings.movieLibraryRoot,
     shell,
-    downloadingMovieIds()
+    downloadingMovieIds(),
+    movieRoots(settings)
   );
   movie = { ...movie, libraryPath: folderPath || movie.libraryPath };
   movie = applyMovieLocalStatus(movie, settings.movieLibraryRoot, downloadingMovieIds());
@@ -983,7 +1066,7 @@ async function runFolderScanImport(items: FolderScanImportItem[]): Promise<Folde
 async function addShowWithPolicy(mazeId: number, policy: AddShowPolicy = 'manual'): Promise<Show> {
   const settings = getSettings();
   const existing = getShows().find((s) => s.tmdbId === mazeId);
-  let show = await fetchShowDetail(mazeId, settings.libraryRoot, existing, downloadingKeys());
+  let show = await fetchShowDetail(mazeId, settings.libraryRoot, existing, downloadingKeys(), tvRoots(settings));
   upsertShow(show);
 
   if (policy === 'future') {
@@ -1826,7 +1909,7 @@ function registerIpc() {
     const settings = getSettings();
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) return null;
-    return applyLocalStatuses(show, settings.libraryRoot, downloadingKeys());
+    return applyLocalStatuses(show, settings.libraryRoot, downloadingKeys(), tvRoots(settings));
   });
 
   ipcMain.handle('library:add', async (_e, mazeId: number, policy?: AddShowPolicy) => {
@@ -1838,8 +1921,8 @@ function registerIpc() {
     const settings = getSettings();
     return buildScanPreview(
       scope || 'both',
-      settings.libraryRoot,
-      settings.movieLibraryRoot,
+      tvRoots(settings),
+      movieRoots(settings),
       getShows(),
       getMovies()
     );
@@ -1963,8 +2046,8 @@ function registerIpc() {
         : toCandidates([{ magnet: payload.magnet }]);
       const item = await downloadEngine.start({
         magnet: payload.magnet,
-        show: slimShowForDownload(show),
-        libraryRoot: settings.libraryRoot,
+        show: showForDownload(show, payload.season),
+        libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
         seasonNumber: payload.season,
         episodeNumber: payload.episode,
         episodeTitle: payload.episodeTitle,
@@ -2017,7 +2100,7 @@ function registerIpc() {
 
   ipcMain.handle('movies:add', async (_e, tmdbId: number) => {
     const settings = getSettings();
-    if (!(settings.movieLibraryRoot || '').trim()) {
+    if (!movieRoots(settings).length) {
       throw new Error('Set a movie library folder in Settings before adding movies');
     }
     const existing = getMovies().find((m) => m.tmdbId === tmdbId);
@@ -2025,7 +2108,8 @@ function registerIpc() {
       tmdbId,
       settings.movieLibraryRoot,
       existing,
-      downloadingMovieIds()
+      downloadingMovieIds(),
+      movieRoots(settings)
     );
     upsertMovie(movie);
     mainWindow?.webContents.send('movies:changed');
@@ -2056,7 +2140,8 @@ function registerIpc() {
       tmdbId,
       settings.movieLibraryRoot,
       existing,
-      downloadingMovieIds()
+      downloadingMovieIds(),
+      movieRoots(settings)
     );
     upsertMovie(movie);
     mainWindow?.webContents.send('movies:changed');
@@ -2096,7 +2181,8 @@ function registerIpc() {
       const settings = getSettings();
       const movie = getMovies().find((m) => m.tmdbId === payload.tmdbId);
       if (!movie) throw new Error('Movie not found');
-      if (!(settings.movieLibraryRoot || '').trim()) {
+      const mRoots = movieRoots(settings);
+      if (!mRoots.length) {
         throw new Error('Set a movie library folder in Settings');
       }
       const candidates = payload.candidates?.length
@@ -2104,8 +2190,8 @@ function registerIpc() {
         : toCandidates([{ magnet: payload.magnet }]);
       const item = await downloadEngine.startMovie({
         magnet: payload.magnet,
-        movie: slimMovieForDownload(movie),
-        movieLibraryRoot: settings.movieLibraryRoot,
+        movie: movieForDownload(movie),
+        movieLibraryRoot: mRoots[0],
         candidates,
         triedInfoHashes: [],
       });
@@ -2218,6 +2304,14 @@ function registerIpc() {
     autoUpdater.quitAndInstall(false, true);
   });
 
+  ipcMain.handle('poster:cache', async (_e, url: string) => {
+    try {
+      return await ensurePosterCached(String(url || ''));
+    } catch {
+      return url;
+    }
+  });
+
   ipcMain.handle('vpn:status', async () => {
     await vpnManager.refreshDetect();
     return vpnManager.getStatus(getSettings());
@@ -2274,6 +2368,17 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  try {
+    protocol.handle('nfimg', async (request) => {
+      const file = resolveNfimgFile(request.url);
+      if (!file || !fs.existsSync(file)) {
+        return new Response('Not found', { status: 404 });
+      }
+      return net.fetch(pathToFileURL(file).toString());
+    });
+  } catch (err) {
+    console.error('[poster-cache] protocol', err);
+  }
   try {
     Menu.setApplicationMenu(null);
   } catch {
@@ -2338,6 +2443,28 @@ app.whenReady().then(async () => {
     if (item?.name) {
       notify(`Finished: ${item.name}`, 'ok');
     }
+    {
+      const poster =
+        item?.kind === 'movie'
+          ? getMovies().find((m) => m.tmdbId === item.movieId)?.posterPath
+          : getShows().find((s) => s.tmdbId === item?.showId)?.posterPath;
+      const title =
+        item?.kind === 'movie'
+          ? item.showName || item.name
+          : item
+            ? `${item.showName} S${pad2(item.seasonNumber)}E${pad2(item.episodeNumber)}${
+                item.episodeTitle ? ` — ${item.episodeTitle}` : ''
+              }`
+            : '';
+      if (title) {
+        appendDownloadHistory({
+          at: new Date().toISOString(),
+          title,
+          kind: item.kind === 'movie' ? 'movie' : 'episode',
+          posterUrl: poster || null,
+        });
+      }
+    }
     if (item?.notifyChatId) {
       const title =
         item.kind === 'movie'
@@ -2367,17 +2494,26 @@ app.whenReady().then(async () => {
     maxConnections: settings.maxConnections,
     maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
-    bindAddress: vpnManager.getBindAddress(),
+    bindAddress: null,
     vpnHold: torrentVpnHold(),
   });
   applyLoginItem(!!settings.launchOnStartup);
   scheduleRefresh();
   void autoConnectVpnOnLaunch();
 
-  // Non-blocking update check on startup (packaged builds only)
+  // Non-blocking update check on startup, then every 6 hours
   setTimeout(() => {
     void checkForUpdates(false);
   }, 4000);
+  setInterval(() => {
+    void checkForUpdates(false);
+  }, 6 * 60 * 60 * 1000);
+  setTimeout(() => {
+    void maybeSendDailyBriefing();
+  }, 20000);
+  setInterval(() => {
+    void maybeSendDailyBriefing();
+  }, 15 * 60 * 1000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

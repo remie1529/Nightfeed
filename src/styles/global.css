@@ -501,6 +501,31 @@ table.dense tr:hover td {
   margin-top: 0.55rem;
 }
 
+.root-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.4rem;
+}
+
+.root-handle {
+  cursor: grab;
+  color: var(--text-faint);
+  letter-spacing: -2px;
+  user-select: none;
+}
+
+.root-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  flex-shrink: 0;
+}
+
 .toast {
   background: #1c1c1c;
   border: 1px solid var(--border-strong);
