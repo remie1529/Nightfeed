@@ -1,17 +1,16 @@
 ## Nightfeed status
 
-**Current:** v1.7.6 — OpenVPN auto-connect on launch + torrent kill switch with Telegram and in-app banner.
+**Current:** v1.7.7 — Auto-download only preferred resolution with enough seeders (skip 0–5 seed dead torrents).
 
-# Status v1.7.6
+# Status v1.7.7
 
 ## New
-- OpenVPN **auto-connects on app start** when enabled with an imported .ovpn
-- **Kill switch** when “Require VPN for torrents” is on: if OpenVPN drops, torrent sockets stop immediately (no download without VPN)
-- Admin **Telegram alert** on VPN drop / failed startup connect
-- Persistent **bottom-right banner** until OpenVPN is connected again
-- One reconnect attempt after an unexpected drop
+- Auto-download / retry pick **preferred resolution only** (1080p stays 1080p)
+- Skip torrents with **fewer than 8 seeders** (0–5 seed releases almost never complete)
+- Rank search results by exact resolution first, then seeders; CAM/TS/trailer junk last
+- TV results filtered to the matching SxxExx (not season packs)
 
 ## Works (carry-over)
+- OpenVPN auto-connect + torrent kill switch
 - Max 3 active torrents, UI stays responsive
-- OpenVPN 2.7 / Interactive Service / UAC
-- uTP disabled, auto-updates
+- Auto-updates

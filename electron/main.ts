@@ -26,7 +26,7 @@ import {
   fetchShowDetail,
   ignoreAiredEpisodes,
 } from './services/tvmaze';
-import { extractInfoHash } from './services/search';
+import { extractInfoHash, MIN_AUTO_SEEDERS, pickAutoDownload } from './services/search';
 import { searchEpisodeTorrents, searchMovieTorrents, destroySearchPool, getSearchPoolInfo } from './services/search-pool';
 import { searchShowsMeta, searchMoviesMeta, destroyMetadataPool, getMetadataPoolInfo } from './services/metadata-pool';
 import {
@@ -366,6 +366,23 @@ function toCandidates(results: Array<{ magnet: string; infoHash?: string; title?
     }));
 }
 
+function toHealthyPreferredCandidates(
+  results: Array<{
+    magnet: string;
+    infoHash?: string;
+    title?: string;
+    seeders?: number;
+    resolution?: string | null;
+  }>,
+  preferred: Resolution
+): TorrentCandidate[] {
+  return toCandidates(
+    (results || []).filter(
+      (r) => r.resolution === preferred && (r.seeders || 0) >= MIN_AUTO_SEEDERS
+    )
+  );
+}
+
 function pickNextCandidate(
   candidates: TorrentCandidate[] | undefined,
   tried: Set<string>,
@@ -407,7 +424,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
             movie.releaseYear,
             preferred
           );
-          candidates = toCandidates(res.results);
+          candidates = toHealthyPreferredCandidates(res.results, preferred);
           next = pickNextCandidate(candidates, tried, item.magnet);
         }
       } else if (item.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
@@ -422,7 +439,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
             preferred,
             { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
-          candidates = toCandidates(res.results);
+          candidates = toHealthyPreferredCandidates(res.results, preferred);
           next = pickNextCandidate(candidates, tried, item.magnet);
         }
       }
@@ -600,12 +617,9 @@ async function autoDownloadForShows(
             preferred,
             { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
-          if (!results.length) {
-            continue;
-          }
-          const best = results[0];
+          const best = pickAutoDownload(results, preferred, 'episode');
           if (!best?.magnet) continue;
-          const candidates = toCandidates(results);
+          const candidates = toHealthyPreferredCandidates(results, preferred);
           await downloadEngine.start({
             magnet: best.magnet,
             show: slimShowForDownload(show),
@@ -675,10 +689,11 @@ async function autoDownloadMovie(
     movie.releaseYear,
     preferred
   );
-  if (!res.results.length || !res.results[0]?.magnet) return false;
-  const candidates = toCandidates(res.results);
+  const best = pickAutoDownload(res.results, preferred, 'movie');
+  if (!best?.magnet) return false;
+  const candidates = toHealthyPreferredCandidates(res.results, preferred);
   await downloadEngine.startMovie({
-    magnet: res.results[0].magnet,
+    magnet: best.magnet,
     movie: slimMovieForDownload(movie),
     movieLibraryRoot: settings.movieLibraryRoot,
     candidates,

@@ -462,8 +462,9 @@ export default function SettingsView() {
             <span>Auto-download new / missing episodes</span>
           </label>
           <div className="hint">
-            After each refresh (timer or manual), search preferred resolution and start in-app downloads.
-            Skips ignored episodes and ones already downloading, queued, or done. Default: on.
+            After each refresh (timer or manual), search the preferred resolution and start in-app downloads.
+            Skips ignored episodes, ones already queued, and torrents with fewer than 8 seeders or the wrong
+            resolution. Default: on.
           </div>
         </div>
 
@@ -783,7 +784,9 @@ export default function SettingsView() {
         <div className="field">
           <label>Torrent sources ({enabledCount} enabled)</label>
           <div className="hint" style={{ marginBottom: 10 }}>
-            Enable any combination. Searches query <strong>all enabled</strong> sources in parallel, merge/dedupe by infohash, and rank by resolution + seeders. Partial failures keep other sources’ hits.
+            Enable any combination. Searches query <strong>all enabled</strong> sources in parallel, merge/dedupe by
+            infohash, and rank by <strong>preferred resolution first</strong>, then seeders. Auto-download will not
+            start a torrent with under 8 seeders or a different resolution. Partial failures keep other sources’ hits.
           </div>
           <div className="source-grid">
             {SOURCE_OPTIONS.map((opt) => (
