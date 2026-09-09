@@ -707,7 +707,7 @@ export default function SettingsView() {
                   {vpnStatus.launchMethod ? ` · ${vpnStatus.launchMethod}` : ''}
                 </div>
               )}
-              {vpnStatus?.lastError && vpnStatus.state !== 'connected' && (
+              {vpnStatus?.lastError && (vpnStatus.state === 'error' || vpnStatus.state === 'disconnected') && (
                 <div className="hint" style={{ marginTop: 6, color: 'var(--danger)' }}>
                   {vpnStatus.lastError}
                 </div>

@@ -9,6 +9,7 @@
  */
 import { ChildProcessWithoutNullStreams, execFile, execFileSync, spawn } from 'child_process';
 import { EventEmitter } from 'events';
+import crypto from 'crypto';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import net from 'net';
@@ -79,6 +80,10 @@ function pidFilePath(): string {
   return path.join(vpnDir(), 'openvpn.pid');
 }
 
+function mgmtPwPath(): string {
+  return path.join(vpnDir(), 'mgmt.pw');
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await fsp.access(p);
@@ -125,6 +130,8 @@ function parseIpFromLog(chunk: string): string | null {
     /ip-win32:\s*(?:.+?)\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
     /(?:TUN\/TAP|tap-windows).*?(\d{1,3}(?:\.\d{1,3}){3})/i,
     /ifconfig\s+(\d{1,3}(?:\.\d{1,3}){3})\s+/i,
+    /PUSH:.*ifconfig\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /CONNECTED,SUCCESS,(\d{1,3}(?:\.\d{1,3}){3})/i,
     /local\s+IPv4:\s*(\d{1,3}(?:\.\d{1,3}){3})/i,
   ];
   for (const re of patterns) {
@@ -145,7 +152,9 @@ function guessVpnInterfaceIp(before: Set<string>): string | null {
       n.includes('tap') ||
       n.includes('openvpn') ||
       n.includes('wintun') ||
-      n.includes('ovpn');
+      n.includes('ovpn') ||
+      n.includes('dco') ||
+      n.includes('data channel');
     for (const entry of list) {
       if (entry.family !== 'IPv4' && (entry.family as unknown) !== 4) continue;
       if (entry.internal) continue;
@@ -196,28 +205,31 @@ function isSafeRelative(rel: string): boolean {
   return !parts.includes('..');
 }
 
+const BENIGN_OPENVPN_LINE =
+  /allow-compression|data channel offload|management on a TCP port WITHOUT passwords|library versions:|Windows version:|OpenVPN \d|DCO version:|built on |git:v|Originally developed|Copyright|NOTE:/i;
+
 export function summarizeOpenVpnLog(log: string): string | null {
   if (!log.trim()) return null;
   const lines = log
     .split(/\r?\n/)
-    .map((l) => l.replace(/^\s*\S+\s+/, (prefix) => (/\d/.test(prefix) ? '' : prefix)).trim())
+    .map((l) => l.trim())
     .filter(Boolean);
-  const interesting = lines.filter((l) =>
-    /ERROR:|AUTH_FAILED|Options error|Cannot open TUN|All TAP-Windows|Need TAP|Wintun|ACCESS_DENIED|CreateFile failed on TAP|Failed to parse|No such file|cannot open|PERMISSION_DENIED|FlushIpNetTable|Requires administrative|TAP-Windows adapter|AUTH: Received control|Connection reset|TLS Error|RESOLVE:|SOCKET:|Exiting due/i.test(
+  const interesting = lines.filter((l) => {
+    if (BENIGN_OPENVPN_LINE.test(l)) return false;
+    return /ERROR:|AUTH_FAILED|Options error|Cannot open TUN|All TAP-Windows|Need TAP|ACCESS_DENIED|CreateFile failed on TAP|Failed to parse|No such file or directory|PERMISSION_DENIED|FlushIpNetTable|Requires administrative|TLS Error|RESOLVE: Cannot|Exiting due|fatal error|AUTH: Received control message.*AUTH_FAILED/i.test(
       l
-    )
-  );
-  const pick = interesting.slice(-4);
-  const blob = (pick.length ? pick : lines.slice(-6)).join(' · ').slice(0, 700);
-  if (!blob) return null;
+    );
+  });
+  if (!interesting.length) return null;
+  const blob = interesting.slice(-4).join(' · ').slice(0, 700);
   if (/AUTH_FAILED|auth.?fail/i.test(blob)) return 'Authentication failed (check username/password)';
-  if (/No such file|cannot open.*\.(crt|key|pem|p12)|Options error: --(ca|cert|key|pkcs12)/i.test(blob)) {
+  if (/No such file or directory|cannot open.*\.(crt|key|pem|p12)|Options error: --(ca|cert|key|pkcs12)/i.test(blob)) {
     return `OpenVPN config is missing a certificate/key file next to the .ovpn. ${blob}`;
   }
-  if (/Cannot open TUN\/TAP|CreateFile failed on TAP|All TAP-Windows|Need TAP|Wintun|Requires administrative|ACCESS_DENIED|PERMISSION_DENIED/i.test(
+  if (/Cannot open TUN\/TAP|CreateFile failed on TAP|All TAP-Windows|Need TAP|Requires administrative|ACCESS_DENIED|PERMISSION_DENIED/i.test(
     blob
   )) {
-    return `OpenVPN could not open TAP/TUN (needs Administrator / Interactive Service, and OpenVPN Community with TAP or Wintun). ${blob}`;
+    return `OpenVPN could not open TAP/DCO (needs Administrator / Interactive Service, and OpenVPN Community with TAP or DCO). ${blob}`;
   }
   return blob;
 }
@@ -451,24 +463,39 @@ function getFreeLocalPort(): Promise<number> {
   });
 }
 
-function managementSignal(port: number, command = 'signal SIGTERM'): Promise<void> {
+function managementSignal(port: number, password: string | null, command = 'signal SIGTERM'): Promise<void> {
   return new Promise((resolve) => {
-    const sock = net.connect({ host: '127.0.0.1', port }, () => {
-      sock.write(`${command}\r\n`);
-      setTimeout(() => {
-        try {
-          sock.end();
-        } catch {
-          // ignore
-        }
-        resolve();
-      }, 250);
-    });
-    sock.setTimeout(1500, () => {
-      sock.destroy();
+    let sent = false;
+    const sock = net.connect({ host: '127.0.0.1', port });
+    const finish = () => {
+      try {
+        sock.end();
+      } catch {
+        // ignore
+      }
       resolve();
-    });
+    };
+    sock.setTimeout(2000, finish);
     sock.on('error', () => resolve());
+    sock.setEncoding('utf8');
+    sock.on('data', (chunk: string) => {
+      if (/ENTER PASSWORD:/i.test(chunk) && password && !sent) {
+        sock.write(`${password}\r\n`);
+        return;
+      }
+      if (!sent && (/>INFO:/i.test(chunk) || /SUCCESS/i.test(chunk))) {
+        sent = true;
+        sock.write(`${command}\r\n`);
+        setTimeout(finish, 250);
+      }
+    });
+    sock.on('connect', () => {
+      if (!password) {
+        sent = true;
+        sock.write(`${command}\r\n`);
+        setTimeout(finish, 250);
+      }
+    });
   });
 }
 
@@ -490,6 +517,12 @@ export class VpnManager extends EventEmitter {
   private pidTimer: NodeJS.Timeout | null = null;
   private connectTimer: NodeJS.Timeout | null = null;
   private mgmtPort: number | null = null;
+  private mgmtPassword: string | null = null;
+  private mgmtSocket: net.Socket | null = null;
+  private mgmtTimer: NodeJS.Timeout | null = null;
+  private mgmtBuf = '';
+  private mgmtAuthed = false;
+  private mgmtPasswordSent = false;
   private intentionalStop = false;
   private generation = 0;
 
@@ -594,6 +627,11 @@ export class VpnManager extends EventEmitter {
     } catch {
       // ignore
     }
+    try {
+      fs.unlinkSync(mgmtPwPath());
+    } catch {
+      // ignore
+    }
   }
 
   private startIfacePoll(): void {
@@ -687,6 +725,107 @@ export class VpnManager extends EventEmitter {
     }
   }
 
+  private stopMgmt(): void {
+    if (this.mgmtTimer) {
+      clearInterval(this.mgmtTimer);
+      this.mgmtTimer = null;
+    }
+    const sock = this.mgmtSocket;
+    this.mgmtSocket = null;
+    this.mgmtBuf = '';
+    this.mgmtAuthed = false;
+    this.mgmtPasswordSent = false;
+    if (sock) {
+      try {
+        sock.destroy();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  private markConnected(ip?: string | null): void {
+    if (this.state === 'disconnected' || this.state === 'error') return;
+    if (ip && !this.bindAddress) {
+      this.bindAddress = ip;
+      this.emit('bind', ip);
+    }
+    if (!this.bindAddress) {
+      const guessed = guessVpnInterfaceIp(this.ipsBeforeConnect);
+      if (guessed) this.bindAddress = guessed;
+    }
+    this.lastError = null;
+    this.clearConnectTimeout();
+    this.setState(
+      'connected',
+      this.bindAddress ? `Connected — torrent bind ${this.bindAddress}` : 'Connected — detecting TUN/TAP IP…'
+    );
+    if (!this.bindAddress) this.startIfacePoll();
+    else this.emit('bind', this.bindAddress);
+  }
+
+  private parseMgmt(chunk: string): void {
+    this.mgmtBuf = (this.mgmtBuf + chunk).slice(-20000);
+    if (/ENTER PASSWORD:/i.test(this.mgmtBuf) && this.mgmtPassword && this.mgmtSocket && !this.mgmtPasswordSent) {
+      this.mgmtSocket.write(`${this.mgmtPassword}\r\n`);
+      this.mgmtPasswordSent = true;
+      this.mgmtBuf = this.mgmtBuf.replace(/ENTER PASSWORD:.*\r?\n?/, '');
+    }
+    if (/>INFO:/i.test(this.mgmtBuf) && this.mgmtSocket && !this.mgmtAuthed) {
+      this.mgmtAuthed = true;
+      this.mgmtSocket.write('state on\r\n');
+    }
+    const state = this.mgmtBuf.match(/>STATE:[^,]*,CONNECTED,SUCCESS,(\d{1,3}(?:\.\d{1,3}){3})/i);
+    if (state?.[1]) {
+      this.markConnected(state[1]);
+      return;
+    }
+    if (/>STATE:[^,]*,CONNECTED,/i.test(this.mgmtBuf)) {
+      this.markConnected(parseIpFromLog(this.mgmtBuf));
+    }
+  }
+
+  private startMgmtPoll(): void {
+    this.stopMgmt();
+    const port = this.mgmtPort;
+    if (!port) return;
+    const gen = this.generation;
+    const tryConnect = () => {
+      if (gen !== this.generation) return;
+      if (this.mgmtSocket) return;
+      if (this.state !== 'connecting' && this.state !== 'connected') return;
+      const sock = net.connect({ host: '127.0.0.1', port });
+      sock.setEncoding('utf8');
+      sock.setTimeout(0);
+      sock.on('connect', () => {
+        if (gen !== this.generation) {
+          sock.destroy();
+          return;
+        }
+        this.mgmtSocket = sock;
+        if (!this.mgmtPassword) {
+          this.mgmtAuthed = true;
+          sock.write('state on\r\n');
+        }
+      });
+      sock.on('data', (chunk: string) => {
+        if (gen !== this.generation) return;
+        this.parseMgmt(chunk);
+      });
+      sock.on('error', () => {
+        if (this.mgmtSocket === sock) this.mgmtSocket = null;
+      });
+      sock.on('close', () => {
+        if (this.mgmtSocket === sock) {
+          this.mgmtSocket = null;
+          this.mgmtAuthed = false;
+        }
+      });
+    };
+    tryConnect();
+    this.mgmtTimer = setInterval(tryConnect, 400);
+  }
+
   private onLogChunk(text: string): void {
     this.logBuffer = (this.logBuffer + text).slice(-20000);
     const ip = parseIpFromLog(text) || parseIpFromLog(this.logBuffer);
@@ -695,16 +834,7 @@ export class VpnManager extends EventEmitter {
       this.emit('bind', ip);
     }
     if (/Initialization Sequence Completed/i.test(text) || /Initialization Sequence Completed/i.test(this.logBuffer)) {
-      const addr = this.bindAddress || guessVpnInterfaceIp(this.ipsBeforeConnect);
-      if (addr) this.bindAddress = addr;
-      this.lastError = null;
-      this.clearConnectTimeout();
-      this.setState(
-        'connected',
-        this.bindAddress ? `Connected — torrent bind ${this.bindAddress}` : 'Connected — detecting TUN/TAP IP…'
-      );
-      if (!this.bindAddress) this.startIfacePoll();
-      else this.emit('bind', this.bindAddress);
+      this.markConnected(ip);
     }
     if (/AUTH_FAILED|auth.?fail/i.test(text)) {
       this.lastError = 'Authentication failed (check username/password)';
@@ -720,10 +850,12 @@ export class VpnManager extends EventEmitter {
       this.stopIfacePoll();
       this.stopLogTail();
       this.stopPidPoll();
+      this.stopMgmt();
       this.clearConnectTimeout();
       this.clearAuthFile();
       this.bindAddress = null;
       this.mgmtPort = null;
+      this.mgmtPassword = null;
       this.launchMethod = null;
       this.emit('bind', null);
       return;
@@ -733,11 +865,13 @@ export class VpnManager extends EventEmitter {
     this.stopIfacePoll();
     this.stopLogTail();
     this.stopPidPoll();
+    this.stopMgmt();
     this.clearConnectTimeout();
     this.clearAuthFile();
     const wasActive = this.state === 'connected' || this.state === 'connecting';
     this.bindAddress = null;
     this.mgmtPort = null;
+    this.mgmtPassword = null;
     if (this.state === 'error' && /Authentication failed/i.test(this.message)) {
       this.emit('bind', null);
       this.emit('status');
@@ -790,6 +924,7 @@ export class VpnManager extends EventEmitter {
       '--management',
       '127.0.0.1',
       String(mgmtPort),
+      'mgmt.pw',
       '--route-nopull',
       '--pull-filter',
       'ignore',
@@ -859,14 +994,26 @@ export class VpnManager extends EventEmitter {
 
     this.startLogTail();
     this.startIfacePoll();
+    this.mgmtPassword = crypto.randomBytes(16).toString('hex');
+    try {
+      await fsp.writeFile(mgmtPwPath(), `${this.mgmtPassword}\n`, { encoding: 'utf8', mode: 0o600 });
+    } catch {
+      this.mgmtPassword = null;
+    }
+
     this.connectTimer = setTimeout(() => {
       if (this.state !== 'connecting') return;
       const detail = summarizeOpenVpnLog(this.logBuffer);
-      this.lastError =
-        detail ||
-        'OpenVPN is still connecting. If a UAC prompt appeared, approve it. TAP/TUN needs OpenVPN Community on this PC.';
-      this.setState('connecting', this.lastError);
-    }, 20000);
+      if (detail) {
+        this.lastError = detail;
+        this.setState('connecting', detail);
+        return;
+      }
+      this.setState(
+        'connecting',
+        'Waiting for VPN handshake… OpenVPN is running (compression/management notes are not errors).'
+      );
+    }, 25000);
 
     try {
       if (process.platform === 'win32' && !isProcessElevated()) {
@@ -877,6 +1024,7 @@ export class VpnManager extends EventEmitter {
           this.ownedPid = pid;
           this.launchMethod = 'interactive-service';
           this.startPidPoll();
+          this.startMgmtPoll();
           started = true;
         } catch (svcErr) {
           try {
@@ -885,6 +1033,7 @@ export class VpnManager extends EventEmitter {
             this.ownedPid = pid;
             this.launchMethod = 'elevated';
             this.startPidPoll();
+            this.startMgmtPoll();
             started = true;
           } catch (elevErr) {
             const svcMsg = svcErr instanceof Error ? svcErr.message : String(svcErr);
@@ -897,6 +1046,7 @@ export class VpnManager extends EventEmitter {
             });
             this.launchMethod = 'direct';
             this.attachChild(child);
+            this.startMgmtPoll();
             started = true;
             this.lastError = `${elevMsg} (Interactive Service: ${svcMsg})`;
           }
@@ -910,11 +1060,13 @@ export class VpnManager extends EventEmitter {
         });
         this.launchMethod = 'direct';
         this.attachChild(child);
+        this.startMgmtPoll();
       }
     } catch (err) {
       this.clearAuthFile();
       this.stopLogTail();
       this.stopIfacePoll();
+      this.stopMgmt();
       this.clearConnectTimeout();
       this.lastError = err instanceof Error ? err.message : String(err);
       this.setState('error', this.lastError);
@@ -934,10 +1086,19 @@ export class VpnManager extends EventEmitter {
     this.stopPidPoll();
     this.clearConnectTimeout();
     const port = this.mgmtPort;
-    if (port) {
-      await managementSignal(port);
+    const pw = this.mgmtPassword;
+    if (this.mgmtSocket && this.mgmtAuthed) {
+      try {
+        this.mgmtSocket.write('signal SIGTERM\r\n');
+      } catch {
+        // ignore
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    } else if (port) {
+      await managementSignal(port, pw);
       await new Promise((r) => setTimeout(r, 300));
     }
+    this.stopMgmt();
     const child = this.child;
     this.child = null;
     const pid = this.ownedPid || child?.pid || null;
@@ -965,6 +1126,7 @@ export class VpnManager extends EventEmitter {
     this.clearAuthFile();
     this.bindAddress = null;
     this.mgmtPort = null;
+    this.mgmtPassword = null;
     this.launchMethod = null;
     if (emitStatus) {
       this.setState('disconnected', 'Disconnected');
