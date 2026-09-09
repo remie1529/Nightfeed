@@ -34,6 +34,7 @@ import {
   fetchMovieDetail,
 } from './services/imdb';
 import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo } from './services/engine-bridge';
+import { isIgnorableTorrentSocketError } from './services/engine';
 import {
   approveDenyKeyboard,
   normalizeChatIdToken,
@@ -70,6 +71,21 @@ import {
   UpdateStatus,
   VpnStatus,
 } from './types';
+
+process.on('uncaughtException', (err) => {
+  if (isIgnorableTorrentSocketError(err)) {
+    console.error('[nightfeed] ignored torrent socket exhaustion:', err.message);
+    return;
+  }
+  console.error('[nightfeed] uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  if (isIgnorableTorrentSocketError(reason)) {
+    console.error('[nightfeed] ignored torrent socket rejection:', reason);
+    return;
+  }
+  console.error('[nightfeed] unhandledRejection', reason);
+});
 
 let mainWindow: BrowserWindow | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -1909,10 +1925,19 @@ function registerIpc() {
   });
   ipcMain.handle('update:status', () => ({ ...updateState }));
   ipcMain.handle('update:check', async () => checkForUpdates(true));
-  ipcMain.handle('update:install', () => {
-    if (updateState.downloaded) {
-      autoUpdater.quitAndInstall();
+  ipcMain.handle('update:install', async () => {
+    if (!updateState.downloaded) return;
+    try {
+      downloadEngine.destroy();
+    } catch {
+      // ignore
     }
+    try {
+      await vpnManager.disconnect();
+    } catch {
+      // ignore
+    }
+    autoUpdater.quitAndInstall(false, true);
   });
 
   ipcMain.handle('vpn:status', async () => {

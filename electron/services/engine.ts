@@ -14,6 +14,13 @@ const VALID_VIDEO_EXTS = new Set(['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.ts',
 const SELECT_VIDEO_EXTS = new Set([...VALID_VIDEO_EXTS, '.webm']);
 
 const PROGRESS_THROTTLE_MS = 1000;
+/** Cap peer sockets — WebTorrent default is 55; 200+ with uTP hits Windows ENOBUFS. */
+const MAX_PEER_CONNS = 80;
+
+export function isIgnorableTorrentSocketError(err: unknown): boolean {
+  const s = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
+  return /no buffer space|ENOBUFS|UTP\.(bind|connect)|uv_udp_bind/i.test(s);
+}
 
 /** Extra public trackers appended on add for better peer discovery. */
 export const DEFAULT_ANNOUNCE = [
@@ -90,7 +97,7 @@ export class DownloadEngine extends EventEmitter {
   private client: any = null;
   private items = new Map<string, DownloadItem>();
   private torrents = new Map<string, any>();
-  private maxConns = 200;
+  private maxConns = MAX_PEER_CONNS;
   private maxDownloadSpeedKBps = 0;
   private maxUploadSpeedKBps = 0;
   private bindAddress: string | null = null;
@@ -101,7 +108,7 @@ export class DownloadEngine extends EventEmitter {
   /** Apply connection / speed / VPN bind settings. Safe to call before or after client exists. */
   applySettings(settings: EngineSettings): void {
     if (typeof settings.maxConnections === 'number' && settings.maxConnections > 0) {
-      this.maxConns = Math.max(1, Math.floor(settings.maxConnections));
+      this.maxConns = Math.max(1, Math.min(MAX_PEER_CONNS, Math.floor(settings.maxConnections)));
     }
     if (typeof settings.maxDownloadSpeedKBps === 'number') {
       this.maxDownloadSpeedKBps = Math.max(0, Math.floor(settings.maxDownloadSpeedKBps));
@@ -178,19 +185,21 @@ export class DownloadEngine extends EventEmitter {
       this.ensureNetBindPatch();
       const downloadLimit = kbpsToBytesPerSec(this.maxDownloadSpeedKBps);
       const uploadLimit = kbpsToBytesPerSec(this.maxUploadSpeedKBps);
-      // When VPN-bound: disable DHT/uTP so peer traffic prefers TCP (localAddress bind).
-      // Tracker HTTP and metadata APIs still use the normal network (split intent).
+      // uTP (UDP) on Windows throws uncaught "no buffer space available" (ENOBUFS)
+      // from utp-native when many peers connect. Always use TCP. When VPN-bound,
+      // also disable DHT so peer traffic prefers TCP on the TUN/TAP/DCO IP.
       const opts: Record<string, unknown> = {
-        maxConns: this.maxConns,
+        maxConns: Math.min(this.maxConns, MAX_PEER_CONNS),
         downloadLimit,
         uploadLimit,
+        utp: false,
       };
       if (this.bindAddress) {
         opts.dht = false;
-        opts.utp = false;
       }
       this.client = new WebTorrent(opts);
       this.client.on('error', (err: Error) => {
+        if (isIgnorableTorrentSocketError(err)) return;
         this.emit('engine-error', err.message);
       });
     }
