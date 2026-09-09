@@ -550,7 +550,7 @@ export class VpnManager extends EventEmitter {
       bindAddress: this.bindAddress,
       requireForTorrents: !!settings.vpnRequireForTorrents,
       usernameSet: !!(settings.vpnUsername && settings.vpnUsername.trim()),
-      routeNopull: true,
+      routeNopull: false,
       lastError: this.lastError,
       launchMethod: this.launchMethod,
       killSwitch: !!(settings.vpnEnabled && settings.vpnRequireForTorrents && this.state !== 'connected'),
@@ -928,10 +928,8 @@ export class VpnManager extends EventEmitter {
       '127.0.0.1',
       String(mgmtPort),
       'mgmt.pw',
-      '--route-nopull',
-      '--pull-filter',
-      'ignore',
-      'redirect-gateway',
+      // Pull routes so peer traffic can leave the TUN. Nightfeed runs its own
+      // openvpn.exe — OpenVPN GUI will not show this session.
       '--verb',
       '3',
     ];

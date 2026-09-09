@@ -18,11 +18,89 @@ export function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-export function getShowRoot(show: Show, libraryRoot: string): string {
-  if (show.libraryPath && show.libraryPath.trim()) {
-    return show.libraryPath.trim();
+export function uniqueRoots(...groups: Array<string | string[] | undefined | null>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const g of groups) {
+    const list = Array.isArray(g) ? g : g ? [g] : [];
+    for (const raw of list) {
+      const t = String(raw || '').trim();
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(t);
+    }
   }
-  return path.join(libraryRoot, sanitizeName(show.name));
+  return out;
+}
+
+function dirExists(p: string): boolean {
+  try {
+    return !!p && fs.existsSync(p) && fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function findSeasonDirExisting(showRoot: string, seasonNumber: number): string | null {
+  if (!dirExists(showRoot)) return null;
+  try {
+    for (const entry of fs.readdirSync(showRoot)) {
+      const full = path.join(showRoot, entry);
+      try {
+        if (!fs.statSync(full).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      for (const re of SEASON_PATTERNS) {
+        const m = entry.match(re);
+        if (m && parseInt(m[1], 10) === seasonNumber) return full;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function allShowLocations(show: Show, roots: string[]): string[] {
+  const out: string[] = [];
+  const add = (p?: string) => {
+    const t = (p || '').trim();
+    if (!dirExists(t)) return;
+    if (!out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  };
+  add(show.libraryPath);
+  const name = sanitizeName(show.name);
+  for (const r of roots) add(path.join(r, name));
+  return out;
+}
+
+/** Existing show folder, or top library root / ShowName for brand-new shows. */
+export function getShowRoot(show: Show, libraryRoot: string, extraRoots?: string[]): string {
+  const roots = uniqueRoots(libraryRoot, extraRoots);
+  const existing = allShowLocations(show, roots)[0];
+  if (existing) return existing;
+  const primary = roots[0] || libraryRoot || '';
+  return path.join(primary, sanitizeName(show.name));
+}
+
+/**
+ * Where to put / find a season: reuse an existing Season XX folder anywhere,
+ * otherwise use the top library root (even if the show already lives elsewhere).
+ */
+export function showRootForSeason(show: Show, roots: string[], seasonNumber: number): string {
+  const ordered = uniqueRoots(roots);
+  const candidates: string[] = [];
+  if ((show.libraryPath || '').trim()) candidates.push(show.libraryPath!.trim());
+  const name = sanitizeName(show.name);
+  for (const r of ordered) candidates.push(path.join(r, name));
+  for (const showRoot of candidates) {
+    if (findSeasonDirExisting(showRoot, seasonNumber)) return showRoot;
+  }
+  const primary = ordered[0] || '';
+  return path.join(primary, name);
 }
 
 /** Find existing season folder or create Season XX */
@@ -76,9 +154,11 @@ export function buildEpisodePath(
   seasonNumber: number,
   episodeNumber: number,
   episodeTitle: string,
-  ext: string
+  ext: string,
+  extraRoots?: string[]
 ): { seasonDir: string; filePath: string; fileName: string } {
-  const showRoot = getShowRoot(show, libraryRoot);
+  const roots = uniqueRoots(libraryRoot, extraRoots);
+  const showRoot = showRootForSeason(show, roots, seasonNumber);
   const seasonDir = resolveSeasonDir(showRoot, seasonNumber);
   const fileName = buildEpisodeFilename(
     show.name,
@@ -149,11 +229,18 @@ export function getMovieFolderName(movie: Movie): string {
   return title;
 }
 
-export function getMovieRoot(movie: Movie, movieLibraryRoot: string): string {
-  if (movie.libraryPath && movie.libraryPath.trim()) {
+export function getMovieRoot(movie: Movie, movieLibraryRoot: string, extraRoots?: string[]): string {
+  if (movie.libraryPath && dirExists(movie.libraryPath.trim())) {
     return movie.libraryPath.trim();
   }
-  return path.join(movieLibraryRoot, getMovieFolderName(movie));
+  const folder = getMovieFolderName(movie);
+  const roots = uniqueRoots(movieLibraryRoot, extraRoots);
+  for (const r of roots) {
+    const candidate = path.join(r, folder);
+    if (dirExists(candidate)) return candidate;
+  }
+  const primary = roots[0] || movieLibraryRoot || '';
+  return path.join(primary, folder);
 }
 
 /** Resolve / create `{movieLibraryRoot}/{Title} ({Year})/` */
@@ -184,8 +271,12 @@ export function buildMoviePath(
   };
 }
 
-export function findLocalMovie(movie: Movie, movieLibraryRoot: string): string | undefined {
-  const movieRoot = getMovieRoot(movie, movieLibraryRoot);
+export function findLocalMovie(
+  movie: Movie,
+  movieLibraryRoot: string,
+  extraRoots?: string[]
+): string | undefined {
+  const movieRoot = getMovieRoot(movie, movieLibraryRoot, extraRoots);
   if (!fs.existsSync(movieRoot)) return undefined;
 
   const folderName = getMovieFolderName(movie).toLowerCase();
@@ -212,14 +303,9 @@ export function findLocalMovie(movie: Movie, movieLibraryRoot: string): string |
  * then map `${season}:${episode}` → file path. Used by applyLocalStatuses
  * instead of per-episode scans.
  */
-export function indexLocalEpisodes(
-  show: Show,
-  libraryRoot: string
-): Map<string, string> {
+function indexOneShowRoot(showRoot: string): Map<string, string> {
   const found = new Map<string, string>();
-  const showRoot = getShowRoot(show, libraryRoot);
-  if (!fs.existsSync(showRoot)) return found;
-
+  if (!dirExists(showRoot)) return found;
   const seasonDirs: Array<{ seasonNumber: number; dir: string }> = [];
   try {
     for (const entry of fs.readdirSync(showRoot)) {
@@ -240,7 +326,6 @@ export function indexLocalEpisodes(
   } catch {
     return found;
   }
-
   const epRe = /S(\d{1,2})E(\d{1,3})/i;
   for (const { seasonNumber, dir } of seasonDirs) {
     let files: string[] = [];
@@ -258,9 +343,22 @@ export function indexLocalEpisodes(
       const en = parseInt(m[2], 10);
       if (sn !== seasonNumber) continue;
       const key = `${sn}:${en}`;
-      if (!found.has(key)) {
-        found.set(key, path.join(dir, file));
-      }
+      if (!found.has(key)) found.set(key, path.join(dir, file));
+    }
+  }
+  return found;
+}
+
+export function indexLocalEpisodes(
+  show: Show,
+  libraryRoot: string,
+  extraRoots?: string[]
+): Map<string, string> {
+  const found = new Map<string, string>();
+  const roots = uniqueRoots(libraryRoot, extraRoots);
+  for (const showRoot of allShowLocations(show, roots)) {
+    for (const [k, v] of indexOneShowRoot(showRoot)) {
+      if (!found.has(k)) found.set(k, v);
     }
   }
   return found;

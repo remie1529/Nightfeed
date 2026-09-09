@@ -104,7 +104,8 @@ export async function fetchShowDetail(
   mazeId: number,
   libraryRoot: string,
   existing?: Show,
-  downloadingKeys: Set<string> = new Set()
+  downloadingKeys: Set<string> = new Set(),
+  extraRoots?: string[]
 ): Promise<Show> {
   const [detail, seasonsMeta, episodes] = await Promise.all([
     mazeFetch<MazeShow>(`/shows/${mazeId}`),
@@ -136,7 +137,7 @@ export async function fetchShowDetail(
     ...seasonsMeta.filter((s) => s.number > 0).map((s) => s.number),
   ]);
 
-  const localIndex = indexLocalEpisodes(shell, libraryRoot);
+  const localIndex = indexLocalEpisodes(shell, libraryRoot, extraRoots);
 
   const seasons: Season[] = [...seasonNumbers]
     .sort((a, b) => a - b)
@@ -186,11 +187,12 @@ export async function fetchShowDetail(
 export function applyLocalStatuses(
   show: Show,
   libraryRoot: string,
-  downloadingKeys: Set<string>
+  downloadingKeys: Set<string>,
+  extraRoots?: string[]
 ): Show {
   const overrides = getEpisodeOverrides();
   // One-pass FS index for the whole show (not per-episode readdir).
-  const localIndex = indexLocalEpisodes(show, libraryRoot);
+  const localIndex = indexLocalEpisodes(show, libraryRoot, extraRoots);
   const seasons = show.seasons.map((season) => ({
     ...season,
     episodes: season.episodes.map((ep) => {

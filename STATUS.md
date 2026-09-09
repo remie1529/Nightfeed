@@ -1,16 +1,17 @@
 ## Nightfeed status
 
-**Current:** v1.7.8 — Instant Movies tab cache, richer Telegram (posters + extra commands), app-styled scrollbar.
+**Current:** v1.7.9 — Update banner, daily Telegram briefing, VPN torrents actually route, poster cache, Get other, multiple library roots.
 
-# Status v1.7.8
+# Status v1.7.9
 
 ## New
-- Movies tab **cached** — no per-folder disk scan on each visit; list returns immediately and refreshes in the background
-- Telegram **photos** on requests, add, approve/deny, and download finished
-- Extra admin commands: `/search`, `/add-movie`, `/vpn`, `/pause`, `/resume`, `/missing`
-- Scrollbar styled to match the dark Nightfeed chrome
+- Update checks on startup and every 6 hours, with an in-app banner when a release is ready
+- Optional Telegram **daily briefing** of downloads in the last 24 hours (skipped when nothing finished)
+- OpenVPN pulls routes so torrents can download while connected (GUI will not show Nightfeed’s CLI session)
+- Movie/show posters cached on disk
+- **Get other** next to Get for already-downloaded episodes/movies
+- Multiple TV and movie library roots, drag to reorder; top is default for new titles, existing season/movie folders are reused
+- Removed “Prefer legal sources…” about text
 
 ## Works (carry-over)
-- Preferred-resolution auto-download with min 8 seeders
-- OpenVPN auto-connect + kill switch
-- Max 3 active torrents
+- Movies tab cache, Telegram posters, kill switch, torrent picker

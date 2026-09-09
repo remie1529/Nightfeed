@@ -17,10 +17,73 @@ const SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: str
   { id: 'jackett', label: 'Jackett', hint: 'Self-hosted (optional)' },
 ];
 
+function LibraryRootsEditor({
+  roots,
+  onChange,
+}: {
+  roots: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
+  const addFolder = async () => {
+    const folder = await window.torrentAPI.pickLibraryFolder();
+    if (!folder) return;
+    if (roots.some((r) => r.toLowerCase() === folder.toLowerCase())) return;
+    onChange([...roots, folder]);
+  };
+
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= roots.length) return;
+    const next = [...roots];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    onChange(next);
+  };
+
+  return (
+    <div>
+      {roots.map((root, i) => (
+        <div
+          key={`${root}:${i}`}
+          className="root-row"
+          draggable
+          onDragStart={() => setDragIdx(i)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={() => {
+            if (dragIdx == null || dragIdx === i) return;
+            move(dragIdx, i);
+            setDragIdx(null);
+          }}
+        >
+          <span className="root-handle" title="Drag to reorder">⋮⋮</span>
+          {i === 0 ? <span className="root-badge">Default</span> : null}
+          <input
+            value={root}
+            onChange={(e) => {
+              const next = [...roots];
+              next[i] = e.target.value;
+              onChange(next);
+            }}
+          />
+          <button type="button" onClick={() => onChange(roots.filter((_, j) => j !== i))}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={() => void addFolder()} style={{ marginTop: 8 }}>
+        Add folder…
+      </button>
+    </div>
+  );
+}
+
 const empty: AppSettings = {
   tmdbApiKey: '',
   libraryRoot: '',
+  libraryRoots: [],
   movieLibraryRoot: '',
+  movieLibraryRoots: [],
   defaultResolution: '1080p',
   defaultMovieResolution: '1080p',
   refreshIntervalMinutes: 60,
@@ -35,6 +98,8 @@ const empty: AppSettings = {
   telegramAllowedChatIds: '',
   telegramAdminChatIds: '',
   telegramRequestChatIds: '',
+  telegramDailyBriefing: false,
+  telegramDailyBriefingHour: 9,
   githubToken: '',
   maxConnections: 200,
   maxDownloadSpeedKBps: 0,
@@ -120,6 +185,10 @@ export default function SettingsView() {
       if (!(loaded.telegramAdminChatIds || '').trim() && (loaded.telegramAllowedChatIds || '').trim()) {
         loaded.telegramAdminChatIds = loaded.telegramAllowedChatIds;
       }
+      if (!loaded.libraryRoots?.length && loaded.libraryRoot) loaded.libraryRoots = [loaded.libraryRoot];
+      if (!loaded.movieLibraryRoots?.length && loaded.movieLibraryRoot) {
+        loaded.movieLibraryRoots = [loaded.movieLibraryRoot];
+      }
       setLocal(loaded);
     });
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || '—'))).catch(() => undefined);
@@ -162,16 +231,6 @@ export default function SettingsView() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  };
-
-  const pickRoot = async () => {
-    const folder = await window.torrentAPI.pickLibraryFolder();
-    if (folder) setLocal({ ...settings, libraryRoot: folder });
-  };
-
-  const pickMovieRoot = async () => {
-    const folder = await window.torrentAPI.pickLibraryFolder();
-    if (folder) setLocal({ ...settings, movieLibraryRoot: folder });
   };
 
   const exportBackup = async () => {
@@ -366,32 +425,37 @@ export default function SettingsView() {
         <div className="settings-section">Library & quality</div>
 
         <div className="field">
-          <label>TV library root</label>
-          <div className="row">
-            <input
-              value={settings.libraryRoot}
-              onChange={(e) => setLocal({ ...settings, libraryRoot: e.target.value })}
-            />
-            <button onClick={pickRoot}>Browse</button>
-          </div>
+          <label>TV library roots</label>
+          <LibraryRootsEditor
+            roots={settings.libraryRoots?.length ? settings.libraryRoots : settings.libraryRoot ? [settings.libraryRoot] : []}
+            onChange={(libraryRoots) =>
+              setLocal({ ...settings, libraryRoots, libraryRoot: libraryRoots[0] || '' })
+            }
+          />
           <div className="hint">
-            Episodes save as {'{Show}/Season XX/{Show} - SxxExx - Title.ext'}. Existing Season 01 / S01 folders are reused.
-            Supports mapped drives and UNC paths (e.g. \server\share\TV) — type the path or Browse on Windows.
+            Drag to reorder. The <strong>top</strong> folder is used for new shows. If a season folder already
+            exists in any listed library, that location is reused.
+            Episodes save as {'{Show}/Season XX/{Show} - SxxExx - Title.ext'}.
           </div>
         </div>
 
         <div className="field">
-          <label>Movie library root</label>
-          <div className="row">
-            <input
-              value={settings.movieLibraryRoot || ''}
-              onChange={(e) => setLocal({ ...settings, movieLibraryRoot: e.target.value })}
-            />
-            <button onClick={pickMovieRoot}>Browse</button>
-          </div>
+          <label>Movie library roots</label>
+          <LibraryRootsEditor
+            roots={
+              settings.movieLibraryRoots?.length
+                ? settings.movieLibraryRoots
+                : settings.movieLibraryRoot
+                  ? [settings.movieLibraryRoot]
+                  : []
+            }
+            onChange={(movieLibraryRoots) =>
+              setLocal({ ...settings, movieLibraryRoots, movieLibraryRoot: movieLibraryRoots[0] || '' })
+            }
+          />
           <div className="hint">
-            Separate from TV. Movies save as {'{Title} ({Year})/{Title} ({Year}).ext'} under this folder only.
-            Mapped drives and UNC (\\server\share\Movies) are supported via Browse or typed path.
+            Drag to reorder. The <strong>top</strong> folder is used for new movies. If {'{Title} ({Year})'} already
+            exists in any listed library, that folder is reused.
           </div>
         </div>
 
@@ -637,6 +701,8 @@ export default function SettingsView() {
             so TAP/Wintun and <code>openvpn.exe</code> are available. Connect uses the OpenVPN Interactive
             Service when it is running; otherwise Windows may show a one-time UAC prompt.
             When enabled with an imported .ovpn, Nightfeed <strong>auto-connects on app start</strong>.
+            Nightfeed runs its own <code>openvpn.exe</code> session — the OpenVPN GUI app will not show it.
+            Routes are pulled so torrent traffic can reach the internet through the VPN.
           </div>
         </div>
 
@@ -843,6 +909,37 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.telegramDailyBriefing}
+              onChange={(e) => setLocal({ ...settings, telegramDailyBriefing: e.target.checked })}
+            />
+            <span>Daily download briefing</span>
+          </label>
+          <div className="row" style={{ marginTop: 8, gap: 8, alignItems: 'center' }}>
+            <span className="hint" style={{ margin: 0 }}>Send at</span>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              style={{ width: 72 }}
+              value={settings.telegramDailyBriefingHour ?? 9}
+              onChange={(e) =>
+                setLocal({
+                  ...settings,
+                  telegramDailyBriefingHour: Math.min(23, Math.max(0, parseInt(e.target.value || '9', 10))),
+                })
+              }
+            />
+            <span className="hint" style={{ margin: 0 }}>:00 local time, to admin chats</span>
+          </div>
+          <div className="hint">
+            Lists what finished in the last 24 hours. If nothing completed, no message is sent.
+          </div>
+        </div>
+
+        <div className="field">
           <label>Bot token (from @BotFather)</label>
           <input
             type="password"
@@ -1023,8 +1120,8 @@ export default function SettingsView() {
           </div>
         )}
         <div className="hint">
-          Packaged builds check GitHub Releases for remie1529/Nightfeed on startup.
-          The repo is private, so a GitHub token is required for update checks to succeed.
+          Packaged builds check GitHub Releases for remie1529/Nightfeed on startup and every 6 hours.
+          A banner appears when an update is ready. The repo is private, so a GitHub token is required.
         </div>
       </div>
 
@@ -1084,7 +1181,7 @@ export default function SettingsView() {
           Torrent search and library zoekfunctie (TVMaze / IMDb) run on <code>worker_threads</code>.
           WebTorrent prefers an Electron <code>utilityProcess</code>. Progress IPC is throttled; download
           persistence is debounced so search stays responsive during active downloads.
-          Prefer legal sources and content you have rights to download.
+          {' '}
           {threadInfo && (
             <div style={{ marginTop: 8 }}>
               Runtime: torrent search workers{' '}

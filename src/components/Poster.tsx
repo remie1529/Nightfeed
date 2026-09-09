@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 export default function Poster({
   path,
   alt,
@@ -9,7 +11,24 @@ export default function Poster({
   width?: number;
   height?: number;
 }) {
-  const src = path ? window.torrentAPI.posterUrl(path, width > 200 ? 'w500' : 'w342') : null;
+  const remote = path ? window.torrentAPI.posterUrl(path, width > 200 ? 'w500' : 'w342') : null;
+  const [src, setSrc] = useState<string | null>(remote);
+
+  useEffect(() => {
+    setSrc(remote);
+    if (!remote || !/^https?:\/\//i.test(remote)) return;
+    let cancelled = false;
+    window.torrentAPI
+      .cachedPoster?.(remote)
+      .then((local) => {
+        if (!cancelled && local) setSrc(String(local));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [remote]);
+
   if (!src) {
     return (
       <div

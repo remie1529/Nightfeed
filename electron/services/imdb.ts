@@ -100,9 +100,10 @@ export function resolveMovieStatus(
 export function applyMovieLocalStatus(
   movie: Movie,
   movieLibraryRoot: string,
-  downloadingIds: Set<number>
+  downloadingIds: Set<number>,
+  extraRoots?: string[]
 ): Movie {
-  const localPath = findLocalMovie(movie, movieLibraryRoot);
+  const localPath = findLocalMovie(movie, movieLibraryRoot, extraRoots);
   const downloading = downloadingIds.has(movie.tmdbId);
   return {
     ...movie,
@@ -340,7 +341,8 @@ export async function fetchMovieDetail(
   movieId: number,
   movieLibraryRoot: string,
   existing?: Movie | null,
-  downloadingIds: Set<number> = new Set()
+  downloadingIds: Set<number> = new Set(),
+  extraRoots?: string[]
 ): Promise<Movie> {
   const imdbId = numberToImdbId(movieId);
   let detail: {
@@ -402,7 +404,7 @@ export async function fetchMovieDetail(
 
   void getMovieFolderName(movie);
   await sleep(80);
-  return applyMovieLocalStatus(movie, movieLibraryRoot, downloadingIds);
+  return applyMovieLocalStatus(movie, movieLibraryRoot, downloadingIds, extraRoots);
 }
 
 export function refreshMovieLocal(

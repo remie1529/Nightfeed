@@ -60,8 +60,12 @@ export interface AppSettings {
   /** @deprecated Movies use IMDb scrape (no key). Kept for older settings files. */
   tmdbApiKey?: string;
   libraryRoot: string;
+  /** Ordered TV library roots; first is used for new shows. */
+  libraryRoots: string[];
   /** Separate root for movies — never mix with TV libraryRoot. */
   movieLibraryRoot: string;
+  /** Ordered movie library roots; first is used for new movies. */
+  movieLibraryRoots: string[];
   defaultResolution: Resolution;
   /** Global preferred resolution for movies (per-movie override on Movie). */
   defaultMovieResolution: Resolution;
@@ -92,6 +96,10 @@ export interface AppSettings {
   telegramAdminChatIds: string;
   /** Comma-separated request-only chat ids (can submit movie/TV requests). */
   telegramRequestChatIds: string;
+  /** Daily Telegram digest of downloads in the last 24 hours (admins). */
+  telegramDailyBriefing: boolean;
+  /** Local hour (0–23) to send the briefing. */
+  telegramDailyBriefingHour: number;
   /** GitHub PAT for private-repo auto-updates — never log this. */
   githubToken: string;
   /** Max WebTorrent peer connections (default 150). */
@@ -242,6 +250,13 @@ export interface SearchResult {
   infoHash?: string;
 }
 
+export interface DownloadHistoryItem {
+  at: string;
+  title: string;
+  kind: 'episode' | 'movie';
+  posterUrl?: string | null;
+}
+
 export interface DownloadItem {
   id: string;
   infoHash: string;
@@ -334,7 +349,9 @@ export const DEFAULT_TORRENT_SOURCES: TorrentSources = {
 export const DEFAULT_SETTINGS: AppSettings = {
   tmdbApiKey: '',
   libraryRoot: '',
+  libraryRoots: [],
   movieLibraryRoot: '',
+  movieLibraryRoots: [],
   defaultResolution: '1080p',
   defaultMovieResolution: '1080p',
   refreshIntervalMinutes: 60,
@@ -350,6 +367,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramAllowedChatIds: '',
   telegramAdminChatIds: '',
   telegramRequestChatIds: '',
+  telegramDailyBriefing: false,
+  telegramDailyBriefingHour: 9,
   githubToken: '',
   maxConnections: 200,
   maxDownloadSpeedKBps: 0,

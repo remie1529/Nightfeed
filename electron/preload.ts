@@ -84,6 +84,8 @@ const api = {
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
 
+  cachedPoster: (url: string) => ipcRenderer.invoke('poster:cache', url),
+
   getVpnStatus: () => ipcRenderer.invoke('vpn:status'),
   importVpnConfig: () => ipcRenderer.invoke('vpn:importConfig'),
   connectVpn: () => ipcRenderer.invoke('vpn:connect'),

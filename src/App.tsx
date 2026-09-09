@@ -6,7 +6,7 @@ import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import Requests from './views/Requests';
 import SettingsView from './views/Settings';
-import type { DownloadItem, Movie, VpnStatus } from './lib/types';
+import type { DownloadItem, Movie, UpdateStatus, VpnStatus } from './lib/types';
 
 type View = 'library' | 'movies' | 'downloads' | 'requests' | 'settings' | 'show' | 'movie';
 
@@ -27,6 +27,7 @@ export default function App() {
   const [pendingRequests, setPendingRequests] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [vpnKillSwitch, setVpnKillSwitch] = useState(false);
+  const [updateBanner, setUpdateBanner] = useState<UpdateStatus | null>(null);
   const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
@@ -70,6 +71,12 @@ export default function App() {
     };
     window.torrentAPI.getVpnStatus?.().then((s) => applyVpn(s as VpnStatus)).catch(() => undefined);
     const offVpn = window.torrentAPI.onVpnStatus?.((s) => applyVpn(s as VpnStatus));
+    const applyUpdate = (s: UpdateStatus | null | undefined) => {
+      if (s && (s.available || s.downloaded)) setUpdateBanner(s);
+      else setUpdateBanner(null);
+    };
+    window.torrentAPI.getUpdateStatus?.().then((s) => applyUpdate(s as UpdateStatus)).catch(() => undefined);
+    const offUpd = window.torrentAPI.onUpdateStatus?.((s) => applyUpdate(s as UpdateStatus));
     const pendingTimer = setInterval(refreshPending, 20000);
     return () => {
       offDl();
@@ -78,6 +85,7 @@ export default function App() {
       offToast();
       offReq?.();
       offVpn?.();
+      offUpd?.();
       clearInterval(pendingTimer);
     };
   }, []);
@@ -177,6 +185,23 @@ export default function App() {
         {view === 'settings' && <SettingsView />}
       </main>
       <div className="toast-stack" aria-live="polite">
+        {updateBanner && (
+          <div className="vpn-kill-banner" style={{ background: '#241f14', borderColor: '#5a4d2a' }} role="status">
+            <div className="vpn-kill-banner-title" style={{ color: 'var(--accent)' }}>
+              Update {updateBanner.version || ''}
+            </div>
+            <div>{updateBanner.downloaded ? 'Ready to install.' : updateBanner.message || 'A new version is available.'}</div>
+            {updateBanner.downloaded ? (
+              <button type="button" className="primary" onClick={() => window.torrentAPI.installUpdate?.()}>
+                Restart &amp; install
+              </button>
+            ) : (
+              <button type="button" onClick={() => setView('settings')}>
+                Open Settings
+              </button>
+            )}
+          </div>
+        )}
         {vpnKillSwitch && (
           <div className="vpn-kill-banner" role="alert">
             <div className="vpn-kill-banner-title">VPN kill switch</div>
