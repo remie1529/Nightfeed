@@ -95,6 +95,7 @@ export interface AppSettings {
 }
 
 export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type VpnLaunchMethod = 'direct' | 'interactive-service' | 'elevated' | null;
 
 export interface VpnStatus {
   enabled: boolean;
@@ -108,6 +109,8 @@ export interface VpnStatus {
   requireForTorrents: boolean;
   usernameSet: boolean;
   routeNopull: boolean;
+  lastError: string | null;
+  launchMethod: VpnLaunchMethod;
 }
 
 export interface Episode {

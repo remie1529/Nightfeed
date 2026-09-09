@@ -4,17 +4,20 @@
  * so WebTorrent can bind torrent sockets to the VPN interface only.
  *
  * Does NOT ship openvpn.exe (GPL). Detects a local install.
+ * TAP/TUN needs elevation: prefer OpenVPN Interactive Service, else UAC.
  * Never logs the VPN password.
  */
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { ChildProcessWithoutNullStreams, execFile, execFileSync, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import fsp from 'fs/promises';
+import net from 'net';
 import os from 'os';
 import path from 'path';
 import { app } from 'electron';
 
 export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type VpnLaunchMethod = 'direct' | 'interactive-service' | 'elevated' | null;
 
 export interface VpnStatus {
   enabled: boolean;
@@ -29,6 +32,8 @@ export interface VpnStatus {
   usernameSet: boolean;
   /** True when we asked openvpn for route-nopull (torrent-only intent). */
   routeNopull: boolean;
+  lastError: string | null;
+  launchMethod: VpnLaunchMethod;
 }
 
 const COMMON_OPENVPN_PATHS = [
@@ -37,6 +42,21 @@ const COMMON_OPENVPN_PATHS = [
   'C:\\Program Files\\OpenVPN Connect\\OpenVPNConnect.exe',
   path.join(process.env.ProgramFiles || 'C:\\Program Files', 'OpenVPN', 'bin', 'openvpn.exe'),
   path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'OpenVPN', 'bin', 'openvpn.exe'),
+];
+
+const OVPN_FILE_DIRECTIVES = [
+  'ca',
+  'cert',
+  'key',
+  'pkcs12',
+  'dh',
+  'extra-certs',
+  'tls-auth',
+  'tls-crypt',
+  'tls-crypt-v2',
+  'secret',
+  'crl-verify',
+  'auth-user-pass',
 ];
 
 function vpnDir(): string {
@@ -51,6 +71,14 @@ function storedConfigPath(): string {
   return path.join(vpnDir(), 'client.ovpn');
 }
 
+function logFilePath(): string {
+  return path.join(vpnDir(), 'ovpn.log');
+}
+
+function pidFilePath(): string {
+  return path.join(vpnDir(), 'openvpn.pid');
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await fsp.access(p);
@@ -62,7 +90,6 @@ async function pathExists(p: string): Promise<boolean> {
 
 function whichSync(cmd: string): string | null {
   try {
-    const { execFileSync } = require('child_process') as typeof import('child_process');
     const out = execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], {
       encoding: 'utf8',
       windowsHide: true,
@@ -86,14 +113,13 @@ export async function detectOpenVpn(): Promise<{ found: boolean; path: string | 
   }
   for (const candidate of COMMON_OPENVPN_PATHS) {
     if (!candidate) continue;
-    if (/OpenVPNConnect\.exe$/i.test(candidate)) continue; // GUI only — not useful for CLI spawn
+    if (/OpenVPNConnect\.exe$/i.test(candidate)) continue;
     if (await pathExists(candidate)) return { found: true, path: candidate };
   }
   return { found: false, path: null };
 }
 
 function parseIpFromLog(chunk: string): string | null {
-  // Common OpenVPN log lines that include the assigned TUN/TAP IPv4
   const patterns = [
     /net_addr_v4_add:\s*(\d{1,3}(?:\.\d{1,3}){3})\//i,
     /ip-win32:\s*(?:.+?)\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
@@ -125,7 +151,6 @@ function guessVpnInterfaceIp(before: Set<string>): string | null {
       if (entry.internal) continue;
       if (before.has(entry.address)) continue;
       if (looksVpn) return entry.address;
-      // Private ranges often used by VPN providers
       if (
         entry.address.startsWith('10.') ||
         entry.address.startsWith('100.') ||
@@ -138,16 +163,335 @@ function guessVpnInterfaceIp(before: Set<string>): string | null {
   return candidates[0] || null;
 }
 
+function parseOvpnFileRefs(text: string): string[] {
+  const refs: string[] = [];
+  const dirRe = new RegExp(`^(${OVPN_FILE_DIRECTIVES.join('|')})(?:\\s+(.+))?$`, 'i');
+  let inline = false;
+  for (let line of text.split(/\r?\n/)) {
+    line = line.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    if (/^<[a-z0-9_-]+>$/i.test(line)) {
+      inline = true;
+      continue;
+    }
+    if (/^<\/[a-z0-9_-]+>$/i.test(line)) {
+      inline = false;
+      continue;
+    }
+    if (inline) continue;
+    const m = line.match(dirRe);
+    if (!m?.[2]) continue;
+    const rest = m[2].trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+    const file = rest.split(/\s+/)[0];
+    if (!file || file.toLowerCase() === 'stdin') continue;
+    refs.push(file);
+  }
+  return [...new Set(refs)];
+}
+
+function isSafeRelative(rel: string): boolean {
+  if (!rel || path.isAbsolute(rel)) return false;
+  const norm = path.normalize(rel);
+  const parts = norm.split(/[/\\]/);
+  return !parts.includes('..');
+}
+
+export function summarizeOpenVpnLog(log: string): string | null {
+  if (!log.trim()) return null;
+  const lines = log
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\s*\S+\s+/, (prefix) => (/\d/.test(prefix) ? '' : prefix)).trim())
+    .filter(Boolean);
+  const interesting = lines.filter((l) =>
+    /ERROR:|AUTH_FAILED|Options error|Cannot open TUN|All TAP-Windows|Need TAP|Wintun|ACCESS_DENIED|CreateFile failed on TAP|Failed to parse|No such file|cannot open|PERMISSION_DENIED|FlushIpNetTable|Requires administrative|TAP-Windows adapter|AUTH: Received control|Connection reset|TLS Error|RESOLVE:|SOCKET:|Exiting due/i.test(
+      l
+    )
+  );
+  const pick = interesting.slice(-4);
+  const blob = (pick.length ? pick : lines.slice(-6)).join(' · ').slice(0, 700);
+  if (!blob) return null;
+  if (/AUTH_FAILED|auth.?fail/i.test(blob)) return 'Authentication failed (check username/password)';
+  if (/No such file|cannot open.*\.(crt|key|pem|p12)|Options error: --(ca|cert|key|pkcs12)/i.test(blob)) {
+    return `OpenVPN config is missing a certificate/key file next to the .ovpn. ${blob}`;
+  }
+  if (/Cannot open TUN\/TAP|CreateFile failed on TAP|All TAP-Windows|Need TAP|Wintun|Requires administrative|ACCESS_DENIED|PERMISSION_DENIED/i.test(
+    blob
+  )) {
+    return `OpenVPN could not open TAP/TUN (needs Administrator / Interactive Service, and OpenVPN Community with TAP or Wintun). ${blob}`;
+  }
+  return blob;
+}
+
+function isProcessElevated(): boolean {
+  if (process.platform !== 'win32') return typeof process.getuid === 'function' && process.getuid() === 0;
+  try {
+    execFileSync('net', ['session'], { stdio: 'ignore', windowsHide: true, timeout: 3000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    return code === 'EPERM';
+  }
+}
+
+function quoteWinArg(s: string): string {
+  if (!/[\s"]/.test(s)) return s;
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+function encodeStartupMessage(cwd: string, options: string, stdin: string): Buffer {
+  const parts = [cwd, options, stdin].map((s) => {
+    const body = Buffer.from(s, 'utf16le');
+    const out = Buffer.alloc(body.length + 2);
+    body.copy(out);
+    return out;
+  });
+  return Buffer.concat(parts);
+}
+
+function parseServiceReply(text: string): { pid?: number; error?: string } {
+  const t = text.replace(/\u0000/g, '').trim();
+  const lines = t
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return { error: 'OpenVPN Interactive Service returned an empty reply' };
+  const ok = lines[0] === '0x00000000' || /process id/i.test(lines.join(' '));
+  if (ok && lines[1]) {
+    const pid = parseInt(lines[1].replace(/^0x/i, ''), 16);
+    if (Number.isFinite(pid) && pid > 0) return { pid };
+  }
+  const msg = lines.slice(1).join(' — ') || t.slice(0, 400);
+  return { error: msg };
+}
+
+function tryStartInteractiveService(): void {
+  try {
+    execFileSync('sc.exe', ['start', 'OpenVPNServiceInteractive'], {
+      windowsHide: true,
+      timeout: 8000,
+      stdio: 'ignore',
+    });
+  } catch {
+    // already running, missing, or needs admin — caller falls through
+  }
+}
+
+function startViaInteractiveServiceFs(cwd: string, options: string): number {
+  const pipePath = '\\\\.\\pipe\\openvpn\\service';
+  const fd = fs.openSync(pipePath, 'r+');
+  try {
+    const payload = encodeStartupMessage(cwd, options, '');
+    fs.writeSync(fd, payload);
+    const buf = Buffer.alloc(8192);
+    const n = fs.readSync(fd, buf, 0, buf.length, null);
+    const text = buf.slice(0, n).toString('utf16le');
+    const parsed = parseServiceReply(text);
+    if (parsed.pid) return parsed.pid;
+    throw new Error(parsed.error || 'OpenVPN Interactive Service failed');
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function execFileAsync(file: string, args: string[], timeout: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true, timeout }, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+async function startViaInteractiveServicePs(cwd: string, options: string, workDir: string): Promise<number> {
+  const replyPath = path.join(workDir, 'service-reply.txt');
+  const ps1 = path.join(workDir, 'iservice.ps1');
+  const script = `
+param([string]$Cwd,[string]$Options,[string]$Reply)
+$ErrorActionPreference = 'Stop'
+$pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'openvpn\\service', [System.IO.Pipes.PipeDirection]::InOut)
+$pipe.Connect(4000)
+try { $pipe.ReadMode = [System.IO.Pipes.PipeTransmissionMode]::Message } catch {}
+$enc = New-Object System.Text.UnicodeEncoding $false, $false
+function Z([string]$s) {
+  $b = $enc.GetBytes($s)
+  $o = New-Object byte[] ($b.Length + 2)
+  [Buffer]::BlockCopy($b, 0, $o, 0, $b.Length)
+  return ,$o
+}
+$parts = @((Z $Cwd), (Z $Options), (Z ''))
+$len = 0; foreach ($p in $parts) { $len += $p.Length }
+$msg = New-Object byte[] $len
+$off = 0
+foreach ($p in $parts) { [Buffer]::BlockCopy($p, 0, $msg, $off, $p.Length); $off += $p.Length }
+$pipe.Write($msg, 0, $msg.Length)
+$pipe.Flush()
+$buf = New-Object byte[] 8192
+$n = $pipe.Read($buf, 0, $buf.Length)
+$text = $enc.GetString($buf, 0, $n)
+Set-Content -Path $Reply -Value $text -Encoding UTF8
+$pipe.Dispose()
+`;
+  fs.writeFileSync(ps1, script, 'utf8');
+  try {
+    fs.unlinkSync(replyPath);
+  } catch {
+    // ignore
+  }
+  await execFileAsync(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-Cwd', cwd, '-Options', options, '-Reply', replyPath],
+    15000
+  );
+  const text = fs.existsSync(replyPath) ? fs.readFileSync(replyPath, 'utf8') : '';
+  const parsed = parseServiceReply(text);
+  if (parsed.pid) return parsed.pid;
+  throw new Error(parsed.error || 'OpenVPN Interactive Service failed');
+}
+
+async function startViaInteractiveService(cwd: string, options: string, workDir: string): Promise<number> {
+  tryStartInteractiveService();
+  try {
+    return startViaInteractiveServiceFs(cwd, options);
+  } catch {
+    return startViaInteractiveServicePs(cwd, options, workDir);
+  }
+}
+
+async function startElevated(exe: string, args: string[], workDir: string): Promise<number> {
+  const pidPath = path.join(workDir, 'elevate.pid');
+  const argPath = path.join(workDir, 'elevate-args.json');
+  const ps1 = path.join(workDir, 'elevate.ps1');
+  const script = `
+param([string]$Exe,[string]$ArgFile,[string]$PidFile,[string]$WorkDir)
+$ErrorActionPreference = 'Stop'
+$argList = @(Get-Content -Raw -Encoding UTF8 $ArgFile | ConvertFrom-Json)
+try {
+  $p = Start-Process -FilePath $Exe -ArgumentList $argList -WorkingDirectory $WorkDir -Verb RunAs -WindowStyle Hidden -PassThru
+  if (-not $p) { throw 'Administrator approval was cancelled' }
+  Set-Content -Path $PidFile -Value ([string]$p.Id) -Encoding ASCII
+} catch {
+  Set-Content -Path $PidFile -Value ("ERROR:" + $_.Exception.Message) -Encoding UTF8
+  exit 1
+}
+`;
+  fs.writeFileSync(ps1, script, 'utf8');
+  fs.writeFileSync(argPath, JSON.stringify(args), 'utf8');
+  try {
+    fs.unlinkSync(pidPath);
+  } catch {
+    // ignore
+  }
+  try {
+    await execFileAsync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        ps1,
+        '-Exe',
+        exe,
+        '-ArgFile',
+        argPath,
+        '-PidFile',
+        pidPath,
+        '-WorkDir',
+        workDir,
+      ],
+      120000
+    );
+  } catch {
+    // script writes ERROR: on UAC cancel
+  }
+  if (!fs.existsSync(pidPath)) {
+    throw new Error('Administrator approval was cancelled or OpenVPN did not start');
+  }
+  const raw = fs.readFileSync(pidPath, 'utf8').trim();
+  if (raw.startsWith('ERROR:')) {
+    const msg = raw.slice(6).trim();
+    if (/cancel|1223/i.test(msg)) {
+      throw new Error(
+        'Administrator approval was cancelled. TAP/TUN needs a UAC prompt, or start OpenVPN Interactive Service.'
+      );
+    }
+    throw new Error(msg || 'Failed to start OpenVPN elevated');
+  }
+  const pid = parseInt(raw, 10);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    throw new Error('Elevated OpenVPN started but no PID was returned');
+  }
+  return pid;
+}
+
+function getFreeLocalPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.unref();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => {
+      const addr = s.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      s.close((err) => (err ? reject(err) : resolve(port)));
+    });
+  });
+}
+
+function managementSignal(port: number, command = 'signal SIGTERM'): Promise<void> {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: '127.0.0.1', port }, () => {
+      sock.write(`${command}\r\n`);
+      setTimeout(() => {
+        try {
+          sock.end();
+        } catch {
+          // ignore
+        }
+        resolve();
+      }, 250);
+    });
+    sock.setTimeout(1500, () => {
+      sock.destroy();
+      resolve();
+    });
+    sock.on('error', () => resolve());
+  });
+}
+
 export class VpnManager extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
+  private ownedPid: number | null = null;
   private state: VpnConnectionState = 'disconnected';
   private message = 'Disconnected';
+  private lastError: string | null = null;
+  private launchMethod: VpnLaunchMethod = null;
   private openvpnPath: string | null = null;
   private openvpnFound = false;
   private bindAddress: string | null = null;
   private logBuffer = '';
+  private logOffset = 0;
   private ipsBeforeConnect = new Set<string>();
   private pollTimer: NodeJS.Timeout | null = null;
+  private logTimer: NodeJS.Timeout | null = null;
+  private pidTimer: NodeJS.Timeout | null = null;
+  private connectTimer: NodeJS.Timeout | null = null;
+  private mgmtPort: number | null = null;
+  private intentionalStop = false;
+  private generation = 0;
 
   async refreshDetect(): Promise<void> {
     const d = await detectOpenVpn();
@@ -174,6 +518,8 @@ export class VpnManager extends EventEmitter {
       requireForTorrents: !!settings.vpnRequireForTorrents,
       usernameSet: !!(settings.vpnUsername && settings.vpnUsername.trim()),
       routeNopull: true,
+      lastError: this.lastError,
+      launchMethod: this.launchMethod,
     };
   }
 
@@ -188,6 +534,7 @@ export class VpnManager extends EventEmitter {
   private setState(state: VpnConnectionState, message: string): void {
     this.state = state;
     this.message = message;
+    if (state === 'error') this.lastError = message;
     this.emit('status');
   }
 
@@ -202,25 +549,36 @@ export class VpnManager extends EventEmitter {
     return set;
   }
 
-  /** Copy .ovpn into userData/vpn and return stored path + display name. */
-  async importConfig(sourcePath: string): Promise<{ configPath: string; configName: string }> {
+  /** Copy .ovpn into userData/vpn (plus relative ca/cert/key files) and return stored path + display name. */
+  async importConfig(sourcePath: string): Promise<{ configPath: string; configName: string; copiedSidecars: number }> {
     await fsp.mkdir(vpnDir(), { recursive: true });
     const configName = path.basename(sourcePath);
     const dest = storedConfigPath();
+    const text = await fsp.readFile(sourcePath, 'utf8');
     await fsp.copyFile(sourcePath, dest);
+    let copiedSidecars = 0;
+    const srcDir = path.dirname(sourcePath);
+    for (const rel of parseOvpnFileRefs(text)) {
+      if (!isSafeRelative(rel)) continue;
+      const from = path.join(srcDir, rel);
+      const to = path.join(vpnDir(), rel);
+      if (!(await pathExists(from))) continue;
+      await fsp.mkdir(path.dirname(to), { recursive: true });
+      await fsp.copyFile(from, to);
+      copiedSidecars += 1;
+    }
     try {
       await fsp.chmod(dest, 0o600);
     } catch {
       // Windows may ignore chmod
     }
-    return { configPath: dest, configName };
+    return { configPath: dest, configName, copiedSidecars };
   }
 
   private async writeAuthFile(username: string, password: string): Promise<string | null> {
     if (!username.trim()) return null;
     await fsp.mkdir(vpnDir(), { recursive: true });
     const p = authFilePath();
-    // OpenVPN auth-user-pass file: username\npassword\n — never log contents
     await fsp.writeFile(p, `${username}\n${password}\n`, { encoding: 'utf8', mode: 0o600 });
     try {
       await fsp.chmod(p, 0o600);
@@ -274,21 +632,187 @@ export class VpnManager extends EventEmitter {
     }
   }
 
-  async connect(opts: {
-    configPath: string;
-    username?: string;
-    password?: string;
-  }): Promise<VpnStatus> {
-    await this.refreshDetect();
-    if (!this.openvpnFound || !this.openvpnPath) {
+  private startLogTail(): void {
+    this.stopLogTail();
+    this.logOffset = 0;
+    const tick = () => {
+      try {
+        const st = fs.statSync(logFilePath());
+        if (st.size < this.logOffset) this.logOffset = 0;
+        if (st.size > this.logOffset) {
+          const len = st.size - this.logOffset;
+          const buf = Buffer.alloc(len);
+          const fd = fs.openSync(logFilePath(), 'r');
+          fs.readSync(fd, buf, 0, len, this.logOffset);
+          fs.closeSync(fd);
+          this.logOffset = st.size;
+          this.onLogChunk(buf.toString('utf8'));
+        }
+      } catch {
+        // log file not created yet
+      }
+    };
+    tick();
+    this.logTimer = setInterval(tick, 300);
+  }
+
+  private stopLogTail(): void {
+    if (this.logTimer) {
+      clearInterval(this.logTimer);
+      this.logTimer = null;
+    }
+  }
+
+  private startPidPoll(): void {
+    this.stopPidPoll();
+    this.pidTimer = setInterval(() => {
+      if (this.intentionalStop) return;
+      if (this.state !== 'connecting' && this.state !== 'connected') return;
+      const pid = this.ownedPid || this.child?.pid || null;
+      if (pid && !pidAlive(pid)) this.onProcessExit(this.generation, 1, null);
+    }, 800);
+  }
+
+  private stopPidPoll(): void {
+    if (this.pidTimer) {
+      clearInterval(this.pidTimer);
+      this.pidTimer = null;
+    }
+  }
+
+  private clearConnectTimeout(): void {
+    if (this.connectTimer) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
+  }
+
+  private onLogChunk(text: string): void {
+    this.logBuffer = (this.logBuffer + text).slice(-20000);
+    const ip = parseIpFromLog(text) || parseIpFromLog(this.logBuffer);
+    if (ip && !this.bindAddress) {
+      this.bindAddress = ip;
+      this.emit('bind', ip);
+    }
+    if (/Initialization Sequence Completed/i.test(text) || /Initialization Sequence Completed/i.test(this.logBuffer)) {
+      const addr = this.bindAddress || guessVpnInterfaceIp(this.ipsBeforeConnect);
+      if (addr) this.bindAddress = addr;
+      this.lastError = null;
+      this.clearConnectTimeout();
       this.setState(
-        'error',
-        'OpenVPN not found. Install OpenVPN Community (openvpn.exe) and ensure it is on PATH, or under Program Files\\OpenVPN\\bin.'
+        'connected',
+        this.bindAddress ? `Connected — torrent bind ${this.bindAddress}` : 'Connected — detecting TUN/TAP IP…'
       );
+      if (!this.bindAddress) this.startIfacePoll();
+      else this.emit('bind', this.bindAddress);
+    }
+    if (/AUTH_FAILED|auth.?fail/i.test(text)) {
+      this.lastError = 'Authentication failed (check username/password)';
+      this.setState('error', this.lastError);
+    }
+  }
+
+  private onProcessExit(generation: number, code: number | null, signal: NodeJS.Signals | null): void {
+    if (generation !== this.generation) return;
+    if (this.intentionalStop) {
+      this.child = null;
+      this.ownedPid = null;
+      this.stopIfacePoll();
+      this.stopLogTail();
+      this.stopPidPoll();
+      this.clearConnectTimeout();
+      this.clearAuthFile();
+      this.bindAddress = null;
+      this.mgmtPort = null;
+      this.launchMethod = null;
+      this.emit('bind', null);
+      return;
+    }
+    this.child = null;
+    this.ownedPid = null;
+    this.stopIfacePoll();
+    this.stopLogTail();
+    this.stopPidPoll();
+    this.clearConnectTimeout();
+    this.clearAuthFile();
+    const wasActive = this.state === 'connected' || this.state === 'connecting';
+    this.bindAddress = null;
+    this.mgmtPort = null;
+    if (this.state === 'error' && /Authentication failed/i.test(this.message)) {
+      this.emit('bind', null);
+      this.emit('status');
+      return;
+    }
+    if (wasActive) {
+      const detail = summarizeOpenVpnLog(this.logBuffer);
+      this.lastError = detail;
+      const hint =
+        detail ||
+        (code === 1
+          ? 'OpenVPN exited. Install OpenVPN Community on this PC (TAP/TUN), or approve the UAC prompt / start OpenVPN Interactive Service.'
+          : `OpenVPN exited (code ${code ?? '—'}, signal ${signal ?? '—'})`);
+      this.setState('disconnected', hint);
+    } else {
+      this.setState('disconnected', 'Disconnected');
+    }
+    this.launchMethod = null;
+    this.emit('bind', null);
+  }
+
+  private attachChild(child: ChildProcessWithoutNullStreams): void {
+    this.child = child;
+    this.ownedPid = child.pid ?? null;
+    child.stdout.on('data', (buf: Buffer) => this.onLogChunk(buf.toString('utf8')));
+    child.stderr.on('data', (buf: Buffer) => this.onLogChunk(buf.toString('utf8')));
+    child.on('error', (err) => {
+      this.child = null;
+      this.ownedPid = null;
+      this.bindAddress = null;
+      this.clearAuthFile();
+      this.lastError = err.message || 'Failed to start openvpn';
+      this.setState('error', this.lastError);
+      this.emit('bind', null);
+    });
+    const gen = this.generation;
+    child.on('exit', (code, signal) => this.onProcessExit(gen, code, signal));
+  }
+
+  private buildArgs(hasAuth: boolean, mgmtPort: number): string[] {
+    const args = [
+      '--cd',
+      vpnDir(),
+      '--config',
+      'client.ovpn',
+      '--log',
+      'ovpn.log',
+      '--writepid',
+      'openvpn.pid',
+      '--management',
+      '127.0.0.1',
+      String(mgmtPort),
+      '--route-nopull',
+      '--pull-filter',
+      'ignore',
+      'redirect-gateway',
+      '--verb',
+      '3',
+    ];
+    if (hasAuth) args.push('--auth-user-pass', 'auth-user-pass.txt');
+    return args;
+  }
+
+  async connect(opts: { configPath: string; username?: string; password?: string }): Promise<VpnStatus> {
+    await this.refreshDetect();
+    const exe = this.openvpnPath;
+    if (!this.openvpnFound || !exe) {
+      this.lastError =
+        'OpenVPN is not installed on this PC. Nightfeed starts openvpn.exe locally — a VPN on another device is not used. Install OpenVPN Community (openvpn.exe) on the same computer as Nightfeed.';
+      this.setState('error', this.lastError);
       return this.getStatus({});
     }
     if (!opts.configPath || !(await pathExists(opts.configPath))) {
-      this.setState('error', 'No .ovpn config imported. Use Import .ovpn in Settings.');
+      this.lastError = 'No .ovpn config imported. Use Import .ovpn in Settings.';
+      this.setState('error', this.lastError);
       return this.getStatus({});
     }
 
@@ -297,104 +821,103 @@ export class VpnManager extends EventEmitter {
     this.ipsBeforeConnect = this.snapshotLocalIps();
     this.bindAddress = null;
     this.logBuffer = '';
+    this.logOffset = 0;
+    this.lastError = null;
+    this.intentionalStop = false;
+    this.generation += 1;
+    this.launchMethod = null;
+    await fsp.mkdir(vpnDir(), { recursive: true });
+    try {
+      fs.unlinkSync(logFilePath());
+    } catch {
+      // ignore
+    }
+    try {
+      fs.unlinkSync(pidFilePath());
+    } catch {
+      // ignore
+    }
+
     this.setState('connecting', 'Starting OpenVPN…');
 
     let authPath: string | null = null;
     try {
       authPath = await this.writeAuthFile(opts.username || '', opts.password || '');
     } catch {
-      this.setState('error', 'Could not write auth file in userData');
+      this.lastError = 'Could not write auth file in userData';
+      this.setState('error', this.lastError);
       return this.getStatus({});
     }
 
-    const args = [
-      '--config',
-      opts.configPath,
-      // Avoid pulling default route so the whole PC is not forced through VPN
-      '--route-nopull',
-      '--pull-filter',
-      'ignore',
-      'redirect-gateway',
-      '--verb',
-      '3',
-    ];
-    if (authPath) {
-      args.push('--auth-user-pass', authPath);
+    try {
+      this.mgmtPort = await getFreeLocalPort();
+    } catch {
+      this.mgmtPort = 25340;
     }
+    const args = this.buildArgs(!!authPath, this.mgmtPort);
+    const optionsLine = args.map(quoteWinArg).join(' ');
+
+    this.startLogTail();
+    this.startIfacePoll();
+    this.connectTimer = setTimeout(() => {
+      if (this.state !== 'connecting') return;
+      const detail = summarizeOpenVpnLog(this.logBuffer);
+      this.lastError =
+        detail ||
+        'OpenVPN is still connecting. If a UAC prompt appeared, approve it. TAP/TUN needs OpenVPN Community on this PC.';
+      this.setState('connecting', this.lastError);
+    }, 20000);
 
     try {
-      const child = spawn(this.openvpnPath, args, {
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      this.child = child;
-
-      const onChunk = (buf: Buffer) => {
-        const text = buf.toString('utf8');
-        this.logBuffer = (this.logBuffer + text).slice(-12000);
-        const ip = parseIpFromLog(text) || parseIpFromLog(this.logBuffer);
-        if (ip && !this.bindAddress) {
-          this.bindAddress = ip;
-          this.emit('bind', ip);
+      if (process.platform === 'win32' && !isProcessElevated()) {
+        let started = false;
+        try {
+          this.setState('connecting', 'Starting OpenVPN via Interactive Service…');
+          const pid = await startViaInteractiveService(vpnDir(), optionsLine, vpnDir());
+          this.ownedPid = pid;
+          this.launchMethod = 'interactive-service';
+          this.startPidPoll();
+          started = true;
+        } catch (svcErr) {
+          try {
+            this.setState('connecting', 'Starting OpenVPN (Administrator / UAC)…');
+            const pid = await startElevated(exe, args, vpnDir());
+            this.ownedPid = pid;
+            this.launchMethod = 'elevated';
+            this.startPidPoll();
+            started = true;
+          } catch (elevErr) {
+            const svcMsg = svcErr instanceof Error ? svcErr.message : String(svcErr);
+            const elevMsg = elevErr instanceof Error ? elevErr.message : String(elevErr);
+            this.setState('connecting', 'Starting OpenVPN without elevation (likely to fail on TAP/TUN)…');
+            const child = spawn(exe, args, {
+              cwd: vpnDir(),
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            this.launchMethod = 'direct';
+            this.attachChild(child);
+            started = true;
+            this.lastError = `${elevMsg} (Interactive Service: ${svcMsg})`;
+          }
         }
-        if (/Initialization Sequence Completed/i.test(text) || /Initialization Sequence Completed/i.test(this.logBuffer)) {
-          const addr = this.bindAddress || guessVpnInterfaceIp(this.ipsBeforeConnect);
-          if (addr) this.bindAddress = addr;
-          this.setState(
-            'connected',
-            this.bindAddress
-              ? `Connected — torrent bind ${this.bindAddress}`
-              : 'Connected — detecting TUN/TAP IP…'
-          );
-          if (!this.bindAddress) this.startIfacePoll();
-          else this.emit('bind', this.bindAddress);
-        }
-        if (/AUTH_FAILED|auth.?fail/i.test(text)) {
-          this.setState('error', 'Authentication failed (check username/password)');
-        }
-        if (/Cannot open TUN\/TAP|All TAP-Windows|ERROR:/i.test(text) && this.state === 'connecting') {
-          // Keep connecting unless process exits; surface later
-        }
-      };
-
-      child.stdout.on('data', onChunk);
-      child.stderr.on('data', onChunk);
-
-      child.on('error', (err) => {
-        this.child = null;
-        this.bindAddress = null;
-        this.clearAuthFile();
-        this.setState('error', err.message || 'Failed to start openvpn');
-        this.emit('bind', null);
-      });
-
-      child.on('exit', (code, signal) => {
-        this.child = null;
-        this.stopIfacePoll();
-        this.clearAuthFile();
-        const wasConnected = this.state === 'connected' || this.state === 'connecting';
-        this.bindAddress = null;
-        if (this.state === 'error' && /Authentication failed/i.test(this.message)) {
-          this.emit('bind', null);
-          this.emit('status');
-          return;
-        }
-        if (wasConnected) {
-          const hint =
-            code === 1
-              ? 'OpenVPN exited (admin rights may be required for TAP/TUN).'
-              : `OpenVPN exited (code ${code ?? '—'}, signal ${signal ?? '—'})`;
-          this.setState('disconnected', hint);
-        } else {
-          this.setState('disconnected', 'Disconnected');
-        }
-        this.emit('bind', null);
-      });
-
-      this.startIfacePoll();
+        if (!started) throw new Error('Failed to start OpenVPN');
+      } else {
+        const child = spawn(exe, args, {
+          cwd: vpnDir(),
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        this.launchMethod = 'direct';
+        this.attachChild(child);
+      }
     } catch (err) {
       this.clearAuthFile();
-      this.setState('error', err instanceof Error ? err.message : String(err));
+      this.stopLogTail();
+      this.stopIfacePoll();
+      this.clearConnectTimeout();
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.setState('error', this.lastError);
     }
 
     return this.getStatus({
@@ -404,30 +927,45 @@ export class VpnManager extends EventEmitter {
   }
 
   async disconnect(emitStatus = true): Promise<void> {
+    this.intentionalStop = true;
+    this.generation += 1;
     this.stopIfacePoll();
+    this.stopLogTail();
+    this.stopPidPoll();
+    this.clearConnectTimeout();
+    const port = this.mgmtPort;
+    if (port) {
+      await managementSignal(port);
+      await new Promise((r) => setTimeout(r, 300));
+    }
     const child = this.child;
     this.child = null;
+    const pid = this.ownedPid || child?.pid || null;
+    this.ownedPid = null;
     if (child && !child.killed) {
       try {
         child.kill();
       } catch {
         // ignore
       }
-      // Windows: try taskkill if still alive after short wait
-      await new Promise((r) => setTimeout(r, 400));
+    }
+    if (pid && pidAlive(pid)) {
       try {
-        if (!child.killed && child.pid) {
-          spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-            windowsHide: true,
-            stdio: 'ignore',
-          });
-        }
+        process.kill(pid);
       } catch {
         // ignore
       }
     }
+    await new Promise((r) => setTimeout(r, 400));
+    if (pid && pidAlive(pid)) {
+      await new Promise<void>((resolve) => {
+        execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+      });
+    }
     this.clearAuthFile();
     this.bindAddress = null;
+    this.mgmtPort = null;
+    this.launchMethod = null;
     if (emitStatus) {
       this.setState('disconnected', 'Disconnected');
       this.emit('bind', null);
