@@ -156,7 +156,7 @@ export default function App() {
         )}
         {view === 'movies' && (
           <Movies
-            key={moviesKey}
+            refreshToken={moviesKey}
             onOpenMovie={openMovie}
             onRefreshDone={() => setMoviesKey((k) => k + 1)}
           />

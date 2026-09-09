@@ -37,6 +37,7 @@ import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo } from './ser
 import { isIgnorableTorrentSocketError } from './services/engine';
 import {
   approveDenyKeyboard,
+  escapeHtml,
   normalizeChatIdToken,
   parseChatIds,
   telegramBot,
@@ -1109,17 +1110,21 @@ function wireTelegram() {
         chatId,
         [
           'Nightfeed bot (admin)',
-          '/status — library + active downloads',
+          '/status — library + downloads + VPN',
           '/shows — tracked shows',
           '/movies — tracked movies',
-          '/check — refresh metadata (+ auto-download if enabled)',
+          '/missing — missing/aired episodes',
+          '/check — refresh metadata (+ auto-download)',
           '/downloads — download progress',
-          '/add <query> — search TVMaze and add best match',
+          '/pause — pause all downloads',
+          '/resume — resume queued downloads',
+          '/vpn — OpenVPN status',
+          '/search <query> — search TV + movies (with posters)',
+          '/add <show> — add a TV show',
+          '/add-movie <title> — add a movie',
           '/request-show <name> — submit a TV request',
           '/request-movie <name> — submit a movie request',
-          '/approve <id> — approve a pending request',
-          '/deny <id> — deny a pending request',
-          '/requests — list recent pending requests',
+          '/approve <id>  /deny <id>  /requests',
           '/help — this list',
         ].join('\n')
       );
@@ -1152,6 +1157,7 @@ function wireTelegram() {
         }
       }
       const pending = getTelegramRequests().filter((r) => r.status === 'pending').length;
+      const vpn = vpnManager.getStatus(settings);
       await reply(
         chatId,
         [
@@ -1159,8 +1165,9 @@ function wireTelegram() {
           `Movies: ${getMovies().length}`,
           `Missing/aired episodes: ${missing}`,
           `Active downloads: ${active.length}`,
-          `Pending Telegram requests: ${pending}`,
+          `Pending requests: ${pending}`,
           `Auto-download: ${settings.autoDownload ? 'on' : 'off'}`,
+          `VPN: ${vpn.state}${vpn.killSwitch ? ' · kill switch ON' : ''}`,
           `Refresh every: ${settings.refreshIntervalMinutes} min`,
           `TV library: ${settings.libraryRoot || '(not set)'}`,
           `Movie library: ${settings.movieLibraryRoot || '(not set)'}`,
@@ -1177,15 +1184,16 @@ function wireTelegram() {
       await reply(chatId, lines.join('\n'));
     },
     async movies(chatId, _args, reply) {
-      const movies = getMovies().map((m) => withMovieLocalStatus(m));
+      const movies = getMovies();
       if (!movies.length) {
         await reply(chatId, 'No tracked movies.');
         return;
       }
-      const lines = movies.map((m, i) => {
+      const lines = movies.slice(0, 40).map((m, i) => {
         const year = m.releaseYear ? ` (${m.releaseYear})` : '';
         return `${i + 1}. ${m.title}${year} — ${m.status}`;
       });
+      if (movies.length > 40) lines.push(`…and ${movies.length - 40} more`);
       await reply(chatId, lines.join('\n'));
     },
     async check(chatId, _args, reply) {
@@ -1221,18 +1229,150 @@ function wireTelegram() {
       }
       const best = results[0];
       const show = await addShowWithPolicy(best.id, 'manual');
-      if (results.length === 1 || args.trim().toLowerCase() === best.name.toLowerCase()) {
+      const caption = `<b>Added show</b>\n${escapeHtml(show.name)}`;
+      const settings = getSettings();
+      if (show.posterPath) {
+        await telegramBot.notifyChat(settings, chatId, caption, show.posterPath);
+      } else {
         await reply(chatId, `Added: ${show.name}`);
+      }
+      if (results.length > 1) {
+        const others = results.slice(1, 5);
+        await reply(chatId, `Other matches — tap to add:`, {
+          reply_markup: {
+            inline_keyboard: others.map((r) => [
+              {
+                text: `${r.name}${r.firstAirDate ? ` (${r.firstAirDate.slice(0, 4)})` : ''}`,
+                callback_data: `addshow:${r.id}`,
+              },
+            ]),
+          },
+        });
+      }
+    },
+    async addMovie(chatId, args, reply) {
+      if (!args.trim()) {
+        await reply(chatId, 'Usage: /add-movie <title>');
         return;
       }
-      const choices = results
-        .slice(0, 8)
-        .map((r, i) => `${i + 1}. ${r.name}${r.firstAirDate ? ` (${r.firstAirDate.slice(0, 4)})` : ''} — id ${r.id}`)
+      const results = await searchMoviesMeta(args.trim());
+      if (!results.length) {
+        await reply(chatId, `No movies found for “${args.trim()}”.`);
+        return;
+      }
+      const best = results[0];
+      const movie = await addMovieById(best.id);
+      const year = movie.releaseYear ? ` (${movie.releaseYear})` : '';
+      const caption = `<b>Added movie</b>\n${escapeHtml(movie.title)}${year}`;
+      const settings = getSettings();
+      if (movie.posterPath) {
+        await telegramBot.notifyChat(settings, chatId, caption, movie.posterPath);
+      } else {
+        await reply(chatId, `Added: ${movie.title}${year}`);
+      }
+      if (results.length > 1) {
+        const others = results.slice(1, 5);
+        await reply(chatId, `Other matches — tap to add:`, {
+          reply_markup: {
+            inline_keyboard: others.map((r) => [
+              {
+                text: `${r.title}${r.releaseYear ? ` (${r.releaseYear})` : ''}`,
+                callback_data: `addmovie:${r.id}`,
+              },
+            ]),
+          },
+        });
+      }
+    },
+    async search(chatId, args, reply) {
+      if (!args.trim()) {
+        await reply(chatId, 'Usage: /search <title>');
+        return;
+      }
+      const q = args.trim();
+      const [shows, movies] = await Promise.all([searchShowsMeta(q), searchMoviesMeta(q)]);
+      if (!shows.length && !movies.length) {
+        await reply(chatId, `Nothing found for “${q}”.`);
+        return;
+      }
+      const top = shows[0] || movies[0];
+      const topPoster = top && 'posterUrl' in top ? top.posterUrl : null;
+      const caption = [
+        `<b>Search</b> ${escapeHtml(q)}`,
+        shows[0] ? `TV: ${escapeHtml(shows[0].name)}` : '',
+        movies[0] ? `Movie: ${escapeHtml(movies[0].title)}${movies[0].releaseYear ? ` (${movies[0].releaseYear})` : ''}` : '',
+      ]
+        .filter(Boolean)
         .join('\n');
+      const settings = getSettings();
+      if (topPoster) await telegramBot.notifyChat(settings, chatId, caption, topPoster);
+      else await reply(chatId, caption.replace(/<[^>]+>/g, ''));
+      const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+      for (const s of shows.slice(0, 3)) {
+        rows.push([{ text: `TV · ${s.name}`, callback_data: `addshow:${s.id}` }]);
+      }
+      for (const m of movies.slice(0, 3)) {
+        rows.push([
+          {
+            text: `Movie · ${m.title}${m.releaseYear ? ` (${m.releaseYear})` : ''}`,
+            callback_data: `addmovie:${m.id}`,
+          },
+        ]);
+      }
+      if (rows.length) {
+        await reply(chatId, 'Tap to add to the library:', {
+          reply_markup: { inline_keyboard: rows },
+        });
+      }
+    },
+    async vpn(chatId, _args, reply) {
+      const s = getSettings();
+      const st = vpnManager.getStatus(s);
       await reply(
         chatId,
-        `Added best match: ${show.name}\n\nOther matches:\n${choices}\n\nTip: /add with a more specific name if needed.`
+        [
+          `VPN: ${s.vpnEnabled ? 'enabled' : 'off'}`,
+          `State: ${st.state}${st.message ? ` — ${st.message}` : ''}`,
+          `Require for torrents: ${s.vpnRequireForTorrents ? 'on' : 'off'}`,
+          `Kill switch: ${st.killSwitch ? 'ON — torrents paused' : 'off'}`,
+          st.bindAddress ? `Torrent bind: ${st.bindAddress}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
       );
+    },
+    async pause(chatId, _args, reply) {
+      const items = downloadEngine.list().filter((d) => d.status === 'downloading' || d.status === 'queued');
+      for (const d of items) downloadEngine.pause(d.id);
+      pushDownloads({ persist: 'now' });
+      await reply(chatId, items.length ? `Paused ${items.length} download(s).` : 'Nothing to pause.');
+    },
+    async resume(chatId, _args, reply) {
+      try {
+        assertVpnAllowsTorrents();
+      } catch (e) {
+        await reply(chatId, e instanceof Error ? e.message : String(e));
+        return;
+      }
+      const items = downloadEngine.list().filter((d) => d.status === 'paused');
+      for (const d of items) downloadEngine.resume(d.id);
+      pushDownloads({ persist: 'now' });
+      await reply(chatId, items.length ? `Resumed ${items.length} download(s).` : 'Nothing paused.');
+    },
+    async missing(chatId, _args, reply) {
+      const lines: string[] = [];
+      for (const s of getShows()) {
+        for (const season of s.seasons || []) {
+          for (const ep of season.episodes || []) {
+            if (ep.status !== 'missing' && ep.status !== 'aired') continue;
+            lines.push(`${s.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)} — ${ep.name}`);
+            if (lines.length >= 25) break;
+          }
+          if (lines.length >= 25) break;
+        }
+        if (lines.length >= 25) break;
+      }
+      await reply(chatId, lines.length ? lines.join('\n') : 'No missing/aired episodes.');
     },
     async request(chatId, args, reply, meta) {
       const raw = (args || '').trim();
@@ -1354,7 +1494,25 @@ function wireTelegram() {
       await reply(chatId, result.message);
     },
     async callback(chatId, data, reply) {
-      const m = /^(approve|deny):(.+)$/.exec((data || '').trim());
+      const raw = (data || '').trim();
+      const addShow = /^addshow:(\d+)$/.exec(raw);
+      if (addShow) {
+        const show = await addShowWithPolicy(Number(addShow[1]), 'manual');
+        const cap = `<b>Added show</b>\n${escapeHtml(show.name)}`;
+        if (show.posterPath) await telegramBot.notifyChat(getSettings(), chatId, cap, show.posterPath);
+        else await reply(chatId, `Added: ${show.name}`);
+        return;
+      }
+      const addMovie = /^addmovie:(\d+)$/.exec(raw);
+      if (addMovie) {
+        const movie = await addMovieById(Number(addMovie[1]));
+        const year = movie.releaseYear ? ` (${movie.releaseYear})` : '';
+        const cap = `<b>Added movie</b>\n${escapeHtml(movie.title)}${year}`;
+        if (movie.posterPath) await telegramBot.notifyChat(getSettings(), chatId, cap, movie.posterPath);
+        else await reply(chatId, `Added: ${movie.title}${year}`);
+        return;
+      }
+      const m = /^(approve|deny):(.+)$/.exec(raw);
       if (!m) {
         await reply(chatId, 'Unknown button action.');
         return;
@@ -1472,15 +1630,21 @@ async function submitPendingMediaRequest(input: {
       ? 'Web'
       : `${input.requesterName || '—'} (${input.requesterChatId})`;
   const adminText = [
-    input.source === 'web' ? 'New web portal request' : 'New Telegram request',
-    `Type: ${typeLabel}`,
-    `Title: ${req.title}${req.year ? ` (${req.year})` : ''}`,
-    `Requester: ${who}`,
-    `Id: ${req.id}`,
-    '',
-    `Or: /approve ${req.id}  /deny ${req.id}`,
-  ].join('\n');
-  await telegramBot.notifyAdminChats(getSettings(), adminText, approveDenyKeyboard(req.id));
+    `<b>New ${input.source === 'web' ? 'web' : 'Telegram'} request</b>`,
+    `${typeLabel}: <b>${escapeHtml(req.title)}</b>${req.year ? ` (${req.year})` : ''}`,
+    req.overview ? escapeHtml(req.overview.slice(0, 280)) : '',
+    `From: ${escapeHtml(who)}`,
+    `Id: <code>${escapeHtml(req.id)}</code>`,
+    `/approve ${req.id}   /deny ${req.id}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  await telegramBot.notifyAdminChats(
+    getSettings(),
+    adminText,
+    approveDenyKeyboard(req.id),
+    req.posterUrl
+  );
 
   return {
     ok: true,
@@ -1514,7 +1678,8 @@ async function resolveTelegramRequest(
       await telegramBot.notifyChat(
         settings,
         req.requesterChatId,
-        `Denied: ${req.title}`
+        `<b>Denied</b>\n${escapeHtml(req.title)}`,
+        req.posterUrl
       );
     } catch {
       // ignore notify failure
@@ -1548,7 +1713,12 @@ async function resolveTelegramRequest(
       upsertTelegramRequest(updated);
       emitRequestsChanged();
       try {
-        await telegramBot.notifyChat(settings, req.requesterChatId, `Approved: ${show.name}`);
+        await telegramBot.notifyChat(
+          settings,
+          req.requesterChatId,
+          `<b>Approved</b>\n${escapeHtml(show.name)}\nSearching / downloading…`,
+          req.posterUrl || show.posterPath
+        );
       } catch {
         // ignore
       }
@@ -1574,7 +1744,12 @@ async function resolveTelegramRequest(
     upsertTelegramRequest(updated);
     emitRequestsChanged();
     try {
-      await telegramBot.notifyChat(settings, req.requesterChatId, `Approved: ${movie.title}`);
+      await telegramBot.notifyChat(
+        settings,
+        req.requesterChatId,
+        `<b>Approved</b>\n${escapeHtml(movie.title)}${movie.releaseYear ? ` (${movie.releaseYear})` : ''}\n${started ? 'Download started.' : 'Added to library.'}`,
+        req.posterUrl || movie.posterPath
+      );
     } catch {
       // ignore
     }
@@ -1825,7 +2000,12 @@ function registerIpc() {
 
   ipcMain.handle('movies:list', async () => {
     await new Promise<void>((r) => setImmediate(r));
-    return getMovies().map((m) => withMovieLocalStatus(m));
+    const downloading = downloadingMovieIds();
+    // Grid uses stored status — no per-folder disk scan (that happens on movie detail / refresh).
+    return getMovies().map((m) => ({
+      ...m,
+      status: downloading.has(m.tmdbId) ? 'downloading' : m.status,
+    }));
   });
 
   ipcMain.handle('movies:get', async (_e, tmdbId: number) => {
@@ -2165,8 +2345,17 @@ app.whenReady().then(async () => {
           : `${item.showName} S${pad2(item.seasonNumber)}E${pad2(item.episodeNumber)}${
               item.episodeTitle ? ` — ${item.episodeTitle}` : ''
             }`;
+      const poster =
+        item.kind === 'movie'
+          ? getMovies().find((m) => m.tmdbId === item.movieId)?.posterPath
+          : getShows().find((s) => s.tmdbId === item.showId)?.posterPath;
       void telegramBot
-        .notifyChat(getSettings(), item.notifyChatId, `Download finished: ${title}`)
+        .notifyChat(
+          getSettings(),
+          item.notifyChatId,
+          `<b>Download finished</b>\n${escapeHtml(title)}`,
+          poster
+        )
         .catch(() => undefined);
     }
     pushDownloads({ persist: 'now' });
