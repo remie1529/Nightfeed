@@ -1,17 +1,16 @@
 ## Nightfeed status
 
-**Current:** v1.7.2 — OpenVPN connect via Interactive Service/UAC, sidecar certs, real TAP/TUN errors.
+**Current:** v1.7.3 — OpenVPN 2.7 handshake: ignore startup notes, management password, CONNECTED state.
 
-# Status v1.7.2
+# Status v1.7.3
 
 ## New
-- OpenVPN starts through **Interactive Service** when available, otherwise a **UAC prompt**, so TAP/TUN can be created without running Nightfeed as admin
-- Import `.ovpn` also copies relative `ca` / `cert` / `key` files from the same folder
-- Settings shows the **real OpenVPN log error** instead of a generic TAP/TUN exit
-- OpenVPN must be installed on the same PC as Nightfeed (Community edition); a VPN on another device is not used
+- OpenVPN 2.7 startup notes (`--allow-compression`, management warning, version banner) are not treated as errors
+- Management interface uses a local password; Nightfeed watches **CONNECTED** instead of guessing from the log
+- Settings only shows a red error for real failures (auth, missing certs, TAP/DCO)
 
 ## Works (carry-over)
+- OpenVPN Interactive Service / UAC, sidecar certs
 - In-app Requests tab + admin/web posters
-- Local HTTP web portal (default 8787) + Telegram approve/deny
-- Hyphenated Telegram `/request-show` / `/request-movie`
+- Local HTTP web portal + Telegram approve/deny
 - Library performance, mass-import, OpenVPN torrent-only, auto-updates
