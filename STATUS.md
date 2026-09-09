@@ -1,16 +1,17 @@
 ## Nightfeed status
 
-**Current:** v1.7.1 — In-app Requests tab + request posters (admin & app); public web request name field removed.
+**Current:** v1.7.2 — OpenVPN connect via Interactive Service/UAC, sidecar certs, real TAP/TUN errors.
 
-# Status v1.7.1
+# Status v1.7.2
 
 ## New
-- In-app **Requests** nav tab (no password): pending Approve/Deny, recent history, posters, pending count badge
-- Admin web portal `/admin` pending/recent rows show movie/TV **posters**
-- Persist `posterUrl` on TelegramRequest (Telegram + web); backfill from TVMaze/IMDb when missing
-- Public `/request` page: removed “Your name (optional)” — anonymous/Web requests only
+- OpenVPN starts through **Interactive Service** when available, otherwise a **UAC prompt**, so TAP/TUN can be created without running Nightfeed as admin
+- Import `.ovpn` also copies relative `ca` / `cert` / `key` files from the same folder
+- Settings shows the **real OpenVPN log error** instead of a generic TAP/TUN exit
+- OpenVPN must be installed on the same PC as Nightfeed (Community edition); a VPN on another device is not used
 
 ## Works (carry-over)
+- In-app Requests tab + admin/web posters
 - Local HTTP web portal (default 8787) + Telegram approve/deny
 - Hyphenated Telegram `/request-show` / `/request-movie`
 - Library performance, mass-import, OpenVPN torrent-only, auto-updates

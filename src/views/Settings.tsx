@@ -630,9 +630,11 @@ export default function SettingsView() {
             Only <strong>torrent download sockets</strong> bind to the VPN TUN/TAP interface when connected.
             TVMaze / IMDb / UI / updates stay on your normal network. OpenVPN is started with{' '}
             <code>route-nopull</code> so the whole PC is not forced through the VPN.
-            Admin rights may be required for TAP/TUN. Nightfeed does not ship <code>openvpn.exe</code> (GPL) —
-            install <a href="https://openvpn.net/community-downloads/" target="_blank" rel="noreferrer">OpenVPN Community</a>{' '}
-            so <code>openvpn.exe</code> is available.
+            OpenVPN must be installed <strong>on this PC</strong> (a VPN on another device is not used).
+            Nightfeed does not ship <code>openvpn.exe</code> (GPL) — install{' '}
+            <a href="https://openvpn.net/community-downloads/" target="_blank" rel="noreferrer">OpenVPN Community</a>{' '}
+            so TAP/Wintun and <code>openvpn.exe</code> are available. Connect uses the OpenVPN Interactive
+            Service when it is running; otherwise Windows may show a one-time UAC prompt.
           </div>
         </div>
 
@@ -651,7 +653,8 @@ export default function SettingsView() {
                 </button>
               </div>
               <div className="hint">
-                File is copied into app userData and remembered. Original path is not required after import.
+                The .ovpn is copied into app userData together with relative <code>ca</code>/<code>cert</code>/
+                <code>key</code> files from the same folder. Original path is not required after import.
               </div>
             </div>
 
@@ -698,9 +701,15 @@ export default function SettingsView() {
               </div>
               {vpnStatus && (
                 <div className="hint" style={{ marginTop: 6 }}>
-                  OpenVPN: {vpnStatus.openvpnFound ? (vpnStatus.openvpnPath || 'found') : 'not found — install Community edition'}
+                  OpenVPN: {vpnStatus.openvpnFound ? (vpnStatus.openvpnPath || 'found') : 'not found — install Community edition on this PC'}
                   {vpnStatus.bindAddress ? ` · torrent bind ${vpnStatus.bindAddress}` : ''}
                   {vpnStatus.routeNopull ? ' · route-nopull' : ''}
+                  {vpnStatus.launchMethod ? ` · ${vpnStatus.launchMethod}` : ''}
+                </div>
+              )}
+              {vpnStatus?.lastError && vpnStatus.state !== 'connected' && (
+                <div className="hint" style={{ marginTop: 6, color: 'var(--danger)' }}>
+                  {vpnStatus.lastError}
                 </div>
               )}
               {!vpnStatus?.bindAddress && vpnStatus?.state === 'connected' && (
