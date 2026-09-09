@@ -1,31 +1,57 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Poster from '../components/Poster';
 import type { Movie, TmdbMovieSearchItem } from '../lib/types';
 import FolderScanImport from '../components/FolderScanImport';
 
+let moviesCache: Movie[] = [];
+
 export default function Movies({
   onOpenMovie,
   onRefreshDone,
+  refreshToken = 0,
 }: {
   onOpenMovie: (movie: Movie) => void;
   onRefreshDone: () => void;
+  refreshToken?: number;
 }) {
-  const [movies, setMovies] = useState<Movie[]>([]);
+  const [movies, setMovies] = useState<Movie[]>(() => moviesCache);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<TmdbMovieSearchItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
+  const [loading, setLoading] = useState(!moviesCache.length);
+  const loadGen = useRef(0);
 
-  const load = async () => {
-    const list = (await window.torrentAPI.getMovies()) as Movie[];
-    setMovies(list);
-  };
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
+    const gen = ++loadGen.current;
+    if (!opts?.soft && !moviesCache.length) setLoading(true);
+    try {
+      const list = (await window.torrentAPI.getMovies()) as Movie[];
+      if (gen !== loadGen.current) return;
+      const next = Array.isArray(list) ? list : [];
+      moviesCache = next;
+      setMovies(next);
+      setError(null);
+    } catch (e) {
+      if (gen !== loadGen.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (gen === loadGen.current) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    load().catch((e) => setError(e.message || String(e)));
-  }, []);
+    void load({ soft: moviesCache.length > 0 });
+  }, [load, refreshToken]);
+
+  useEffect(() => {
+    const off = window.torrentAPI.onMoviesChanged?.(() => {
+      void load({ soft: true });
+    });
+    return () => off?.();
+  }, [load]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -144,7 +170,17 @@ export default function Movies({
         </div>
       )}
 
-      {filtered.length === 0 ? (
+      {loading && movies.length === 0 ? (
+        <div className="poster-grid" aria-busy="true" aria-label="Loading movies">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="poster-card skeleton-card">
+              <div className="skeleton-poster" />
+              <div className="skeleton-line" />
+              <div className="skeleton-line short" />
+            </div>
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="empty-state">
           <h2>No movies yet</h2>
           <p>
@@ -152,26 +188,12 @@ export default function Movies({
           </p>
         </div>
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))',
-            gap: '1.1rem',
-          }}
-        >
+        <div className="poster-grid">
           {filtered.map((movie) => (
             <button
               key={movie.tmdbId}
+              className="poster-card"
               onClick={() => onOpenMovie(movie)}
-              style={{
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                padding: '0.65rem',
-                textAlign: 'left',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.55rem',
-              }}
             >
               <Poster path={movie.posterPath} alt={movie.title} width={140} height={210} />
               <div>

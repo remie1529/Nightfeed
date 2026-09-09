@@ -29,6 +29,12 @@ export type TelegramHandlers = {
   check: CommandHandler;
   downloads: CommandHandler;
   add: CommandHandler;
+  addMovie?: CommandHandler;
+  vpn?: CommandHandler;
+  pause?: CommandHandler;
+  resume?: CommandHandler;
+  missing?: CommandHandler;
+  search?: CommandHandler;
   help: CommandHandler;
   helpRequests?: CommandHandler;
   request?: CommandHandler;
@@ -38,6 +44,13 @@ export type TelegramHandlers = {
   /** Inline keyboard callback_query (approve:/deny:…). */
   callback?: CallbackHandler;
 };
+
+export function escapeHtml(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
 /** Normalize unicode dashes/minus and strip junk; keep signed numeric chat ids. */
 export function normalizeChatIdToken(raw: string): string | null {
@@ -208,6 +221,30 @@ export class TelegramBot {
     }
   }
 
+  async sendPhoto(
+    token: string,
+    chatId: number | string,
+    photoUrl: string,
+    caption: string,
+    extra?: Record<string, unknown>
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      chat_id: chatId,
+      photo: photoUrl,
+      caption: (caption || '').slice(0, 1024),
+      parse_mode: 'HTML',
+      ...(extra || {}),
+    };
+    const res = await fetch(this.apiUrl(token, 'sendPhoto'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      await this.sendMessage(token, chatId, caption.replace(/<[^>]+>/g, ''), extra);
+    }
+  }
+
   async answerCallbackQuery(
     token: string,
     callbackQueryId: string,
@@ -228,24 +265,36 @@ export class TelegramBot {
   }
 
   /** Notify a chat using current settings token (fire-and-forget safe). */
-  async notifyChat(settings: AppSettings, chatId: number | string, text: string): Promise<void> {
+  async notifyChat(
+    settings: AppSettings,
+    chatId: number | string,
+    text: string,
+    photoUrl?: string | null
+  ): Promise<void> {
     const token = settings.telegramBotToken.trim();
     // Skip empty / web-only (0) chat ids — negative group ids remain valid.
     if (!token || chatId == null || chatId === '' || chatId === 0 || chatId === '0') return;
-    await this.sendMessage(token, chatId, text);
+    if (photoUrl) {
+      await this.sendPhoto(token, chatId, photoUrl, text);
+      return;
+    }
+    const extra = /<[a-zA-Z]/.test(text) ? { parse_mode: 'HTML' } : undefined;
+    await this.sendMessage(token, chatId, text, extra);
   }
 
   async notifyAdminChats(
     settings: AppSettings,
     text: string,
-    extra?: Record<string, unknown>
+    extra?: Record<string, unknown>,
+    photoUrl?: string | null
   ): Promise<void> {
     const token = settings.telegramBotToken.trim();
     if (!token) return;
     const { admin } = resolveTelegramChatLists(settings);
     for (const id of admin) {
       try {
-        await this.sendMessage(token, id, text, extra);
+        if (photoUrl) await this.sendPhoto(token, id, photoUrl, text, extra);
+        else await this.sendMessage(token, id, text, extra);
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err);
       }
@@ -516,6 +565,31 @@ export class TelegramBot {
         break;
       case 'add':
         await this.handlers.add(chatId, args, reply, meta);
+        break;
+      case 'add-movie':
+      case 'addmovie':
+        if (this.handlers.addMovie) await this.handlers.addMovie(chatId, args, reply, meta);
+        else await reply(chatId, 'Add movie not available.');
+        break;
+      case 'search':
+        if (this.handlers.search) await this.handlers.search(chatId, args, reply, meta);
+        else await reply(chatId, 'Search not available.');
+        break;
+      case 'vpn':
+        if (this.handlers.vpn) await this.handlers.vpn(chatId, args, reply, meta);
+        else await reply(chatId, 'VPN command not available.');
+        break;
+      case 'pause':
+        if (this.handlers.pause) await this.handlers.pause(chatId, args, reply, meta);
+        else await reply(chatId, 'Pause not available.');
+        break;
+      case 'resume':
+        if (this.handlers.resume) await this.handlers.resume(chatId, args, reply, meta);
+        else await reply(chatId, 'Resume not available.');
+        break;
+      case 'missing':
+        if (this.handlers.missing) await this.handlers.missing(chatId, args, reply, meta);
+        else await reply(chatId, 'Missing command not available.');
         break;
       case 'request-show':
         if (this.handlers.request) await this.handlers.request(chatId, `show ${args}`.trim(), reply, meta);
