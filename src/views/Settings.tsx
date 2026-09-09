@@ -635,6 +635,7 @@ export default function SettingsView() {
             <a href="https://openvpn.net/community-downloads/" target="_blank" rel="noreferrer">OpenVPN Community</a>{' '}
             so TAP/Wintun and <code>openvpn.exe</code> are available. Connect uses the OpenVPN Interactive
             Service when it is running; otherwise Windows may show a one-time UAC prompt.
+            When enabled with an imported .ovpn, Nightfeed <strong>auto-connects on app start</strong>.
           </div>
         </div>
 
@@ -688,7 +689,9 @@ export default function SettingsView() {
                 <span>Require VPN for torrent downloads</span>
               </label>
               <div className="hint">
-                When on, manual and auto downloads refuse to start until OpenVPN status is connected.
+                Kill switch: torrents cannot start or resume until OpenVPN is connected. If the VPN drops,
+                active downloads pause immediately, admins get a Telegram alert, and a persistent notice
+                stays in the bottom-right until the VPN is back.
               </div>
             </div>
 

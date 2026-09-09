@@ -112,12 +112,16 @@ async function moveFileAsync(src: string, dest: string): Promise<void> {
   }
 }
 
+export const VPN_KILL_SWITCH_ERROR = 'VPN kill switch';
+
 export interface EngineSettings {
   maxConnections?: number;
   maxDownloadSpeedKBps?: number;
   maxUploadSpeedKBps?: number;
   /** Bind outgoing torrent TCP sockets to this local IPv4 (VPN TUN/TAP). */
   bindAddress?: string | null;
+  /** When true, no torrent sockets — pause active downloads (VPN kill switch). */
+  vpnHold?: boolean;
 }
 
 export class DownloadEngine extends EventEmitter {
@@ -129,6 +133,7 @@ export class DownloadEngine extends EventEmitter {
   private maxDownloadSpeedKBps = 0;
   private maxUploadSpeedKBps = 0;
   private bindAddress: string | null = null;
+  private vpnHold = false;
   private netBindPatched = false;
   private lastProgressEmit = 0;
   private progressEmitTimer: NodeJS.Timeout | null = null;
@@ -151,6 +156,11 @@ export class DownloadEngine extends EventEmitter {
         // Recreate client so new sockets use the updated localAddress bind.
         this.destroyClientOnly();
       }
+    }
+    if (typeof settings.vpnHold === 'boolean' && settings.vpnHold !== this.vpnHold) {
+      this.vpnHold = settings.vpnHold;
+      if (this.vpnHold) this.engageKillSwitch();
+      else this.releaseKillSwitch();
     }
     if (this.client) {
       this.client.maxConns = this.maxConns;
@@ -184,20 +194,17 @@ export class DownloadEngine extends EventEmitter {
   private destroyClientOnly(): void {
     if (!this.client) return;
     try {
-      for (const [id, t] of this.torrents) {
-        try {
-          t.destroy?.();
-        } catch {
-          // ignore
-        }
-        this.torrents.delete(id);
+      const ids = [...this.torrents.keys()];
+      for (const id of ids) {
+        this.dropTorrent(id);
         const item = this.items.get(id);
-        if (item && (item.status === 'downloading' || item.status === 'queued' || item.status === 'paused')) {
-          item.status = 'error';
-          item.error = 'Network bind changed (VPN). Restart the download.';
+        if (!item) continue;
+        if (item.status === 'downloading') {
+          item.status = this.vpnHold ? 'paused' : 'queued';
           item.downloadSpeed = 0;
           item.uploadSpeed = 0;
           item.numPeers = 0;
+          if (this.vpnHold) item.error = VPN_KILL_SWITCH_ERROR;
         }
       }
       this.client.destroy(() => undefined);
@@ -206,6 +213,30 @@ export class DownloadEngine extends EventEmitter {
     }
     this.client = null;
     this.emit('update', this.list());
+    if (!this.vpnHold) this.pumpQueue();
+  }
+
+  private engageKillSwitch(): void {
+    for (const [id, item] of this.items) {
+      if (item.status !== 'downloading' && item.status !== 'queued') continue;
+      this.dropTorrent(id);
+      item.status = 'paused';
+      item.downloadSpeed = 0;
+      item.uploadSpeed = 0;
+      item.numPeers = 0;
+      item.error = VPN_KILL_SWITCH_ERROR;
+    }
+    this.emitUpdateNow();
+  }
+
+  private releaseKillSwitch(): void {
+    for (const item of this.items.values()) {
+      if (item.status === 'paused' && item.error === VPN_KILL_SWITCH_ERROR) {
+        item.status = 'queued';
+        item.error = undefined;
+      }
+    }
+    this.emitUpdateNow();
     this.pumpQueue();
   }
 
@@ -268,6 +299,7 @@ export class DownloadEngine extends EventEmitter {
   }
 
   private pumpQueue(): void {
+    if (this.vpnHold) return;
     if (this.torrents.size >= MAX_ACTIVE_DOWNLOADS) return;
     for (const [id, item] of this.items) {
       if (item.status !== 'queued' || this.torrents.has(id)) continue;
@@ -705,6 +737,12 @@ export class DownloadEngine extends EventEmitter {
   resume(id: string): void {
     const item = this.items.get(id);
     if (!item || !this.jobs.get(id)) return;
+    if (this.vpnHold) {
+      item.status = 'paused';
+      item.error = VPN_KILL_SWITCH_ERROR;
+      this.emitUpdateNow();
+      return;
+    }
     item.status = 'queued';
     item.error = undefined;
     this.emitUpdateNow();

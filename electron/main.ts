@@ -240,10 +240,15 @@ function pushVpnStatus(extra?: Partial<AppSettings>): void {
   mainWindow?.webContents.send('vpn:status', status);
 }
 
+function torrentVpnHold(): boolean {
+  const s = getSettings();
+  return !!(s.vpnEnabled && s.vpnRequireForTorrents && !vpnManager.isConnected());
+}
+
 function applyTorrentBindFromVpn(): void {
-  const addr = vpnManager.getBindAddress();
   downloadEngine.applySettings({
-    bindAddress: addr,
+    bindAddress: vpnManager.getBindAddress(),
+    vpnHold: torrentVpnHold(),
   });
 }
 
@@ -252,7 +257,51 @@ function assertVpnAllowsTorrents(): void {
   const s = getSettings();
   if (!s.vpnEnabled || !s.vpnRequireForTorrents) return;
   if (!vpnManager.isConnected()) {
-    throw new Error('VPN required for torrents — connect OpenVPN in Settings first.');
+    throw new Error('VPN kill switch: OpenVPN is not connected. Torrents are blocked.');
+  }
+}
+
+let lastVpnKillAlertAt = 0;
+let vpnReconnectAttempt = false;
+
+function alertVpnKillSwitch(detail: string): void {
+  const now = Date.now();
+  if (now - lastVpnKillAlertAt < 60_000) return;
+  lastVpnKillAlertAt = now;
+  const msg = `Nightfeed VPN kill switch: ${detail} Torrents are paused until OpenVPN is connected.`;
+  notify(msg, 'error');
+  void telegramBot.notifyAdminChats(getSettings(), msg).catch(() => undefined);
+}
+
+function startVpnFromSettings(): Promise<void> {
+  const s = getSettings();
+  if (!s.vpnEnabled || !s.vpnConfigPath) return Promise.resolve();
+  return vpnManager
+    .connect({
+      configPath: s.vpnConfigPath,
+      username: s.vpnUsername || '',
+      password: s.vpnPassword || '',
+    })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
+async function autoConnectVpnOnLaunch(): Promise<void> {
+  const s = getSettings();
+  applyTorrentBindFromVpn();
+  if (!s.vpnEnabled || !s.vpnConfigPath) return;
+  notify('Connecting OpenVPN…', 'info');
+  await startVpnFromSettings();
+  applyTorrentBindFromVpn();
+  pushVpnStatus();
+  if (s.vpnRequireForTorrents) {
+    setTimeout(() => {
+      if (!vpnManager.isConnected() && getSettings().vpnRequireForTorrents) {
+        applyTorrentBindFromVpn();
+        pushVpnStatus();
+        alertVpnKillSwitch('OpenVPN did not connect after startup.');
+      }
+    }, 60000);
   }
 }
 
@@ -738,6 +787,7 @@ function applySettingsSideEffects(next: AppSettings): void {
     maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: next.maxUploadSpeedKBps,
     bindAddress: vpnManager.getBindAddress(),
+    vpnHold: !!(next.vpnEnabled && next.vpnRequireForTorrents && !vpnManager.isConnected()),
   });
   configureUpdaterFeed();
   if (!next.vpnEnabled) {
@@ -1742,6 +1792,7 @@ function registerIpc() {
     pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:resume', (_e, id: string) => {
+    assertVpnAllowsTorrents();
     downloadEngine.resume(id);
     pushDownloads({ persist: 'now' });
   });
@@ -2045,6 +2096,22 @@ app.whenReady().then(async () => {
     applyTorrentBindFromVpn();
     pushVpnStatus();
   });
+  vpnManager.on('drop', (detail: string) => {
+    applyTorrentBindFromVpn();
+    pushVpnStatus();
+    const s = getSettings();
+    if (s.vpnRequireForTorrents) {
+      alertVpnKillSwitch(typeof detail === 'string' && detail ? detail : 'OpenVPN connection dropped.');
+    }
+    if (s.vpnEnabled && s.vpnConfigPath && !vpnReconnectAttempt) {
+      vpnReconnectAttempt = true;
+      void startVpnFromSettings().finally(() => {
+        vpnReconnectAttempt = false;
+        applyTorrentBindFromVpn();
+        pushVpnStatus();
+      });
+    }
+  });
   await ensureTorrentEngine();
   if (getTorrentEngineInfo().mode === 'in-process') {
     notify(
@@ -2097,9 +2164,11 @@ app.whenReady().then(async () => {
     maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
     bindAddress: vpnManager.getBindAddress(),
+    vpnHold: torrentVpnHold(),
   });
   applyLoginItem(!!settings.launchOnStartup);
   scheduleRefresh();
+  void autoConnectVpnOnLaunch();
 
   // Non-blocking update check on startup (packaged builds only)
   setTimeout(() => {

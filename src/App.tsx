@@ -6,7 +6,7 @@ import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import Requests from './views/Requests';
 import SettingsView from './views/Settings';
-import type { DownloadItem, Movie } from './lib/types';
+import type { DownloadItem, Movie, VpnStatus } from './lib/types';
 
 type View = 'library' | 'movies' | 'downloads' | 'requests' | 'settings' | 'show' | 'movie';
 
@@ -26,6 +26,7 @@ export default function App() {
   const [requestsKey, setRequestsKey] = useState(0);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [vpnKillSwitch, setVpnKillSwitch] = useState(false);
   const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
@@ -64,6 +65,11 @@ export default function App() {
       setRequestsKey((k) => k + 1);
       refreshPending();
     });
+    const applyVpn = (s: VpnStatus | null | undefined) => {
+      setVpnKillSwitch(!!s?.killSwitch);
+    };
+    window.torrentAPI.getVpnStatus?.().then((s) => applyVpn(s as VpnStatus)).catch(() => undefined);
+    const offVpn = window.torrentAPI.onVpnStatus?.((s) => applyVpn(s as VpnStatus));
     const pendingTimer = setInterval(refreshPending, 20000);
     return () => {
       offDl();
@@ -71,6 +77,7 @@ export default function App() {
       offMovies?.();
       offToast();
       offReq?.();
+      offVpn?.();
       clearInterval(pendingTimer);
     };
   }, []);
@@ -170,6 +177,15 @@ export default function App() {
         {view === 'settings' && <SettingsView />}
       </main>
       <div className="toast-stack" aria-live="polite">
+        {vpnKillSwitch && (
+          <div className="vpn-kill-banner" role="alert">
+            <div className="vpn-kill-banner-title">VPN kill switch</div>
+            <div>Torrents are paused until OpenVPN reconnects. No download traffic without the VPN.</div>
+            <button type="button" onClick={() => setView('settings')}>
+              Open Settings
+            </button>
+          </div>
+        )}
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>
             {t.message}

@@ -553,6 +553,7 @@ export class VpnManager extends EventEmitter {
       routeNopull: true,
       lastError: this.lastError,
       launchMethod: this.launchMethod,
+      killSwitch: !!(settings.vpnEnabled && settings.vpnRequireForTorrents && this.state !== 'connected'),
     };
   }
 
@@ -868,7 +869,8 @@ export class VpnManager extends EventEmitter {
     this.stopMgmt();
     this.clearConnectTimeout();
     this.clearAuthFile();
-    const wasActive = this.state === 'connected' || this.state === 'connecting';
+    const wasConnected = this.state === 'connected';
+    const wasActive = wasConnected || this.state === 'connecting';
     this.bindAddress = null;
     this.mgmtPort = null;
     this.mgmtPassword = null;
@@ -886,6 +888,7 @@ export class VpnManager extends EventEmitter {
           ? 'OpenVPN exited. Install OpenVPN Community on this PC (TAP/TUN), or approve the UAC prompt / start OpenVPN Interactive Service.'
           : `OpenVPN exited (code ${code ?? '—'}, signal ${signal ?? '—'})`);
       this.setState('disconnected', hint);
+      if (wasConnected) this.emit('drop', hint);
     } else {
       this.setState('disconnected', 'Disconnected');
     }
