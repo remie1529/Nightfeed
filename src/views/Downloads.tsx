@@ -1,13 +1,24 @@
+import { useEffect, useState } from 'react';
 import { formatPercent, formatSpeed, pad2 } from '../lib/format';
 import type { DownloadItem } from '../lib/types';
 
-export default function Downloads({ items }: { items: DownloadItem[] }) {
+export default function Downloads() {
+  const [items, setItems] = useState<DownloadItem[]>([]);
+
+  useEffect(() => {
+    window.torrentAPI.getDownloads().then((list) => setItems(list as DownloadItem[])).catch(() => undefined);
+    const off = window.torrentAPI.onDownloadsUpdate((list) => {
+      setItems(list as DownloadItem[]);
+    });
+    return () => off();
+  }, []);
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1>Downloads</h1>
-          <p>In-app engine — progress, peers, pause / resume / cancel</p>
+          <p>Up to 3 torrents download at once; the rest stay queued. Pause / resume / cancel anytime.</p>
         </div>
       </div>
 

@@ -13,9 +13,36 @@ const VALID_VIDEO_EXTS = new Set(['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.ts',
 /** Also accepted when selecting the largest video from a torrent (legacy extras). */
 const SELECT_VIDEO_EXTS = new Set([...VALID_VIDEO_EXTS, '.webm']);
 
-const PROGRESS_THROTTLE_MS = 1000;
+const PROGRESS_THROTTLE_MS = 1500;
 /** Cap peer sockets — WebTorrent default is 55; 200+ with uTP hits Windows ENOBUFS. */
 const MAX_PEER_CONNS = 80;
+/** Only this many torrents in WebTorrent at once; the rest stay queued. */
+const MAX_ACTIVE_DOWNLOADS = 3;
+
+type EpisodeStartOpts = {
+  magnet: string;
+  show: Show;
+  libraryRoot: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  episodeTitle: string;
+  candidates?: TorrentCandidate[];
+  triedInfoHashes?: string[];
+  notifyChatId?: number;
+  telegramRequestId?: string;
+};
+
+type MovieStartOpts = {
+  magnet: string;
+  movie: Movie;
+  movieLibraryRoot: string;
+  candidates?: TorrentCandidate[];
+  triedInfoHashes?: string[];
+  notifyChatId?: number;
+  telegramRequestId?: string;
+};
+
+type PendingJob = { kind: 'episode'; opts: EpisodeStartOpts } | { kind: 'movie'; opts: MovieStartOpts };
 
 export function isIgnorableTorrentSocketError(err: unknown): boolean {
   const s = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
@@ -97,6 +124,7 @@ export class DownloadEngine extends EventEmitter {
   private client: any = null;
   private items = new Map<string, DownloadItem>();
   private torrents = new Map<string, any>();
+  private jobs = new Map<string, PendingJob>();
   private maxConns = MAX_PEER_CONNS;
   private maxDownloadSpeedKBps = 0;
   private maxUploadSpeedKBps = 0;
@@ -178,6 +206,7 @@ export class DownloadEngine extends EventEmitter {
     }
     this.client = null;
     this.emit('update', this.list());
+    this.pumpQueue();
   }
 
   private getClient() {
@@ -236,6 +265,33 @@ export class DownloadEngine extends EventEmitter {
     }
     this.lastProgressEmit = Date.now();
     this.emit('update', this.list());
+  }
+
+  private pumpQueue(): void {
+    if (this.torrents.size >= MAX_ACTIVE_DOWNLOADS) return;
+    for (const [id, item] of this.items) {
+      if (item.status !== 'queued' || this.torrents.has(id)) continue;
+      const job = this.jobs.get(id);
+      if (!job) continue;
+      if (job.kind === 'episode') this.beginEpisode(id, item, job.opts);
+      else this.beginMovie(id, item, job.opts);
+      if (this.torrents.size >= MAX_ACTIVE_DOWNLOADS) return;
+    }
+  }
+
+  private dropTorrent(id: string, destroyStore = false): void {
+    const torrent = this.torrents.get(id);
+    if (!torrent) return;
+    try {
+      torrent.destroy({ destroyStore });
+    } catch {
+      try {
+        torrent.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    this.torrents.delete(id);
   }
 
   list(): DownloadItem[] {
@@ -322,9 +378,11 @@ export class DownloadEngine extends EventEmitter {
       }
     }
     this.torrents.delete(id);
+    this.jobs.delete(id);
     this.items.delete(id);
     this.emitUpdateNow();
     this.emit('reject-exe', snapshot);
+    this.pumpQueue();
   }
 
   private async finalizeEpisodeDone(
@@ -418,22 +476,8 @@ export class DownloadEngine extends EventEmitter {
     setImmediate(() => this.remove(id));
   }
 
-  async start(opts: {
-    magnet: string;
-    show: Show;
-    libraryRoot: string;
-    seasonNumber: number;
-    episodeNumber: number;
-    episodeTitle: string;
-    candidates?: TorrentCandidate[];
-    triedInfoHashes?: string[];
-    notifyChatId?: number;
-    telegramRequestId?: string;
-  }): Promise<DownloadItem> {
-    const client = this.getClient();
+  async start(opts: EpisodeStartOpts): Promise<DownloadItem> {
     const id = `${opts.show.tmdbId}-S${opts.seasonNumber}E${opts.episodeNumber}-${Date.now()}`;
-
-    // provisional season dir; final rename after we know extension
     const provisional = buildEpisodePath(
       opts.show,
       opts.libraryRoot,
@@ -442,7 +486,6 @@ export class DownloadEngine extends EventEmitter {
       opts.episodeTitle,
       '.mkv'
     );
-
     const item: DownloadItem = {
       id,
       infoHash: '',
@@ -465,67 +508,64 @@ export class DownloadEngine extends EventEmitter {
       telegramRequestId: opts.telegramRequestId,
     };
     this.items.set(id, item);
+    this.jobs.set(id, { kind: 'episode', opts });
     this.emitUpdateNow();
+    this.pumpQueue();
+    return item;
+  }
 
-    return new Promise((resolve, reject) => {
-      try {
-        const torrent = client.add(
-          opts.magnet,
-          { path: provisional.seasonDir, announce: DEFAULT_ANNOUNCE },
-          (t: any) => {
-            item.infoHash = t.infoHash;
-            item.status = 'downloading';
-            item.name = t.name || item.name;
-            this.emitUpdateNow();
-            resolve(item);
-          }
-        );
-
-        this.torrents.set(id, torrent);
-
-        torrent.on('ready', () => {
-          const mapped = (torrent.files || []).map((f: any) => ({
-            name: f.name,
-            length: f.length,
-            path: path.join(torrent.path, f.path),
-          }));
-          if (mapped.length && shouldRejectBadPayload(mapped)) {
-            void this.handleRejectExe(id, item, torrent);
-            return;
-          }
-          this.selectVideoOnly(torrent);
-        });
-
-        torrent.on('download', () => {
-          item.progress = torrent.progress;
-          item.downloadSpeed = torrent.downloadSpeed;
-          item.uploadSpeed = torrent.uploadSpeed;
-          item.numPeers = torrent.numPeers;
-          item.status = 'downloading';
-          this.emitProgressThrottled();
-        });
-
-        torrent.on('done', () => {
-          void this.finalizeEpisodeDone(id, item, torrent, opts).catch((err) => {
-            item.status = 'error';
-            item.error = err instanceof Error ? err.message : String(err);
-            this.emitUpdateNow();
-          });
-        });
-
-        torrent.on('error', (err: Error) => {
-          item.status = 'error';
-          item.error = err.message;
-          this.emitUpdateNow();
-          reject(err);
-        });
-      } catch (err) {
-        item.status = 'error';
-        item.error = err instanceof Error ? err.message : String(err);
+  private beginEpisode(id: string, item: DownloadItem, opts: EpisodeStartOpts): void {
+    const client = this.getClient();
+    try {
+      const torrent = client.add(opts.magnet, { path: item.savePath, announce: DEFAULT_ANNOUNCE }, (t: any) => {
+        item.infoHash = t.infoHash;
+        item.status = 'downloading';
+        item.name = t.name || item.name;
         this.emitUpdateNow();
-        reject(err);
-      }
-    });
+      });
+      this.torrents.set(id, torrent);
+      torrent.on('ready', () => {
+        const mapped = (torrent.files || []).map((f: any) => ({
+          name: f.name,
+          length: f.length,
+          path: path.join(torrent.path, f.path),
+        }));
+        if (mapped.length && shouldRejectBadPayload(mapped)) {
+          void this.handleRejectExe(id, item, torrent);
+          return;
+        }
+        this.selectVideoOnly(torrent);
+      });
+      torrent.on('download', () => {
+        item.progress = torrent.progress;
+        item.downloadSpeed = torrent.downloadSpeed;
+        item.uploadSpeed = torrent.uploadSpeed;
+        item.numPeers = torrent.numPeers;
+        item.status = 'downloading';
+        this.emitProgressThrottled();
+      });
+      torrent.on('done', () => {
+        void this.finalizeEpisodeDone(id, item, torrent, opts).catch((err) => {
+          item.status = 'error';
+          item.error = err instanceof Error ? err.message : String(err);
+          this.dropTorrent(id);
+          this.emitUpdateNow();
+          this.pumpQueue();
+        });
+      });
+      torrent.on('error', (err: Error) => {
+        item.status = 'error';
+        item.error = err.message;
+        this.dropTorrent(id);
+        this.emitUpdateNow();
+        this.pumpQueue();
+      });
+    } catch (err) {
+      item.status = 'error';
+      item.error = err instanceof Error ? err.message : String(err);
+      this.emitUpdateNow();
+      this.pumpQueue();
+    }
   }
 
   /** True if this movie is already queued/downloading/paused/done. */
@@ -559,20 +599,9 @@ export class DownloadEngine extends EventEmitter {
     return ids;
   }
 
-  async startMovie(opts: {
-    magnet: string;
-    movie: Movie;
-    movieLibraryRoot: string;
-    candidates?: TorrentCandidate[];
-    triedInfoHashes?: string[];
-    notifyChatId?: number;
-    telegramRequestId?: string;
-  }): Promise<DownloadItem> {
-    const client = this.getClient();
+  async startMovie(opts: MovieStartOpts): Promise<DownloadItem> {
     const id = `movie-${opts.movie.tmdbId}-${Date.now()}`;
-
     const provisional = buildMoviePath(opts.movie, opts.movieLibraryRoot, '.mkv');
-
     const item: DownloadItem = {
       id,
       infoHash: '',
@@ -597,106 +626,99 @@ export class DownloadEngine extends EventEmitter {
       telegramRequestId: opts.telegramRequestId,
     };
     this.items.set(id, item);
+    this.jobs.set(id, { kind: 'movie', opts });
     this.emitUpdateNow();
+    this.pumpQueue();
+    return item;
+  }
 
-    return new Promise((resolve, reject) => {
-      try {
-        const torrent = client.add(
-          opts.magnet,
-          { path: provisional.movieDir, announce: DEFAULT_ANNOUNCE },
-          (t: any) => {
-            item.infoHash = t.infoHash;
-            item.status = 'downloading';
-            item.name = t.name || item.name;
-            this.emitUpdateNow();
-            resolve(item);
-          }
-        );
-
-        this.torrents.set(id, torrent);
-
-        torrent.on('ready', () => {
-          const mapped = (torrent.files || []).map((f: any) => ({
-            name: f.name,
-            length: f.length,
-            path: path.join(torrent.path, f.path),
-          }));
-          if (mapped.length && shouldRejectBadPayload(mapped)) {
-            void this.handleRejectExe(id, item, torrent);
-            return;
-          }
-          this.selectVideoOnly(torrent);
-        });
-
-        torrent.on('download', () => {
-          item.progress = torrent.progress;
-          item.downloadSpeed = torrent.downloadSpeed;
-          item.uploadSpeed = torrent.uploadSpeed;
-          item.numPeers = torrent.numPeers;
-          item.status = 'downloading';
-          this.emitProgressThrottled();
-        });
-
-        torrent.on('done', () => {
-          void this.finalizeMovieDone(id, item, torrent, opts).catch((err) => {
-            item.status = 'error';
-            item.error = err instanceof Error ? err.message : String(err);
-            this.emitUpdateNow();
-          });
-        });
-
-        torrent.on('error', (err: Error) => {
-          item.status = 'error';
-          item.error = err.message;
-          this.emitUpdateNow();
-          reject(err);
-        });
-      } catch (err) {
-        item.status = 'error';
-        item.error = err instanceof Error ? err.message : String(err);
+  private beginMovie(id: string, item: DownloadItem, opts: MovieStartOpts): void {
+    const client = this.getClient();
+    try {
+      const torrent = client.add(opts.magnet, { path: item.savePath, announce: DEFAULT_ANNOUNCE }, (t: any) => {
+        item.infoHash = t.infoHash;
+        item.status = 'downloading';
+        item.name = t.name || item.name;
         this.emitUpdateNow();
-        reject(err);
-      }
-    });
+      });
+      this.torrents.set(id, torrent);
+      torrent.on('ready', () => {
+        const mapped = (torrent.files || []).map((f: any) => ({
+          name: f.name,
+          length: f.length,
+          path: path.join(torrent.path, f.path),
+        }));
+        if (mapped.length && shouldRejectBadPayload(mapped)) {
+          void this.handleRejectExe(id, item, torrent);
+          return;
+        }
+        this.selectVideoOnly(torrent);
+      });
+      torrent.on('download', () => {
+        item.progress = torrent.progress;
+        item.downloadSpeed = torrent.downloadSpeed;
+        item.uploadSpeed = torrent.uploadSpeed;
+        item.numPeers = torrent.numPeers;
+        item.status = 'downloading';
+        this.emitProgressThrottled();
+      });
+      torrent.on('done', () => {
+        void this.finalizeMovieDone(id, item, torrent, opts).catch((err) => {
+          item.status = 'error';
+          item.error = err instanceof Error ? err.message : String(err);
+          this.dropTorrent(id);
+          this.emitUpdateNow();
+          this.pumpQueue();
+        });
+      });
+      torrent.on('error', (err: Error) => {
+        item.status = 'error';
+        item.error = err.message;
+        this.dropTorrent(id);
+        this.emitUpdateNow();
+        this.pumpQueue();
+      });
+    } catch (err) {
+      item.status = 'error';
+      item.error = err instanceof Error ? err.message : String(err);
+      this.emitUpdateNow();
+      this.pumpQueue();
+    }
   }
 
   pause(id: string): void {
-    const torrent = this.torrents.get(id);
     const item = this.items.get(id);
-    if (torrent && item) {
-      torrent.pause();
+    if (!item) return;
+    if (item.status === 'queued') {
       item.status = 'paused';
       item.downloadSpeed = 0;
       this.emitUpdateNow();
+      return;
     }
+    this.dropTorrent(id);
+    item.status = 'paused';
+    item.downloadSpeed = 0;
+    this.emitUpdateNow();
+    this.pumpQueue();
   }
 
   resume(id: string): void {
-    const torrent = this.torrents.get(id);
     const item = this.items.get(id);
-    if (torrent && item) {
-      torrent.resume();
-      item.status = 'downloading';
-      this.emitUpdateNow();
-    }
+    if (!item || !this.jobs.get(id)) return;
+    item.status = 'queued';
+    item.error = undefined;
+    this.emitUpdateNow();
+    this.pumpQueue();
   }
 
   /** Remove from queue and destroy torrent (keep files on disk). */
   remove(id: string): void {
-    const torrent = this.torrents.get(id);
-    const item = this.items.get(id);
-    if (torrent) {
-      try {
-        torrent.destroy({ destroyStore: false });
-      } catch {
-        // already destroyed
-      }
-      this.torrents.delete(id);
-    }
-    if (item) {
-      this.items.delete(id);
+    this.dropTorrent(id);
+    this.jobs.delete(id);
+    if (this.items.delete(id)) {
       this.emitUpdateNow();
     }
+    this.pumpQueue();
   }
 
   cancel(id: string): void {
@@ -713,6 +735,7 @@ export class DownloadEngine extends EventEmitter {
       this.client = null;
     }
     this.torrents.clear();
+    this.jobs.clear();
     this.items.clear();
   }
 }

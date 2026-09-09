@@ -211,12 +211,23 @@ function persistDownloadsDebounced(items: DownloadItem[], force = false): void {
   }
 }
 
+let lastDownloadsUiKey = '';
+
 function pushDownloads(opts?: { persist?: 'debounce' | 'now' | 'skip' }) {
   const items = downloadEngine.list();
   const mode = opts?.persist ?? 'debounce';
   if (mode === 'now') persistDownloadsDebounced(items, true);
   else if (mode === 'debounce') persistDownloadsDebounced(items, false);
-  mainWindow?.webContents.send('downloads:update', slimDownloadsForUi(items));
+  const slim = slimDownloadsForUi(items);
+  const key = slim
+    .map(
+      (i) =>
+        `${i.id}:${i.status}:${Math.round((i.progress || 0) * 100)}:${Math.round(i.downloadSpeed || 0)}:${i.numPeers || 0}:${i.error || ''}`
+    )
+    .join('|');
+  if (key === lastDownloadsUiKey && mode === 'debounce') return;
+  lastDownloadsUiKey = key;
+  mainWindow?.webContents.send('downloads:update', slim);
 }
 
 function notify(message: string, kind: 'info' | 'ok' | 'warn' | 'error' = 'info') {
@@ -255,6 +266,23 @@ function downloadingKeys(): Set<string> {
 
 function downloadingMovieIds(): Set<number> {
   return downloadEngine.getDownloadingMovieIds();
+}
+
+function slimShowForDownload(show: Show): Show {
+  return {
+    tmdbId: show.tmdbId,
+    name: show.name,
+    libraryPath: show.libraryPath || '',
+  } as Show;
+}
+
+function slimMovieForDownload(movie: Movie): Movie {
+  return {
+    tmdbId: movie.tmdbId,
+    title: movie.title,
+    libraryPath: movie.libraryPath || '',
+    releaseYear: movie.releaseYear,
+  } as Movie;
 }
 
 function withMovieLocalStatus(movie: Movie): Movie {
@@ -369,7 +397,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
       if (!movie) throw new Error('Movie not found');
       await downloadEngine.startMovie({
         magnet: next.magnet,
-        movie,
+        movie: slimMovieForDownload(movie),
         movieLibraryRoot: settings.movieLibraryRoot,
         candidates,
         triedInfoHashes: triedList,
@@ -381,7 +409,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
       if (!show) throw new Error('Show not found');
       await downloadEngine.start({
         magnet: next.magnet,
-        show,
+        show: slimShowForDownload(show),
         libraryRoot: settings.libraryRoot,
         seasonNumber: item.seasonNumber,
         episodeNumber: item.episodeNumber,
@@ -531,7 +559,7 @@ async function autoDownloadForShows(
           const candidates = toCandidates(results);
           await downloadEngine.start({
             magnet: best.magnet,
-            show,
+            show: slimShowForDownload(show),
             libraryRoot: settings.libraryRoot,
             seasonNumber: ep.seasonNumber,
             episodeNumber: ep.episodeNumber,
@@ -602,7 +630,7 @@ async function autoDownloadMovie(
   const candidates = toCandidates(res.results);
   await downloadEngine.startMovie({
     magnet: res.results[0].magnet,
-    movie,
+    movie: slimMovieForDownload(movie),
     movieLibraryRoot: settings.movieLibraryRoot,
     candidates,
     triedInfoHashes: [],
@@ -727,6 +755,7 @@ async function refreshAllShows(): Promise<Show[]> {
     } catch {
       updated.push(show);
     }
+    await new Promise<void>((r) => setImmediate(r));
   }
   emitLibraryChanged();
   await autoDownloadForShows(updated);
@@ -1552,7 +1581,8 @@ function registerIpc() {
     return listShowSummaries();
   });
 
-  ipcMain.handle('library:get', (_e, tmdbId: number) => {
+  ipcMain.handle('library:get', async (_e, tmdbId: number) => {
+    await new Promise<void>((r) => setImmediate(r));
     const settings = getSettings();
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) return null;
@@ -1693,7 +1723,7 @@ function registerIpc() {
         : toCandidates([{ magnet: payload.magnet }]);
       const item = await downloadEngine.start({
         magnet: payload.magnet,
-        show,
+        show: slimShowForDownload(show),
         libraryRoot: settings.libraryRoot,
         seasonNumber: payload.season,
         episodeNumber: payload.episode,
@@ -1727,11 +1757,13 @@ function registerIpc() {
     return searchMoviesMeta(query || '');
   });
 
-  ipcMain.handle('movies:list', () => {
+  ipcMain.handle('movies:list', async () => {
+    await new Promise<void>((r) => setImmediate(r));
     return getMovies().map((m) => withMovieLocalStatus(m));
   });
 
-  ipcMain.handle('movies:get', (_e, tmdbId: number) => {
+  ipcMain.handle('movies:get', async (_e, tmdbId: number) => {
+    await new Promise<void>((r) => setImmediate(r));
     const movie = getMovies().find((m) => m.tmdbId === tmdbId);
     if (!movie) return null;
     return withMovieLocalStatus(movie);
@@ -1826,7 +1858,7 @@ function registerIpc() {
         : toCandidates([{ magnet: payload.magnet }]);
       const item = await downloadEngine.startMovie({
         magnet: payload.magnet,
-        movie,
+        movie: slimMovieForDownload(movie),
         movieLibraryRoot: settings.movieLibraryRoot,
         candidates,
         triedInfoHashes: [],
