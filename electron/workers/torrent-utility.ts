@@ -2,7 +2,7 @@
  * Electron utilityProcess entry — hosts WebTorrent DownloadEngine off the UI/main process.
  * Communicates with main via process.parentPort message RPC.
  */
-import { DownloadEngine } from '../services/engine';
+import { DownloadEngine, isIgnorableTorrentSocketError } from '../services/engine';
 import type { DownloadItem, Movie, Show, TorrentCandidate } from '../types';
 
 type InMsg =
@@ -52,6 +52,21 @@ type InMsg =
   | { type: 'getDownloadingKeys'; requestId: number }
   | { type: 'getDownloadingMovieIds'; requestId: number }
   | { type: 'destroy'; requestId: number };
+
+process.on('uncaughtException', (err) => {
+  if (isIgnorableTorrentSocketError(err)) {
+    console.error('[torrent-utility] ignored socket exhaustion:', err.message);
+    return;
+  }
+  console.error('[torrent-utility] uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  if (isIgnorableTorrentSocketError(reason)) {
+    console.error('[torrent-utility] ignored socket rejection:', reason);
+    return;
+  }
+  console.error('[torrent-utility] unhandledRejection', reason);
+});
 
 const port = (process as NodeJS.Process & {
   parentPort?: {
