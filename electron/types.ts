@@ -150,6 +150,8 @@ export interface VpnStatus {
   routeNopull: boolean;
   lastError: string | null;
   launchMethod: VpnLaunchMethod;
+  /** True when torrents are blocked because VPN is required and not connected. */
+  killSwitch: boolean;
 }
 
 export interface Episode {

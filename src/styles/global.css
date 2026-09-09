@@ -451,6 +451,28 @@ table.dense tr:hover td {
   pointer-events: none;
 }
 
+.vpn-kill-banner {
+  pointer-events: auto;
+  background: #2a1212;
+  border: 1px solid #7a3030;
+  border-left: 3px solid var(--danger);
+  padding: 0.8rem 0.95rem;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.vpn-kill-banner-title {
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+  color: #ff8a8a;
+}
+
+.vpn-kill-banner button {
+  margin-top: 0.55rem;
+}
+
 .toast {
   background: #1c1c1c;
   border: 1px solid var(--border-strong);
