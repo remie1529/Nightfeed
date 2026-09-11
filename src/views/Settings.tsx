@@ -780,13 +780,14 @@ export default function SettingsView() {
           </label>
           <div className="hint">
             <strong>Split tunnel:</strong> only torrent sockets bind to the VPN. Plex, port-forwarding, the
-            browser, and whatismyipaddress.com should keep your normal ISP IP. OpenVPN is started with{' '}
-            <code>route-nopull</code>; <code>redirect-gateway</code> in the .ovpn is ignored so the VPN does
-            not become the PC default route. Nightfeed runs its own <code>openvpn.exe</code> (the OpenVPN GUI
-            will not show this session). Install{' '}
+            browser, and whatismyipaddress.com should keep your normal ISP IP. <code>redirect-gateway</code> is
+            ignored so the VPN does not become the PC default route. The first Connect after this update may
+            show a one-time Administrator prompt so Windows will send those torrent sockets out the VPN
+            (otherwise they cannot reach seeders). Nightfeed runs its own <code>openvpn.exe</code> (the OpenVPN
+            GUI will not show this session). Install{' '}
             <a href="https://openvpn.net/community-downloads/" target="_blank" rel="noreferrer">OpenVPN Community</a>{' '}
             on this PC. Auto-connects on app start when an .ovpn is imported. After updating Nightfeed,
-            Disconnect then Connect once so the new split-tunnel flags apply.
+            Disconnect then Connect once so the new flags apply.
           </div>
         </div>
 
@@ -857,7 +858,7 @@ export default function SettingsView() {
                 <div className="hint" style={{ marginTop: 6 }}>
                   OpenVPN: {vpnStatus.openvpnFound ? (vpnStatus.openvpnPath || 'found') : 'not found — install Community edition on this PC'}
                   {vpnStatus.bindAddress ? ` · torrent bind ${vpnStatus.bindAddress}` : ''}
-                  {vpnStatus.routeNopull ? ' · route-nopull' : ''}
+                  {vpnStatus.routeNopull ? ' · split-tunnel' : ''}
                   {vpnStatus.launchMethod ? ` · ${vpnStatus.launchMethod}` : ''}
                 </div>
               )}

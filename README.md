@@ -69,6 +69,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.8.4** — Split tunnel: torrents can reach seeders on the VPN while Plex keeps the ISP IP.
+
 **1.8.3** — Get / Get other window: long torrent names wrap; Res, Size, Seeds, Download stay visible.
 
 **1.8.2** — OpenVPN split tunnel: ISP IP stays for Plex/port-forward/browser; only torrent sockets use the VPN.

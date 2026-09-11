@@ -2,6 +2,12 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.4
+
+- Split tunnel now gives torrent sockets a path out the VPN so they can reach seeders
+- Windows may ask for Administrator once so bound torrent traffic uses the TUN (Plex still uses your ISP IP)
+- OpenVPN log is `%AppData%\\Nightfeed\\vpn\\ovpn.log`
+
 ## 1.8.3
 
 - Get / Get other torrent list keeps Res, Size, Seeds, and Download inside the window
