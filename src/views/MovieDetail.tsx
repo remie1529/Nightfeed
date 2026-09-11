@@ -218,7 +218,7 @@ export default function MovieDetail({
 
       {showSearch && (
         <div className="modal-backdrop" onClick={() => setShowSearch(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal torrent-pick" onClick={(e) => e.stopPropagation()}>
             <header>
               <h2>
                 Find · {movie.title}
@@ -238,6 +238,13 @@ export default function MovieDetail({
               ) : (
                 <div className="table-wrap">
                   <table className="dense">
+                    <colgroup>
+                      <col />
+                      <col className="col-res" />
+                      <col className="col-size" />
+                      <col className="col-seeds" />
+                      <col className="col-action" />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th>Title</th>
@@ -251,7 +258,9 @@ export default function MovieDetail({
                       {results.map((r) => (
                         <tr key={r.magnet}>
                           <td>
-                            <div style={{ fontWeight: 520 }}>{r.title}</div>
+                            <div className="torrent-title" style={{ fontWeight: 520 }} title={r.title}>
+                              {r.title}
+                            </div>
                             <div style={{ color: 'var(--text-faint)', fontSize: '0.72rem' }}>
                               {r.source}
                             </div>

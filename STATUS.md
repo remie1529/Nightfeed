@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.8.2 — OpenVPN split tunnel restored (ISP IP for Plex / port-forward).
+**Current:** v1.8.3 — Get / Get other torrent list fits in the window.
+
+# Status v1.8.3
+
+## New
+- Long torrent titles wrap in the Find window
+- Res, Size, Seeds, and Download stay on one line (no clipped columns)
 
 # Status v1.8.2
 
