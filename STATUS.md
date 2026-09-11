@@ -1,13 +1,9 @@
 ## Nightfeed status
 
-**Current:** v1.8.0 — Process folder pipeline, preferred/min resolution + size, better request site.
+**Current:** v1.8.1 — Fix updater stuck on downloading; Retry/Install buttons and progress.
 
-# Status v1.8.0
+# Status v1.8.1
 
 ## New
-- Process folder: download → verify resolution/size → rename → move to library
-- Preferred + minimum resolution (TV and movies) and min file size per resolution
-- Request / admin website redesign
-
-## Works (carry-over)
-- Multi library roots, update banner, daily briefing, VPN routes, poster cache
+- Private GitHub updates use a full installer download (no .blockmap hang)
+- Progress percent, Retry download, Restart & install when the file is actually ready
