@@ -21,6 +21,7 @@ export default function Library({
   const [busyId, setBusyId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('');
+  const [missingOnly, setMissingOnly] = useState(false);
   const [pendingAdd, setPendingAdd] = useState<MazeSearchItem | null>(null);
   const loadGen = useRef(0);
   const hasShowsRef = useRef(false);
@@ -67,10 +68,12 @@ export default function Library({
   }, [scheduleLoad]);
 
   const filtered = useMemo(() => {
+    let list = shows;
+    if (missingOnly) list = list.filter((s) => (s.missingCount || 0) > 0);
     const q = filter.trim().toLowerCase();
-    if (!q) return shows;
-    return shows.filter((s) => s.name.toLowerCase().includes(q));
-  }, [shows, filter]);
+    if (q) list = list.filter((s) => s.name.toLowerCase().includes(q));
+    return list;
+  }, [shows, filter, missingOnly]);
 
   const doSearch = async () => {
     setError(null);
@@ -131,7 +134,9 @@ export default function Library({
           <p>
             {loading && shows.length === 0
               ? 'Loading…'
-              : `${shows.length} show${shows.length === 1 ? '' : 's'} tracked`}
+              : missingOnly
+                ? `${filtered.length} of ${shows.length} with missing episodes`
+                : `${shows.length} show${shows.length === 1 ? '' : 's'} tracked`}
             {loading && shows.length > 0 ? ' · refreshing…' : ''}
           </p>
         </div>
@@ -163,6 +168,14 @@ export default function Library({
           {searching ? 'Searching…' : 'Search'}
         </button>
         <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          className={missingOnly ? 'primary' : ''}
+          onClick={() => setMissingOnly((v) => !v)}
+          title="Show only series that still have missing episodes"
+        >
+          Missing episodes
+        </button>
         <input
           style={{ maxWidth: 220 }}
           placeholder="Filter library…"
@@ -228,10 +241,19 @@ export default function Library({
         </div>
       ) : showEmpty ? (
         <div className="empty-state">
-          <h2>No shows yet</h2>
+          <h2>
+            {shows.length === 0
+              ? 'No shows yet'
+              : missingOnly
+                ? 'No shows with missing episodes'
+                : 'No matching shows'}
+          </h2>
           <p>
-            Search TVMaze above to add a series — no API key required.
-            Then set your library folder in Settings.
+            {shows.length === 0
+              ? 'Search TVMaze above to add a series — no API key required. Then set your library folder in Settings.'
+              : missingOnly
+                ? 'Every tracked show is complete, or aired episodes are marked ignored.'
+                : 'Try a different filter.'}
           </p>
         </div>
       ) : (

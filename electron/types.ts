@@ -214,6 +214,17 @@ export interface Show {
   lastRefreshedAt?: string;
 }
 
+export interface CalendarEpisode {
+  tmdbId: number;
+  showName: string;
+  posterPath: string | null;
+  seasonNumber: number;
+  episodeNumber: number;
+  name: string;
+  airDate: string;
+  status: EpisodeStatus;
+}
+
 /** Lightweight library grid row — no season trees / no disk scan. */
 export interface ShowListItem {
   id: number;

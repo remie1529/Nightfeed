@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.7
+
+- Calendar tab: week view of episode air dates (Monday–Sunday), click an episode to open the show
+- Library filter **Missing episodes** to show only series that still have missing/aired episodes
+
 ## 1.8.6
 
 - Bind torrents to the TAP **host** IP (e.g. `10.33.112.228`), not the subnet `.0` parsed from the OpenVPN TAP log
