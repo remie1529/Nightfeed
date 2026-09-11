@@ -86,6 +86,12 @@ const empty: AppSettings = {
   movieLibraryRoots: [],
   defaultResolution: '1080p',
   defaultMovieResolution: '1080p',
+  minimumResolution: '720p',
+  minimumMovieResolution: '720p',
+  minSizeMb720p: 200,
+  minSizeMb1080p: 500,
+  minSizeMb2160p: 2000,
+  processFolder: '',
   refreshIntervalMinutes: 60,
   torrentSources: { ...defaultSources },
   jackettUrl: 'http://127.0.0.1:9117',
@@ -471,7 +477,33 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
-          <label>Default TV resolution</label>
+          <label>Process folder (optional)</label>
+          <div className="row">
+            <input
+              value={settings.processFolder || ''}
+              onChange={(e) => setLocal({ ...settings, processFolder: e.target.value })}
+              placeholder="Download here first, then verify and move"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const folder = await window.torrentAPI.pickLibraryFolder();
+                if (folder) setLocal({ ...settings, processFolder: folder });
+              }}
+            >
+              Browse
+            </button>
+          </div>
+          <div className="hint">
+            If set, Nightfeed downloads into this folder, checks the real video resolution and minimum
+            size, renames the file, then moves it into the library. Leave empty to download straight into
+            the library (checks still run). Needs <code>ffprobe</code> on PATH for a true resolution read;
+            otherwise the filename is used.
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Preferred TV resolution</label>
           <select
             value={settings.defaultResolution}
             onChange={(e) =>
@@ -485,7 +517,22 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
-          <label>Default movie resolution</label>
+          <label>Minimum TV resolution</label>
+          <select
+            value={settings.minimumResolution || '720p'}
+            onChange={(e) =>
+              setLocal({ ...settings, minimumResolution: e.target.value as Resolution })
+            }
+          >
+            <option value="720p">720p</option>
+            <option value="1080p">1080p</option>
+            <option value="2160p">2160p</option>
+          </select>
+          <div className="hint">Never auto-pick or keep a TV file below this. Preferred is tried first.</div>
+        </div>
+
+        <div className="field">
+          <label>Preferred movie resolution</label>
           <select
             value={settings.defaultMovieResolution || settings.defaultResolution || '1080p'}
             onChange={(e) =>
@@ -496,6 +543,45 @@ export default function SettingsView() {
             <option value="1080p">1080p</option>
             <option value="2160p">2160p</option>
           </select>
+        </div>
+
+        <div className="field">
+          <label>Minimum movie resolution</label>
+          <select
+            value={settings.minimumMovieResolution || '720p'}
+            onChange={(e) =>
+              setLocal({ ...settings, minimumMovieResolution: e.target.value as Resolution })
+            }
+          >
+            <option value="720p">720p</option>
+            <option value="1080p">1080p</option>
+            <option value="2160p">2160p</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label>Minimum file size (MB)</label>
+          <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+            {(['720p', '1080p', '2160p'] as const).map((key) => {
+              const field =
+                key === '720p' ? 'minSizeMb720p' : key === '1080p' ? 'minSizeMb1080p' : 'minSizeMb2160p';
+              return (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="hint" style={{ margin: 0 }}>{key}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    style={{ width: 90 }}
+                    value={settings[field] ?? 0}
+                    onChange={(e) =>
+                      setLocal({ ...settings, [field]: Math.max(0, parseInt(e.target.value || '0', 10)) })
+                    }
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <div className="hint">0 = no extra size floor. Applied to search picks and after download.</div>
         </div>
 
         <div className="settings-section">Episode checks & auto-download</div>

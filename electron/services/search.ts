@@ -11,6 +11,23 @@ export function buildQuery(showName: string, season: number, episode: number): s
 /** Auto-download / retry skip torrents at or below this — 0–5 seeders almost never complete. */
 export const MIN_AUTO_SEEDERS = 8;
 
+export function resolutionRank(res: Resolution | null | undefined): number {
+  if (res === '2160p') return 3;
+  if (res === '1080p') return 2;
+  if (res === '720p') return 1;
+  return 0;
+}
+
+export function meetsMinResolution(actual: Resolution | null | undefined, minimum: Resolution): boolean {
+  return resolutionRank(actual) >= resolutionRank(minimum);
+}
+
+export interface QualityRules {
+  preferred: Resolution;
+  minimum: Resolution;
+  minSizeMb: { '720p': number; '1080p': number; '2160p': number };
+}
+
 export function detectResolution(title: string): Resolution | null {
   const t = (title || '').toLowerCase().replace(/[._]/g, ' ');
   if (/\b(2160p|3840\s*[x×]\s*2160|uhd|4k)\b/.test(t)) return '2160p';
@@ -35,10 +52,21 @@ function isMultiEpisodePack(title: string): boolean {
   return false;
 }
 
-function sizeOkForAuto(size: number, kind: 'episode' | 'movie'): boolean {
+function sizeOkForAuto(
+  size: number,
+  kind: 'episode' | 'movie',
+  res: Resolution | null,
+  rules?: QualityRules
+): boolean {
   if (!size) return true;
-  if (kind === 'episode') return size >= 80 * 1024 * 1024 && size <= 8 * 1024 * 1024 * 1024;
-  return size >= 400 * 1024 * 1024 && size <= 50 * 1024 * 1024 * 1024;
+  const cap = kind === 'episode' ? 8 * 1024 * 1024 * 1024 : 50 * 1024 * 1024 * 1024;
+  if (size > cap) return false;
+  const key = res || rules?.minimum || rules?.preferred;
+  const minMb = key && rules?.minSizeMb ? rules.minSizeMb[key] : 0;
+  if (minMb > 0 && size < minMb * 1024 * 1024) return false;
+  if (kind === 'episode' && size < 80 * 1024 * 1024) return false;
+  if (kind === 'movie' && size < 400 * 1024 * 1024) return false;
+  return true;
 }
 
 export function rankResults(results: SearchResult[], preferred: Resolution): SearchResult[] {
@@ -57,23 +85,54 @@ export function rankResults(results: SearchResult[], preferred: Resolution): Sea
   return [...results].sort((a, b) => score(b) - score(a) || (b.seeders || 0) - (a.seeders || 0));
 }
 
-/** Best torrent for auto-download: preferred resolution, enough seeders, not junk/cam. */
+/** Best torrent: preferred first, never below minimum, enough seeders, not junk. */
 export function pickAutoDownload(
   results: SearchResult[],
   preferred: Resolution,
-  kind: 'episode' | 'movie' = 'episode'
+  kind: 'episode' | 'movie' = 'episode',
+  rules?: QualityRules
 ): SearchResult | null {
+  const minimum = rules?.minimum || preferred;
   const pool = (results || []).filter((r) => {
     if (!r?.magnet) return false;
     if ((r.seeders || 0) < MIN_AUTO_SEEDERS) return false;
-    if (r.resolution !== preferred) return false;
     if (isJunkRelease(r.title || '')) return false;
-    if (!sizeOkForAuto(r.size || 0, kind)) return false;
+    if (r.resolution && !meetsMinResolution(r.resolution, minimum)) return false;
+    if (!r.resolution && resolutionRank(preferred) > resolutionRank(minimum)) {
+      // Unknown label: only keep if size meets the minimum rung
+      if (!sizeOkForAuto(r.size || 0, kind, minimum, rules)) return false;
+    } else if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) {
+      return false;
+    }
     return true;
   });
   if (!pool.length) return null;
-  pool.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
+  pool.sort((a, b) => {
+    const ap = a.resolution === preferred ? 1 : 0;
+    const bp = b.resolution === preferred ? 1 : 0;
+    if (bp !== ap) return bp - ap;
+    const ar = resolutionRank(a.resolution);
+    const br = resolutionRank(b.resolution);
+    if (br !== ar) return br - ar;
+    return (b.seeders || 0) - (a.seeders || 0);
+  });
   return pool[0];
+}
+
+export function filterQualityResults(
+  results: SearchResult[],
+  preferred: Resolution,
+  kind: 'episode' | 'movie',
+  rules?: QualityRules
+): SearchResult[] {
+  const minimum = rules?.minimum || preferred;
+  return (results || []).filter((r) => {
+    if (!r?.magnet) return false;
+    if ((r.seeders || 0) < MIN_AUTO_SEEDERS) return false;
+    if (r.resolution && !meetsMinResolution(r.resolution, minimum)) return false;
+    if (!sizeOkForAuto(r.size || 0, kind, r.resolution || minimum, rules)) return false;
+    return true;
+  });
 }
 
 const TRACKERS = [

@@ -52,6 +52,12 @@ export interface AppSettings {
   movieLibraryRoots: string[];
   defaultResolution: Resolution;
   defaultMovieResolution: Resolution;
+  minimumResolution: Resolution;
+  minimumMovieResolution: Resolution;
+  minSizeMb720p: number;
+  minSizeMb1080p: number;
+  minSizeMb2160p: number;
+  processFolder: string;
   refreshIntervalMinutes: number;
   /** @deprecated Use torrentSources */
   searchProvider?: 'apibay' | 'jackett';

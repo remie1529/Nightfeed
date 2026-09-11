@@ -2,6 +2,13 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.0
+
+- Optional **process folder**: download first, check real video resolution and minimum size, rename, then move into the library
+- **Preferred** and **minimum** TV/movie resolution, plus minimum file size (MB) per 720p / 1080p / 2160p
+- Auto-download tries preferred first but never keeps a file below the minimum
+- Request website restyle (public + admin): larger posters, type pills, stats, auto-refresh admin
+
 ## 1.7.9
 
 - Update checks on startup and every 6 hours; in-app banner when a release is ready
