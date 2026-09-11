@@ -6,6 +6,8 @@ Desktop TV show & movie manager with embedded torrent downloads.
 
 **Electron · React · WebTorrent · TVMaze · IMDb**
 
+**[Features & screenshots →](FEATURES.md)** — full showcase of Library, Movies, Downloads, Requests, Settings, VPN, Telegram, and the web portal.
+
 ---
 
 ## Install
@@ -19,6 +21,8 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 ---
 
 ## Features
+
+Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and detail.
 
 - **TV library** — search & track shows via [TVMaze](https://www.tvmaze.com/) (no API key)
 - **Movies** — search & metadata via IMDb.com scrape (no API key); separate movie library folder
