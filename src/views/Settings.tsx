@@ -335,6 +335,7 @@ export default function SettingsView() {
         checking: false,
         available: false,
         downloaded: false,
+        progress: null,
         version: null,
         message: e instanceof Error ? e.message : String(e),
         error: e instanceof Error ? e.message : String(e),
@@ -1194,6 +1195,17 @@ export default function SettingsView() {
           <button onClick={checkUpdates} disabled={updateBusy}>
             {updateBusy || updateStatus?.checking ? 'Checking…' : 'Check for updates'}
           </button>
+          {updateStatus?.available && !updateStatus?.downloaded && (
+            <button
+              type="button"
+              onClick={() => void window.torrentAPI.downloadUpdate?.()}
+              disabled={updateBusy}
+            >
+              {typeof updateStatus.progress === 'number'
+                ? `Downloading ${updateStatus.progress}%`
+                : 'Download update'}
+            </button>
+          )}
           {updateStatus?.downloaded && (
             <button className="primary" onClick={() => window.torrentAPI.installUpdate?.()}>
               Restart &amp; install

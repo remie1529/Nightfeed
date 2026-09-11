@@ -342,6 +342,8 @@ export interface UpdateStatus {
   version: string | null;
   message: string | null;
   error: string | null;
+  /** 0–100 while the installer is downloading. */
+  progress: number | null;
 }
 
 export const DEFAULT_TORRENT_SOURCES: TorrentSources = {

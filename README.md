@@ -69,6 +69,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.8.1** — Fix in-app updater stuck on “downloading…” (full installer download, progress, Retry/Install).
+
 **1.8.0** — Process folder (download → verify resolution/size → rename → move); preferred + minimum resolution and min file size per resolution; redesigned request/admin website.
 
 **1.7.9** — Update banner (startup + every 6h); optional Telegram daily download briefing; OpenVPN pulls routes so torrents work; poster disk cache; Get other; multiple library roots (drag to reorder).

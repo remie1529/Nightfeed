@@ -116,6 +116,7 @@ const updateState: UpdateStatus = {
   checking: false,
   available: false,
   downloaded: false,
+  progress: null,
   version: null,
   message: null,
   error: null,
@@ -1130,11 +1131,17 @@ const UPDATE_FEED = {
 function configureUpdaterFeed(): void {
   const token = (getSettings().githubToken || '').trim();
   if (!token) return;
+  try {
+    process.env.GH_TOKEN = token;
+  } catch {
+    // ignore
+  }
   autoUpdater.setFeedURL({
     ...UPDATE_FEED,
     private: true,
     token,
   });
+  autoUpdater.requestHeaders = { Authorization: `token ${token}` };
 }
 
 function formatUpdateError(err: unknown): string {
@@ -1150,8 +1157,17 @@ function formatUpdateError(err: unknown): string {
 }
 
 function setupAutoUpdater() {
-  autoUpdater.autoDownload = true;
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowDowngrade = false;
+  // Private GitHub often hangs forever on the .blockmap delta download.
+  (autoUpdater as any).disableDifferentialDownload = true;
+  autoUpdater.logger = {
+    info: (m: unknown) => console.log('[updater]', m),
+    warn: (m: unknown) => console.warn('[updater]', m),
+    error: (m: unknown) => console.error('[updater]', m),
+    debug: (m: unknown) => console.log('[updater]', m),
+  } as any;
 
   autoUpdater.on('checking-for-update', () => {
     updateState.checking = true;
@@ -1163,22 +1179,35 @@ function setupAutoUpdater() {
   autoUpdater.on('update-available', (info) => {
     updateState.checking = false;
     updateState.available = true;
+    updateState.downloaded = false;
+    updateState.progress = 0;
     updateState.version = info.version || null;
     updateState.message = `Update ${info.version} available — downloading…`;
     pushUpdateStatus();
-    notify(`Update ${info.version} available — downloading…`, 'info');
+    notify(`Update ${info.version} found — downloading installer…`, 'info');
+    void downloadAppUpdate();
   });
 
   autoUpdater.on('update-not-available', (info) => {
     updateState.checking = false;
     updateState.available = false;
+    updateState.progress = null;
     updateState.version = info.version || app.getVersion();
     updateState.message = `Up to date (v${info.version || app.getVersion()})`;
     pushUpdateStatus();
   });
 
+  autoUpdater.on('download-progress', (prog) => {
+    const pct = Math.max(0, Math.min(100, Math.round(prog.percent || 0)));
+    updateState.available = true;
+    updateState.progress = pct;
+    updateState.message = `Downloading update ${updateState.version || ''}… ${pct}%`;
+    pushUpdateStatus();
+  });
+
   autoUpdater.on('error', (err) => {
     updateState.checking = false;
+    updateState.progress = null;
     updateState.error = formatUpdateError(err);
     updateState.message = updateState.error;
     pushUpdateStatus();
@@ -1186,12 +1215,34 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     updateState.checking = false;
+    updateState.available = true;
     updateState.downloaded = true;
-    updateState.version = info.version || null;
-    updateState.message = `Update ${info.version} ready — restart to install`;
+    updateState.progress = 100;
+    updateState.version = info.version || updateState.version;
+    updateState.error = null;
+    updateState.message = `Update ${updateState.version} ready — restart to install`;
     pushUpdateStatus();
-    notify(`Update ${info.version} ready — restart to install`, 'ok');
+    notify(`Update ${updateState.version} ready — restart to install`, 'ok');
   });
+}
+
+async function downloadAppUpdate(): Promise<UpdateStatus> {
+  configureUpdaterFeed();
+  if (updateState.downloaded) return { ...updateState };
+  updateState.available = true;
+  updateState.error = null;
+  updateState.progress = updateState.progress ?? 0;
+  updateState.message = `Downloading update ${updateState.version || ''}…`;
+  pushUpdateStatus();
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (e) {
+    updateState.error = formatUpdateError(e);
+    updateState.message = updateState.error;
+    updateState.progress = null;
+    pushUpdateStatus();
+  }
+  return { ...updateState };
 }
 
 async function checkForUpdates(manual: boolean): Promise<UpdateStatus> {
@@ -2329,6 +2380,7 @@ function registerIpc() {
   });
   ipcMain.handle('update:status', () => ({ ...updateState }));
   ipcMain.handle('update:check', async () => checkForUpdates(true));
+  ipcMain.handle('update:download', async () => downloadAppUpdate());
   ipcMain.handle('update:install', async () => {
     if (!updateState.downloaded) return;
     try {

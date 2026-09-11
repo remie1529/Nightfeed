@@ -82,6 +82,7 @@ const api = {
   getThreadInfo: () => ipcRenderer.invoke('app:getThreadInfo'),
   getUpdateStatus: () => ipcRenderer.invoke('update:status'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
 
   cachedPoster: (url: string) => ipcRenderer.invoke('poster:cache', url),

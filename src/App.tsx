@@ -190,14 +190,20 @@ export default function App() {
             <div className="vpn-kill-banner-title" style={{ color: 'var(--accent)' }}>
               Update {updateBanner.version || ''}
             </div>
-            <div>{updateBanner.downloaded ? 'Ready to install.' : updateBanner.message || 'A new version is available.'}</div>
+            <div>
+              {updateBanner.downloaded
+                ? 'Ready to install.'
+                : updateBanner.message || 'A new version is available.'}
+            </div>
             {updateBanner.downloaded ? (
               <button type="button" className="primary" onClick={() => window.torrentAPI.installUpdate?.()}>
                 Restart &amp; install
               </button>
             ) : (
-              <button type="button" onClick={() => setView('settings')}>
-                Open Settings
+              <button type="button" onClick={() => void window.torrentAPI.downloadUpdate?.()}>
+                {typeof updateBanner.progress === 'number'
+                  ? `Retry download (${updateBanner.progress}%)`
+                  : 'Download update'}
               </button>
             )}
           </div>

@@ -282,6 +282,7 @@ export interface UpdateStatus {
   version: string | null;
   message: string | null;
   error: string | null;
+  progress: number | null;
 }
 
 export interface MazeSearchItem {

@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.1
+
+- In-app updater no longer hangs on “downloading…” for the private GitHub repo
+- Full installer download (skip broken .blockmap delta), percent progress, Retry download, Install when ready
+
 ## 1.8.0
 
 - Optional **process folder**: download first, check real video resolution and minimum size, rename, then move into the library
