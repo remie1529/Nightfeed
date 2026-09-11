@@ -34,7 +34,7 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 - **Manual folder import** — Scan library folders & import (preview + confirm; never auto)
 - **UNC paths** — Windows network library roots supported
 - **Multiple library roots** — several TV/movie folders, drag to reorder; top is default for new titles
-- **OpenVPN** — Nightfeed starts Community `openvpn.exe` (not the GUI), auto-connect, torrent kill switch
+- **OpenVPN** — Nightfeed starts Community `openvpn.exe` (not the GUI), auto-connect, torrent-only split tunnel, kill switch
 
 ---
 
@@ -47,7 +47,7 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 | Max connections / speed caps | WebTorrent limits |
 | GitHub PAT | Private-repo update checks |
 | Backup | Export or replace-all import |
-| VPN (OpenVPN) | Import `.ovpn`, auto-connect, kill switch; own CLI session (not OpenVPN GUI) |
+| VPN (OpenVPN) | Import `.ovpn`, auto-connect, torrent-only split tunnel, kill switch; own CLI session (not OpenVPN GUI) |
 | Telegram Admin / Requests chat IDs | Admins get full control + approvals; Requests can only `/request` |
 | Unknown Telegram chats | Bot replies only with `Your chat ID: …` |
 
@@ -68,6 +68,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 ## Version log
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
+
+**1.8.2** — OpenVPN split tunnel: ISP IP stays for Plex/port-forward/browser; only torrent sockets use the VPN.
 
 **1.8.1** — Fix in-app updater stuck on “downloading…” (full installer download, progress, Retry/Install).
 

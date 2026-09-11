@@ -779,17 +779,14 @@ export default function SettingsView() {
             <span>Enable OpenVPN</span>
           </label>
           <div className="hint">
-            Only <strong>torrent download sockets</strong> bind to the VPN TUN/TAP interface when connected.
-            TVMaze / IMDb / UI / updates stay on your normal network. OpenVPN is started with{' '}
-            <code>route-nopull</code> so the whole PC is not forced through the VPN.
-            OpenVPN must be installed <strong>on this PC</strong> (a VPN on another device is not used).
-            Nightfeed does not ship <code>openvpn.exe</code> (GPL) — install{' '}
+            <strong>Split tunnel:</strong> only torrent sockets bind to the VPN. Plex, port-forwarding, the
+            browser, and whatismyipaddress.com should keep your normal ISP IP. OpenVPN is started with{' '}
+            <code>route-nopull</code>; <code>redirect-gateway</code> in the .ovpn is ignored so the VPN does
+            not become the PC default route. Nightfeed runs its own <code>openvpn.exe</code> (the OpenVPN GUI
+            will not show this session). Install{' '}
             <a href="https://openvpn.net/community-downloads/" target="_blank" rel="noreferrer">OpenVPN Community</a>{' '}
-            so TAP/Wintun and <code>openvpn.exe</code> are available. Connect uses the OpenVPN Interactive
-            Service when it is running; otherwise Windows may show a one-time UAC prompt.
-            When enabled with an imported .ovpn, Nightfeed <strong>auto-connects on app start</strong>.
-            Nightfeed runs its own <code>openvpn.exe</code> session — the OpenVPN GUI app will not show it.
-            Routes are pulled so torrent traffic can reach the internet through the VPN.
+            on this PC. Auto-connects on app start when an .ovpn is imported. After updating Nightfeed,
+            Disconnect then Connect once so the new split-tunnel flags apply.
           </div>
         </div>
 

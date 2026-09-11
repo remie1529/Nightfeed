@@ -269,9 +269,7 @@ function torrentVpnHold(): boolean {
 
 function applyTorrentBindFromVpn(): void {
   downloadEngine.applySettings({
-    // Do not bind sockets to the TUN IP — Windows routing then fails without a
-    // default route. OpenVPN pulls routes so torrent traffic uses the VPN.
-    bindAddress: null,
+    bindAddress: vpnManager.getBindAddress(),
     vpnHold: torrentVpnHold(),
     processFolder: getSettings().processFolder || '',
   });
@@ -916,7 +914,7 @@ function applySettingsSideEffects(next: AppSettings): void {
     maxConnections: next.maxConnections,
     maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: next.maxUploadSpeedKBps,
-    bindAddress: null,
+    bindAddress: vpnManager.getBindAddress(),
     vpnHold: !!(next.vpnEnabled && next.vpnRequireForTorrents && !vpnManager.isConnected()),
     processFolder: next.processFolder || '',
   });
@@ -2326,7 +2324,7 @@ function registerIpc() {
       maxConnections: settings.maxConnections,
       maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
       maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
-      bindAddress: null,
+      bindAddress: vpnManager.getBindAddress(),
       vpnHold: torrentVpnHold(),
       processFolder: settings.processFolder || '',
     });
@@ -2586,7 +2584,7 @@ app.whenReady().then(async () => {
     maxConnections: settings.maxConnections,
     maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
-    bindAddress: null,
+    bindAddress: vpnManager.getBindAddress(),
     vpnHold: torrentVpnHold(),
     processFolder: settings.processFolder || '',
   });
