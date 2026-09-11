@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.3
+
+- Get / Get other torrent list keeps Res, Size, Seeds, and Download inside the window
+- Long torrent names wrap in the title column instead of pushing the other columns off-screen
+
 ## 1.8.2
 
 - OpenVPN split tunnel restored: Plex, port-forwarding, and the browser keep your ISP IP

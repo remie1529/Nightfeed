@@ -392,9 +392,64 @@ table.dense tr:hover td {
 .modal header h2 {
   margin: 0;
   font-size: 1.05rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-right: 0.75rem;
 }
 
 .modal .body { padding: 1rem 1.15rem 1.35rem; }
+
+/* Get / Get other torrent picker: title wraps; Res/Size/Seeds/Download stay on one line. */
+.modal.torrent-pick {
+  width: min(900px, calc(100vw - 3rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal.torrent-pick header {
+  flex-shrink: 0;
+}
+
+.modal.torrent-pick .body {
+  overflow: auto;
+  min-height: 0;
+  min-width: 0;
+  scrollbar-gutter: stable;
+}
+
+.modal.torrent-pick .table-wrap {
+  overflow: hidden;
+  min-width: 0;
+}
+
+.modal.torrent-pick table.dense {
+  table-layout: fixed;
+}
+
+.modal.torrent-pick .torrent-title {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.modal.torrent-pick col.col-res { width: 4.6rem; }
+.modal.torrent-pick col.col-size { width: 6.2rem; }
+.modal.torrent-pick col.col-seeds { width: 4.6rem; }
+.modal.torrent-pick col.col-action { width: 7.8rem; }
+
+.modal.torrent-pick table.dense th:nth-child(n+2),
+.modal.torrent-pick table.dense td:nth-child(n+2) {
+  white-space: nowrap;
+}
+
+.modal.torrent-pick table.dense td:nth-child(5) {
+  text-align: right;
+}
+
+.modal.torrent-pick table.dense td:nth-child(5) button {
+  white-space: nowrap;
+}
 
 .error-banner {
   background: #2a1616;
