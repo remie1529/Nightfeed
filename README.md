@@ -69,6 +69,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.8.6** — Bind torrents to the real TAP host IP, not the `.0` subnet address from the OpenVPN log.
+
 **1.8.5** — Split tunnel torrents actually leave through OpenVPN TAP (Windows IP_UNICAST_IF); Plex keeps ISP IP.
 
 **1.8.4** — Split tunnel: torrents can reach seeders on the VPN while Plex keeps the ISP IP.
