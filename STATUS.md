@@ -1,6 +1,11 @@
 ## Nightfeed status
 
-**Current:** v1.8.5 — TAP-forced torrent sockets (IP_UNICAST_IF); Plex stays on ISP IP.
+**Current:** v1.8.6 — Bind TAP host IP (not subnet .0) so seeders can connect.
+
+# Status v1.8.6
+
+## New
+- OpenVPN TAP log was parsed as `10.x.x.0` (network); torrents now bind `10.x.x.228` (host)
 
 # Status v1.8.5
 

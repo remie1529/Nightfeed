@@ -175,19 +175,30 @@ function windowsIfIndexForIp(ip: string): number | null {
   }
 }
 
+/** Host address on the TAP/TUN — not the subnet (.0), broadcast, or DHCP-serv. */
+function isUsableVpnHostIp(ip: string): boolean {
+  if (!ip || ip === '0.0.0.0' || ip.startsWith('127.')) return false;
+  const parts = ip.split('.');
+  if (parts.length !== 4) return false;
+  const last = Number(parts[3]);
+  if (last === 0 || last === 255) return false;
+  return true;
+}
+
 function parseIpFromLog(chunk: string): string | null {
   const patterns = [
-    /net_addr_v4_add:\s*(\d{1,3}(?:\.\d{1,3}){3})\//i,
-    /ip-win32:\s*(?:.+?)\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
-    /(?:TUN\/TAP|tap-windows).*?(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /CONNECTED,SUCCESS,(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /ASSIGN_IP,,(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /DHCP IP\/netmask of\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /network\/local\/netmask\s*=\s*\d{1,3}(?:\.\d{1,3}){3}\/(\d{1,3}(?:\.\d{1,3}){3})\//i,
     /ifconfig\s+(\d{1,3}(?:\.\d{1,3}){3})\s+/i,
     /PUSH:.*ifconfig\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
-    /CONNECTED,SUCCESS,(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /net_addr_v4_add:\s*(\d{1,3}(?:\.\d{1,3}){3})\//i,
     /local\s+IPv4:\s*(\d{1,3}(?:\.\d{1,3}){3})/i,
   ];
   for (const re of patterns) {
     const m = chunk.match(re);
-    if (m?.[1] && !m[1].startsWith('127.') && m[1] !== '0.0.0.0') return m[1];
+    if (m?.[1] && isUsableVpnHostIp(m[1])) return m[1];
   }
   return null;
 }
@@ -210,6 +221,7 @@ function guessVpnInterfaceIp(before: Set<string>): string | null {
       if (entry.family !== 'IPv4' && (entry.family as unknown) !== 4) continue;
       if (entry.internal) continue;
       if (before.has(entry.address)) continue;
+      if (!isUsableVpnHostIp(entry.address)) continue;
       if (looksVpn) return entry.address;
       if (
         entry.address.startsWith('10.') ||
@@ -926,20 +938,22 @@ export class VpnManager extends EventEmitter {
     let tries = 0;
     this.pollTimer = setInterval(() => {
       tries += 1;
-      if (this.bindAddress || this.state === 'disconnected' || this.state === 'error') {
+      if (
+        (this.bindAddress && isUsableVpnHostIp(this.bindAddress)) ||
+        this.state === 'disconnected' ||
+        this.state === 'error'
+      ) {
         this.stopIfacePoll();
         return;
       }
       const ip = guessVpnInterfaceIp(this.ipsBeforeConnect);
-      if (ip) {
-        this.bindAddress = ip;
-        this.resolveBindIfIndex();
+      if (ip && isUsableVpnHostIp(ip)) {
+        this.adoptBindIp(ip);
         this.scheduleSplitTunnelFix(ip);
         if (this.state === 'connected' || this.state === 'connecting') {
           this.setState('connected', `Connected — torrent bind ${ip}`);
         }
         this.stopIfacePoll();
-        this.emit('bind', ip);
       } else if (tries > 40) {
         this.stopIfacePoll();
         if (this.state === 'connected') {
@@ -1049,25 +1063,35 @@ export class VpnManager extends EventEmitter {
     }
   }
 
+  private adoptBindIp(ip: string | null): void {
+    if (!ip || !isUsableVpnHostIp(ip)) return;
+    if (ip === this.bindAddress) return;
+    this.bindAddress = ip;
+    this.bindIfIndex = null;
+    this.resolveBindIfIndex();
+    this.emit('bind', ip);
+  }
+
   private markConnected(ip?: string | null): void {
     if (this.state === 'disconnected' || this.state === 'error') return;
-    if (ip && !this.bindAddress) {
-      this.bindAddress = ip;
-      this.emit('bind', ip);
-    }
-    if (!this.bindAddress) {
+    this.adoptBindIp(ip || null);
+    if (!this.bindAddress || !isUsableVpnHostIp(this.bindAddress)) {
       const guessed = guessVpnInterfaceIp(this.ipsBeforeConnect);
-      if (guessed) this.bindAddress = guessed;
+      this.adoptBindIp(guessed);
     }
     this.resolveBindIfIndex();
     this.lastError = null;
     this.clearConnectTimeout();
-    if (this.bindAddress) this.scheduleSplitTunnelFix(this.bindAddress);
+    if (this.bindAddress && isUsableVpnHostIp(this.bindAddress)) {
+      this.scheduleSplitTunnelFix(this.bindAddress);
+    }
     this.setState(
       'connected',
-      this.bindAddress ? `Connected — torrent bind ${this.bindAddress}` : 'Connected — detecting TUN/TAP IP…'
+      this.bindAddress && isUsableVpnHostIp(this.bindAddress)
+        ? `Connected — torrent bind ${this.bindAddress}`
+        : 'Connected — detecting TUN/TAP IP…'
     );
-    if (!this.bindAddress) this.startIfacePoll();
+    if (!this.bindAddress || !isUsableVpnHostIp(this.bindAddress)) this.startIfacePoll();
     else this.emit('bind', this.bindAddress);
   }
 
@@ -1136,10 +1160,7 @@ export class VpnManager extends EventEmitter {
   private onLogChunk(text: string): void {
     this.logBuffer = (this.logBuffer + text).slice(-20000);
     const ip = parseIpFromLog(text) || parseIpFromLog(this.logBuffer);
-    if (ip && !this.bindAddress) {
-      this.bindAddress = ip;
-      this.emit('bind', ip);
-    }
+    this.adoptBindIp(ip);
     if (/Initialization Sequence Completed/i.test(text) || /Initialization Sequence Completed/i.test(this.logBuffer)) {
       this.markConnected(ip);
     }

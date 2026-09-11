@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.6
+
+- Bind torrents to the TAP **host** IP (e.g. `10.33.112.228`), not the subnet `.0` parsed from the OpenVPN TAP log
+- That wrong bind was why seeders never connected while the VPN itself was up
+
 ## 1.8.5
 
 - Torrent sockets now force the OpenVPN TAP adapter on Windows (`IP_UNICAST_IF`) so they can reach seeders while Plex stays on the ISP IP
