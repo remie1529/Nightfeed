@@ -126,6 +126,19 @@ export async function detectOpenVpn(): Promise<{ found: boolean; path: string | 
   return { found: false, path: null };
 }
 
+function parseVpnGateway(chunk: string): string | null {
+  const patterns = [
+    /route-gateway\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /PUSH_REPLY.*route-gateway\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
+    /ifconfig\s+\d{1,3}(?:\.\d{1,3}){3}\s+(\d{1,3}(?:\.\d{1,3}){3})/i,
+  ];
+  for (const re of patterns) {
+    const m = chunk.match(re);
+    if (m?.[1] && !m[1].startsWith('127.') && m[1] !== '0.0.0.0') return m[1];
+  }
+  return null;
+}
+
 function parseIpFromLog(chunk: string): string | null {
   const patterns = [
     /net_addr_v4_add:\s*(\d{1,3}(?:\.\d{1,3}){3})\//i,
@@ -486,38 +499,189 @@ try {
   return pid;
 }
 
-/** Keep the VPN adapter from winning the system default route (Plex / port-forward). */
-function applyWindowsSplitTunnel(vpnIp: string): void {
-  if (process.platform !== 'win32' || !vpnIp) return;
-  const ip = vpnIp.replace(/'/g, "''");
-  const ps = `
-$ip = '${ip}'
-$addr = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $ip } | Select-Object -First 1
+const SPLIT_TASK_NAME = 'NightfeedSplitTunnel';
+let splitElevateInFlight = false;
+
+function splitIpPath(): string {
+  return path.join(vpnDir(), 'split-ip.txt');
+}
+
+function splitScriptPath(): string {
+  return path.join(vpnDir(), 'split-tunnel.ps1');
+}
+
+function writeSplitTunnelScript(): void {
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$req = Join-Path $dir 'split-ip.txt'
+if (-not (Test-Path $req)) { exit 0 }
+$lines = @(Get-Content -Path $req -Encoding UTF8)
+$ip = ([string]$lines[0]).Trim()
+$gw = ''
+if ($lines.Count -gt 1) { $gw = ([string]$lines[1]).Trim() }
+if (-not $ip) { exit 0 }
+$addr = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq $ip } | Select-Object -First 1
 if (-not $addr) { exit 0 }
 $if = $addr.InterfaceIndex
-Set-NetIPInterface -InterfaceIndex $if -AddressFamily IPv4 -InterfaceMetric 8500 -ErrorAction SilentlyContinue | Out-Null
-# def1 half-internet routes win over 0.0.0.0/0 regardless of metric
+# VPN adapter must lose the system default (Plex / browser stay on LAN) but still
+# have a default so sockets bound to the TUN IP can reach the internet.
+Set-NetIPInterface -InterfaceIndex $if -AddressFamily IPv4 -InterfaceMetric 4500 | Out-Null
 foreach ($pfx in @('0.0.0.0/1','128.0.0.0/1','::/1','8000::/1')) {
-  Get-NetRoute -InterfaceIndex $if -DestinationPrefix $pfx -ErrorAction SilentlyContinue |
-    Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+  Get-NetRoute -InterfaceIndex $if -DestinationPrefix $pfx | Remove-NetRoute -Confirm:$false
 }
-$def = Get-NetRoute -InterfaceIndex $if -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1
+$def = Get-NetRoute -InterfaceIndex $if -DestinationPrefix '0.0.0.0/0' | Select-Object -First 1
 if ($def) {
-  Set-NetRoute -InterfaceIndex $if -DestinationPrefix '0.0.0.0/0' -RouteMetric 9000 -ErrorAction SilentlyContinue | Out-Null
-}
-# Bound torrent sockets must not leak out the LAN (Windows weak-host send)
-Get-NetIPInterface -AddressFamily IPv4 -ConnectionState Connected -ErrorAction SilentlyContinue |
-  Where-Object { $_.InterfaceIndex -ne $if -and $_.InterfaceAlias -notmatch 'Loopback' } |
-  ForEach-Object {
-    Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -WeakHostSend Disabled -ErrorAction SilentlyContinue | Out-Null
+  Set-NetRoute -InterfaceIndex $if -DestinationPrefix '0.0.0.0/0' -RouteMetric 5000 | Out-Null
+} else {
+  $hop = $gw
+  if (-not $hop -or $hop -eq '0.0.0.0') {
+    $hop = (Get-NetRoute -InterfaceIndex $if -AddressFamily IPv4 |
+      Where-Object { $_.NextHop -ne '0.0.0.0' -and $_.DestinationPrefix -notmatch '^224\\.' } |
+      Select-Object -First 1).NextHop
   }
+  if ($hop) {
+    New-NetRoute -InterfaceIndex $if -DestinationPrefix '0.0.0.0/0' -NextHop $hop -RouteMetric 5000 | Out-Null
+  }
+}
+# Windows weak-host send would take TUN-bound torrent packets out the LAN default
+# (wrong source IP → seeders never connect). Force LAN NICs to strong-host.
+Get-NetRoute -DestinationPrefix '0.0.0.0/0' -AddressFamily IPv4 |
+  Where-Object { $_.InterfaceIndex -ne $if } |
+  ForEach-Object {
+    Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -WeakHostSend Disabled | Out-Null
+  }
+Set-NetIPInterface -InterfaceIndex $if -AddressFamily IPv4 -WeakHostSend Enabled | Out-Null
 `;
+  fs.writeFileSync(splitScriptPath(), script, 'utf8');
+}
+
+function splitTaskExists(): boolean {
+  try {
+    execFileSync('schtasks', ['/Query', '/TN', SPLIT_TASK_NAME], {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runSplitTask(): void {
+  execFile('schtasks', ['/Run', '/TN', SPLIT_TASK_NAME], { windowsHide: true, timeout: 8000 }, () => undefined);
+}
+
+async function runElevatedAndWait(exe: string, args: string[], workDir: string): Promise<void> {
+  const pidPath = path.join(workDir, 'elevate-split.pid');
+  const argPath = path.join(workDir, 'elevate-split-args.json');
+  const ps1 = path.join(workDir, 'elevate-split.ps1');
+  const script = `
+param([string]$Exe,[string]$ArgFile,[string]$PidFile,[string]$WorkDir)
+$ErrorActionPreference = 'Stop'
+$argList = @(Get-Content -Raw -Encoding UTF8 $ArgFile | ConvertFrom-Json)
+try {
+  $p = Start-Process -FilePath $Exe -ArgumentList $argList -WorkingDirectory $WorkDir -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+  if (-not $p) { throw 'Administrator approval was cancelled' }
+  Set-Content -Path $PidFile -Value ("EXIT:" + [string]$p.ExitCode) -Encoding ASCII
+} catch {
+  Set-Content -Path $PidFile -Value ("ERROR:" + $_.Exception.Message) -Encoding UTF8
+  exit 1
+}
+`;
+  fs.writeFileSync(ps1, script, 'utf8');
+  fs.writeFileSync(argPath, JSON.stringify(args), 'utf8');
+  try {
+    fs.unlinkSync(pidPath);
+  } catch {
+    // ignore
+  }
+  try {
+    await execFileAsync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        ps1,
+        '-Exe',
+        exe,
+        '-ArgFile',
+        argPath,
+        '-PidFile',
+        pidPath,
+        '-WorkDir',
+        workDir,
+      ],
+      120000
+    );
+  } catch {
+    // script writes ERROR: on UAC cancel
+  }
+}
+
+async function ensureSplitTaskAndRun(): Promise<void> {
+  const workDir = vpnDir();
+  const ps1 = splitScriptPath();
+  const install = path.join(workDir, 'install-split.ps1');
+  const installScript = `
+$ps1 = '${ps1.replace(/'/g, "''")}'
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ps1
+$task = '${SPLIT_TASK_NAME}'
+$arg = '-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"'
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+`;
+  fs.writeFileSync(install, installScript, 'utf8');
+  if (isProcessElevated()) {
+    await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', install],
+      30000
+    );
+    return;
+  }
+  await runElevatedAndWait(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', install],
+    workDir
+  );
+}
+
+/**
+ * Keep the VPN adapter from winning the system default route (Plex / port-forward),
+ * but give TUN-bound torrent sockets a path out the tunnel.
+ */
+function applyWindowsSplitTunnel(vpnIp: string, gateway?: string | null): void {
+  if (process.platform !== 'win32' || !vpnIp) return;
+  try {
+    fs.mkdirSync(vpnDir(), { recursive: true });
+    fs.writeFileSync(splitIpPath(), `${vpnIp}\n${gateway || ''}\n`, 'utf8');
+    writeSplitTunnelScript();
+  } catch {
+    return;
+  }
   execFile(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', splitScriptPath()],
     { windowsHide: true, timeout: 15000 },
     () => undefined
   );
+  if (splitTaskExists()) {
+    runSplitTask();
+    return;
+  }
+  if (splitElevateInFlight) return;
+  splitElevateInFlight = true;
+  void ensureSplitTaskAndRun()
+    .catch(() => undefined)
+    .finally(() => {
+      splitElevateInFlight = false;
+    });
 }
 
 function getFreeLocalPort(): Promise<number> {
@@ -807,10 +971,11 @@ export class VpnManager extends EventEmitter {
   /** Re-apply after OpenVPN finishes adding routes (def1 can appear a second later). */
   private scheduleSplitTunnelFix(ip: string): void {
     if (!ip) return;
-    applyWindowsSplitTunnel(ip);
+    const gw = parseVpnGateway(this.logBuffer);
+    applyWindowsSplitTunnel(ip, gw);
     this.clearSplitFixTimers();
     for (const ms of [1000, 3000, 8000]) {
-      this.splitFixTimers.push(setTimeout(() => applyWindowsSplitTunnel(ip), ms));
+      this.splitFixTimers.push(setTimeout(() => applyWindowsSplitTunnel(ip, parseVpnGateway(this.logBuffer)), ms));
     }
   }
 
@@ -1019,16 +1184,24 @@ export class VpnManager extends EventEmitter {
       '127.0.0.1',
       String(mgmtPort),
       'mgmt.pw',
-      // Split tunnel: do not steal the PC default route (Plex / port-forward keep ISP IP).
-      '--route-nopull',
+      // Split tunnel: ignore full-tunnel redirect, but still pull route-gateway /
+      // VPN subnet so a high-metric TUN default can be added for bound sockets.
       '--route-metric',
       '999',
+      '--route-delay',
+      '2',
       '--pull-filter',
       'ignore',
       'redirect-gateway',
       '--pull-filter',
       'ignore',
       'redirect-gateway-ipv6',
+      '--pull-filter',
+      'ignore',
+      'route 0.0.0.0',
+      '--pull-filter',
+      'ignore',
+      'route 128.0.0.0',
       '--pull-filter',
       'ignore',
       'route-ipv6',
@@ -1041,8 +1214,7 @@ export class VpnManager extends EventEmitter {
       '--pull-filter',
       'ignore',
       'dhcp-option DNS6',
-      // High-metric default on the TUN only — so sockets bound to the VPN IP can
-      // reach the internet without winning over the LAN default route.
+      // High-metric default on the TUN only — LAN keeps the real default (Plex).
       '--route',
       '0.0.0.0',
       '0.0.0.0',

@@ -189,16 +189,20 @@ export class DownloadEngine extends EventEmitter {
     const net = require('net') as typeof import('net');
     const self = this;
     const original = net.connect.bind(net);
-    (net as any).connect = function patchedConnect(...args: any[]) {
+    const patched = function patchedConnect(...args: any[]) {
       if (self.bindAddress) {
         if (args.length > 0 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])) {
           if (!args[0].localAddress) {
             args[0] = { ...args[0], localAddress: self.bindAddress };
           }
+        } else if (typeof args[0] === 'number' && typeof args[1] === 'string') {
+          return original({ port: args[0], host: args[1], localAddress: self.bindAddress }, ...args.slice(2));
         }
       }
       return original(...args);
     };
+    (net as any).connect = patched;
+    (net as any).createConnection = patched;
     this.netBindPatched = true;
   }
 

@@ -1,6 +1,13 @@
 ## Nightfeed status
 
-**Current:** v1.8.3 — Get / Get other torrent list fits in the window.
+**Current:** v1.8.4 — Split tunnel torrents can reach seeders; Plex stays on ISP IP.
+
+# Status v1.8.4
+
+## New
+- High-metric TUN default plus Windows strong-host on the LAN so torrent sockets bound to the VPN actually leave through the tunnel
+- One-time Administrator prompt (scheduled task) so this routing survives later Connects
+- OpenVPN log: `%AppData%\Nightfeed\vpn\ovpn.log`
 
 # Status v1.8.3
 
