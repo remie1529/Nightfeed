@@ -163,6 +163,7 @@ export interface VpnStatus {
   configPath: string | null;
   configName: string | null;
   bindAddress: string | null;
+  bindIfIndex: number | null;
   requireForTorrents: boolean;
   usernameSet: boolean;
   routeNopull: boolean;

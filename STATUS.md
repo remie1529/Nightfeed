@@ -1,6 +1,11 @@
 ## Nightfeed status
 
-**Current:** v1.8.4 — Split tunnel torrents can reach seeders; Plex stays on ISP IP.
+**Current:** v1.8.5 — TAP-forced torrent sockets (IP_UNICAST_IF); Plex stays on ISP IP.
+
+# Status v1.8.5
+
+## New
+- Windows torrent TCP uses IP_UNICAST_IF on the OpenVPN TAP index so seeders are reachable without a full-tunnel default route
 
 # Status v1.8.4
 

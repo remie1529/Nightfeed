@@ -4,7 +4,7 @@ import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import path from 'path'
 
-const electronExternal = ['electron', 'electron-store', 'webtorrent', 'basic-ftp']
+const electronExternal = ['electron', 'electron-store', 'webtorrent', 'basic-ftp', 'koffi']
 
 export default defineConfig({
   plugins: [
