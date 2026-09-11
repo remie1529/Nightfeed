@@ -35,6 +35,8 @@ export interface VpnStatus {
   routeNopull: boolean;
   lastError: string | null;
   launchMethod: VpnLaunchMethod;
+  /** True when torrents are blocked because VPN is required and not connected. */
+  killSwitch: boolean;
 }
 
 const COMMON_OPENVPN_PATHS = [
@@ -203,6 +205,40 @@ function isSafeRelative(rel: string): boolean {
   const norm = path.normalize(rel);
   const parts = norm.split(/[/\\]/);
   return !parts.includes('..');
+}
+
+/**
+ * Strip full-tunnel directives from a .ovpn. Many providers put
+ * `redirect-gateway def1` in the client file (not only as a pushed option);
+ * that adds 0.0.0.0/1 + 128.0.0.0/1 which beat any LAN default route.
+ */
+function sanitizeOvpnForSplitTunnel(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const t = line.trim();
+      if (!t || t.startsWith('#') || t.startsWith(';')) return line;
+      if (/^redirect-gateway(\s|$)/i.test(t)) return `# nightfeed-split ${line}`;
+      if (/^redirect-private(\s|$)/i.test(t)) return `# nightfeed-split ${line}`;
+      if (/^redirect-gateway-ipv6(\s|$)/i.test(t)) return `# nightfeed-split ${line}`;
+      if (/^block-outside-dns(\s|$)/i.test(t)) return `# nightfeed-split ${line}`;
+      if (/^route\s+0\.0\.0\.0(\s|$)/i.test(t)) return `# nightfeed-split ${line}`;
+      if (/^route\s+128\.0\.0\.0(\s|$)/i.test(t)) return `# nightfeed-split ${line}`;
+      if (/^route-ipv6\s+::\/0/i.test(t)) return `# nightfeed-split ${line}`;
+      if (/^dhcp-option\s+(DNS|DNS6|DOMAIN|DOMAIN-SEARCH|DHCP6)\b/i.test(t)) {
+        return `# nightfeed-split ${line}`;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+async function writeSanitizedConfig(): Promise<void> {
+  const p = storedConfigPath();
+  if (!(await pathExists(p))) return;
+  const raw = await fsp.readFile(p, 'utf8');
+  const sanitized = sanitizeOvpnForSplitTunnel(raw);
+  if (sanitized !== raw) await fsp.writeFile(p, sanitized, 'utf8');
 }
 
 const BENIGN_OPENVPN_LINE =
@@ -450,6 +486,40 @@ try {
   return pid;
 }
 
+/** Keep the VPN adapter from winning the system default route (Plex / port-forward). */
+function applyWindowsSplitTunnel(vpnIp: string): void {
+  if (process.platform !== 'win32' || !vpnIp) return;
+  const ip = vpnIp.replace(/'/g, "''");
+  const ps = `
+$ip = '${ip}'
+$addr = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $ip } | Select-Object -First 1
+if (-not $addr) { exit 0 }
+$if = $addr.InterfaceIndex
+Set-NetIPInterface -InterfaceIndex $if -AddressFamily IPv4 -InterfaceMetric 8500 -ErrorAction SilentlyContinue | Out-Null
+# def1 half-internet routes win over 0.0.0.0/0 regardless of metric
+foreach ($pfx in @('0.0.0.0/1','128.0.0.0/1','::/1','8000::/1')) {
+  Get-NetRoute -InterfaceIndex $if -DestinationPrefix $pfx -ErrorAction SilentlyContinue |
+    Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+}
+$def = Get-NetRoute -InterfaceIndex $if -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($def) {
+  Set-NetRoute -InterfaceIndex $if -DestinationPrefix '0.0.0.0/0' -RouteMetric 9000 -ErrorAction SilentlyContinue | Out-Null
+}
+# Bound torrent sockets must not leak out the LAN (Windows weak-host send)
+Get-NetIPInterface -AddressFamily IPv4 -ConnectionState Connected -ErrorAction SilentlyContinue |
+  Where-Object { $_.InterfaceIndex -ne $if -and $_.InterfaceAlias -notmatch 'Loopback' } |
+  ForEach-Object {
+    Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -WeakHostSend Disabled -ErrorAction SilentlyContinue | Out-Null
+  }
+`;
+  execFile(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+    { windowsHide: true, timeout: 15000 },
+    () => undefined
+  );
+}
+
 function getFreeLocalPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -516,6 +586,7 @@ export class VpnManager extends EventEmitter {
   private logTimer: NodeJS.Timeout | null = null;
   private pidTimer: NodeJS.Timeout | null = null;
   private connectTimer: NodeJS.Timeout | null = null;
+  private splitFixTimers: NodeJS.Timeout[] = [];
   private mgmtPort: number | null = null;
   private mgmtPassword: string | null = null;
   private mgmtSocket: net.Socket | null = null;
@@ -550,7 +621,7 @@ export class VpnManager extends EventEmitter {
       bindAddress: this.bindAddress,
       requireForTorrents: !!settings.vpnRequireForTorrents,
       usernameSet: !!(settings.vpnUsername && settings.vpnUsername.trim()),
-      routeNopull: false,
+      routeNopull: true,
       lastError: this.lastError,
       launchMethod: this.launchMethod,
       killSwitch: !!(settings.vpnEnabled && settings.vpnRequireForTorrents && this.state !== 'connected'),
@@ -601,6 +672,7 @@ export class VpnManager extends EventEmitter {
       await fsp.copyFile(from, to);
       copiedSidecars += 1;
     }
+    await writeSanitizedConfig();
     try {
       await fsp.chmod(dest, 0o600);
     } catch {
@@ -647,6 +719,7 @@ export class VpnManager extends EventEmitter {
       const ip = guessVpnInterfaceIp(this.ipsBeforeConnect);
       if (ip) {
         this.bindAddress = ip;
+        this.scheduleSplitTunnelFix(ip);
         if (this.state === 'connected' || this.state === 'connecting') {
           this.setState('connected', `Connected — torrent bind ${ip}`);
         }
@@ -726,6 +799,21 @@ export class VpnManager extends EventEmitter {
     }
   }
 
+  private clearSplitFixTimers(): void {
+    for (const t of this.splitFixTimers) clearTimeout(t);
+    this.splitFixTimers = [];
+  }
+
+  /** Re-apply after OpenVPN finishes adding routes (def1 can appear a second later). */
+  private scheduleSplitTunnelFix(ip: string): void {
+    if (!ip) return;
+    applyWindowsSplitTunnel(ip);
+    this.clearSplitFixTimers();
+    for (const ms of [1000, 3000, 8000]) {
+      this.splitFixTimers.push(setTimeout(() => applyWindowsSplitTunnel(ip), ms));
+    }
+  }
+
   private stopMgmt(): void {
     if (this.mgmtTimer) {
       clearInterval(this.mgmtTimer);
@@ -757,6 +845,7 @@ export class VpnManager extends EventEmitter {
     }
     this.lastError = null;
     this.clearConnectTimeout();
+    if (this.bindAddress) this.scheduleSplitTunnelFix(this.bindAddress);
     this.setState(
       'connected',
       this.bindAddress ? `Connected — torrent bind ${this.bindAddress}` : 'Connected — detecting TUN/TAP IP…'
@@ -853,6 +942,7 @@ export class VpnManager extends EventEmitter {
       this.stopPidPoll();
       this.stopMgmt();
       this.clearConnectTimeout();
+      this.clearSplitFixTimers();
       this.clearAuthFile();
       this.bindAddress = null;
       this.mgmtPort = null;
@@ -868,6 +958,7 @@ export class VpnManager extends EventEmitter {
     this.stopPidPoll();
     this.stopMgmt();
     this.clearConnectTimeout();
+    this.clearSplitFixTimers();
     this.clearAuthFile();
     const wasConnected = this.state === 'connected';
     const wasActive = wasConnected || this.state === 'connecting';
@@ -928,8 +1019,35 @@ export class VpnManager extends EventEmitter {
       '127.0.0.1',
       String(mgmtPort),
       'mgmt.pw',
-      // Pull routes so peer traffic can leave the TUN. Nightfeed runs its own
-      // openvpn.exe — OpenVPN GUI will not show this session.
+      // Split tunnel: do not steal the PC default route (Plex / port-forward keep ISP IP).
+      '--route-nopull',
+      '--route-metric',
+      '999',
+      '--pull-filter',
+      'ignore',
+      'redirect-gateway',
+      '--pull-filter',
+      'ignore',
+      'redirect-gateway-ipv6',
+      '--pull-filter',
+      'ignore',
+      'route-ipv6',
+      '--pull-filter',
+      'ignore',
+      'block-outside-dns',
+      '--pull-filter',
+      'ignore',
+      'dhcp-option DNS',
+      '--pull-filter',
+      'ignore',
+      'dhcp-option DNS6',
+      // High-metric default on the TUN only — so sockets bound to the VPN IP can
+      // reach the internet without winning over the LAN default route.
+      '--route',
+      '0.0.0.0',
+      '0.0.0.0',
+      'vpn_gateway',
+      '999',
       '--verb',
       '3',
     ];
@@ -963,6 +1081,11 @@ export class VpnManager extends EventEmitter {
     this.generation += 1;
     this.launchMethod = null;
     await fsp.mkdir(vpnDir(), { recursive: true });
+    try {
+      await writeSanitizedConfig();
+    } catch {
+      // still try to connect with the stored file
+    }
     try {
       fs.unlinkSync(logFilePath());
     } catch {
@@ -1086,6 +1209,7 @@ export class VpnManager extends EventEmitter {
     this.stopLogTail();
     this.stopPidPoll();
     this.clearConnectTimeout();
+    this.clearSplitFixTimers();
     const port = this.mgmtPort;
     const pw = this.mgmtPassword;
     if (this.mgmtSocket && this.mgmtAuthed) {

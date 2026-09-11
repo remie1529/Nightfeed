@@ -2,6 +2,13 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.2
+
+- OpenVPN split tunnel restored: Plex, port-forwarding, and the browser keep your ISP IP
+- Ignore `redirect-gateway` / def1 routes from the .ovpn and from the server (those were sending the whole PC through the VPN)
+- Torrent sockets still bind to the TUN IP, with a high-metric VPN default so downloads can leave the tunnel
+- Disconnect and reconnect VPN after installing this update, then confirm whatismyipaddress.com shows your normal IP
+
 ## 1.8.1
 
 - In-app updater no longer hangs on “downloading…” for the private GitHub repo
