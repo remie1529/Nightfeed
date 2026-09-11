@@ -24,7 +24,8 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 
 Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and detail.
 
-- **TV library** — search & track shows via [TVMaze](https://www.tvmaze.com/) (no API key)
+- **TV library** — search & track shows via [TVMaze](https://www.tvmaze.com/) (no API key); filter to shows with missing episodes
+- **Calendar** — week view of episode air dates
 - **Movies** — search & metadata via IMDb.com scrape (no API key); separate movie library folder
 - **Requests** — in-app Requests tab + web/Telegram request workflow with posters and approve/deny
 - **Embedded downloads** — WebTorrent in an Electron `utilityProcess` when available
@@ -72,6 +73,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 ## Version log
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
+
+**1.8.7** — Calendar week view of air dates; Library filter for shows with missing episodes.
 
 **1.8.6** — Bind torrents to the real TAP host IP, not the `.0` subnet address from the OpenVPN log.
 

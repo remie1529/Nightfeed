@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.8.6 — Bind TAP host IP (not subnet .0) so seeders can connect.
+**Current:** v1.8.7 — Calendar week view + Library missing-episodes filter.
+
+# Status v1.8.7
+
+## New
+- Calendar tab: Monday–Sunday week of episode air dates
+- Library **Missing episodes** filter
 
 # Status v1.8.6
 

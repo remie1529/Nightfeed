@@ -10,6 +10,7 @@ const api = {
     ipcRenderer.invoke('library:add', mazeId, policy),
   removeShow: (mazeId: number) => ipcRenderer.invoke('library:remove', mazeId),
   getShows: () => ipcRenderer.invoke('library:list'),
+  getCalendar: (from: string, to: string) => ipcRenderer.invoke('library:calendar', from, to),
   getShow: (mazeId: number) => ipcRenderer.invoke('library:get', mazeId),
   updateShow: (mazeId: number, partial: Record<string, unknown>) =>
     ipcRenderer.invoke('library:update', mazeId, partial),

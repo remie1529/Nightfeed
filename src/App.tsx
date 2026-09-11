@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import Library from './views/Library';
+import CalendarView from './views/Calendar';
 import ShowDetail from './views/ShowDetail';
 import Movies from './views/Movies';
 import MovieDetail from './views/MovieDetail';
@@ -8,7 +9,7 @@ import Requests from './views/Requests';
 import SettingsView from './views/Settings';
 import type { DownloadItem, Movie, UpdateStatus, VpnStatus } from './lib/types';
 
-type View = 'library' | 'movies' | 'downloads' | 'requests' | 'settings' | 'show' | 'movie';
+type View = 'library' | 'calendar' | 'movies' | 'downloads' | 'requests' | 'settings' | 'show' | 'movie';
 
 interface Toast {
   id: number;
@@ -18,6 +19,7 @@ interface Toast {
 
 export default function App() {
   const [view, setView] = useState<View>('library');
+  const [showBack, setShowBack] = useState<View>('library');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null);
   const [activeDownloads, setActiveDownloads] = useState(0);
@@ -90,8 +92,9 @@ export default function App() {
     };
   }, []);
 
-  const openShow = (tmdbId: number) => {
+  const openShow = (tmdbId: number, back: View = 'library') => {
     setSelectedId(tmdbId);
+    setShowBack(back === 'show' ? 'library' : back);
     setView('show');
   };
 
@@ -108,10 +111,16 @@ export default function App() {
           <div className="brand-sub">TV & Movies</div>
         </div>
         <button
-          className={`nav-item ${view === 'library' || view === 'show' ? 'active' : ''}`}
+          className={`nav-item ${view === 'library' || (view === 'show' && showBack !== 'calendar') ? 'active' : ''}`}
           onClick={() => setView('library')}
         >
           Library
+        </button>
+        <button
+          className={`nav-item ${view === 'calendar' || (view === 'show' && showBack === 'calendar') ? 'active' : ''}`}
+          onClick={() => setView('calendar')}
+        >
+          Calendar
         </button>
         <button
           className={`nav-item ${view === 'movies' || view === 'movie' ? 'active' : ''}`}
@@ -151,10 +160,16 @@ export default function App() {
             onRefreshDone={() => setLibraryKey((k) => k + 1)}
           />
         )}
+        {view === 'calendar' && (
+          <CalendarView
+            refreshToken={libraryKey}
+            onOpenShow={(id) => openShow(id, 'calendar')}
+          />
+        )}
         {view === 'show' && selectedId != null && (
           <ShowDetail
             tmdbId={selectedId}
-            onBack={() => setView('library')}
+            onBack={() => setView(showBack === 'calendar' ? 'calendar' : 'library')}
             onRemoved={() => {
               setSelectedId(null);
               setView('library');

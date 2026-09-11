@@ -73,6 +73,7 @@ import {
 import {
   AddShowPolicy,
   AppSettings,
+  CalendarEpisode,
   DownloadItem,
   Episode,
   EpisodeOverrideStatus,
@@ -660,6 +661,43 @@ function toShowListItem(show: Show, downloading: Set<string>): ShowListItem {
 function listShowSummaries(): ShowListItem[] {
   const downloading = downloadingKeys();
   return getShows().map((s) => toShowListItem(s, downloading));
+}
+
+function listCalendarEpisodes(from: string, to: string): CalendarEpisode[] {
+  const start = String(from || '').slice(0, 10);
+  const end = String(to || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return [];
+  const downloading = downloadingKeys();
+  const items: CalendarEpisode[] = [];
+  for (const show of getShows()) {
+    for (const season of show.seasons || []) {
+      for (const ep of season.episodes || []) {
+        if (!ep.airDate) continue;
+        const day = ep.airDate.slice(0, 10);
+        if (day < start || day > end) continue;
+        const key = episodeKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
+        items.push({
+          tmdbId: show.tmdbId,
+          showName: show.name,
+          posterPath: show.posterPath,
+          seasonNumber: ep.seasonNumber,
+          episodeNumber: ep.episodeNumber,
+          name: ep.name,
+          airDate: day,
+          status: downloading.has(key) ? 'downloading' : ep.status,
+        });
+      }
+    }
+  }
+  items.sort((a, b) => {
+    const d = a.airDate.localeCompare(b.airDate);
+    if (d) return d;
+    const s = a.showName.localeCompare(b.showName);
+    if (s) return s;
+    if (a.seasonNumber !== b.seasonNumber) return a.seasonNumber - b.seasonNumber;
+    return a.episodeNumber - b.episodeNumber;
+  });
+  return items;
 }
 
 async function refreshOne(show: Show): Promise<Show> {
@@ -2038,6 +2076,8 @@ function registerIpc() {
   });
 
   ipcMain.handle('library:refreshAll', async () => refreshAllShows());
+
+  ipcMain.handle('library:calendar', (_e, from: string, to: string) => listCalendarEpisodes(from, to));
 
   ipcMain.handle(
     'library:setEpisodeStatus',

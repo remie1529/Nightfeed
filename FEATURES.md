@@ -2,7 +2,7 @@
 
 Dark chrome, gold accents — a desktop TV & movie manager with embedded torrents, requests, VPN split tunnel, and a local web portal.
 
-**v1.8.6** · Electron · React · WebTorrent · TVMaze · IMDb
+**v1.8.7** · Electron · React · WebTorrent · TVMaze · IMDb
 
 [← Back to README](README.md)
 
@@ -12,7 +12,8 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 | Area | What you get |
 |------|----------------|
-| **Library** | Track shows via TVMaze (no API key), season bulk status, folder scan import |
+| **Library** | Track shows via TVMaze (no API key), missing-episodes filter, season bulk status, folder scan import |
+| **Calendar** | Week view of episode air dates; click through to the show |
 | **Movies** | Separate movie library, IMDb metadata scrape (no API key) |
 | **Downloads** | Embedded WebTorrent (`utilityProcess`), queue of 3 active, pause/resume/cancel |
 | **Requests** | In-app approve/deny + Telegram + web portal |
@@ -25,7 +26,17 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 ![Library](docs/screenshots/library.png)
 
 - Search & track shows through [TVMaze](https://www.tvmaze.com/) — **no API key**
+- Filter the grid to **shows with missing episodes**
 - Fast library list with **season bulk status**
+
+---
+
+## Calendar
+
+- Monday–Sunday week of **episode air dates** from your tracked shows
+- Previous / This week / Next
+- Each day lists show, `SxxExx`, episode title, and status
+- Click an episode to open that show
 - **Check new episodes** on demand or on a schedule
 - **Scan folders & import…** — preview matches, confirm; never auto-imports on startup
 - Episode files rename to `Show - SxxExx - Title`
