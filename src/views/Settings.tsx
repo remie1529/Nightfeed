@@ -858,6 +858,7 @@ export default function SettingsView() {
                 <div className="hint" style={{ marginTop: 6 }}>
                   OpenVPN: {vpnStatus.openvpnFound ? (vpnStatus.openvpnPath || 'found') : 'not found — install Community edition on this PC'}
                   {vpnStatus.bindAddress ? ` · torrent bind ${vpnStatus.bindAddress}` : ''}
+                  {vpnStatus.bindIfIndex ? ` · if ${vpnStatus.bindIfIndex}` : ''}
                   {vpnStatus.routeNopull ? ' · split-tunnel' : ''}
                   {vpnStatus.launchMethod ? ` · ${vpnStatus.launchMethod}` : ''}
                 </div>

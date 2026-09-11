@@ -270,6 +270,7 @@ function torrentVpnHold(): boolean {
 function applyTorrentBindFromVpn(): void {
   downloadEngine.applySettings({
     bindAddress: vpnManager.getBindAddress(),
+    bindIfIndex: vpnManager.getBindIfIndex(),
     vpnHold: torrentVpnHold(),
     processFolder: getSettings().processFolder || '',
   });
@@ -915,6 +916,7 @@ function applySettingsSideEffects(next: AppSettings): void {
     maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: next.maxUploadSpeedKBps,
     bindAddress: vpnManager.getBindAddress(),
+    bindIfIndex: vpnManager.getBindIfIndex(),
     vpnHold: !!(next.vpnEnabled && next.vpnRequireForTorrents && !vpnManager.isConnected()),
     processFolder: next.processFolder || '',
   });
@@ -2325,6 +2327,7 @@ function registerIpc() {
       maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
       maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
       bindAddress: vpnManager.getBindAddress(),
+    bindIfIndex: vpnManager.getBindIfIndex(),
       vpnHold: torrentVpnHold(),
       processFolder: settings.processFolder || '',
     });
@@ -2585,6 +2588,7 @@ app.whenReady().then(async () => {
     maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
     bindAddress: vpnManager.getBindAddress(),
+    bindIfIndex: vpnManager.getBindIfIndex(),
     vpnHold: torrentVpnHold(),
     processFolder: settings.processFolder || '',
   });

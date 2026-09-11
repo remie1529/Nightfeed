@@ -1,7 +1,7 @@
 {
   "name": "tv-show-manager",
   "productName": "Nightfeed",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "description": "Desktop TV show and movie manager",
   "main": "dist-electron/main.js",
   "author": "Remco Groothoff",
@@ -17,6 +17,7 @@
     "basic-ftp": "^5.2.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.3.9",
+    "koffi": "^3.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "webtorrent": "1.9.7"
@@ -86,7 +87,9 @@
       "**/*.node",
       "**/node_modules/webtorrent/**",
       "**/node_modules/@webtorrent/**",
-      "**/node_modules/utp-native/**"
+      "**/node_modules/utp-native/**",
+      "**/node_modules/koffi/**",
+      "**/node_modules/@koromix/**"
     ],
     "icon": "build/icon.png",
     "extraResources": [

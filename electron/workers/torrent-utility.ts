@@ -12,6 +12,7 @@ type InMsg =
       maxDownloadSpeedKBps?: number;
       maxUploadSpeedKBps?: number;
       bindAddress?: string | null;
+      bindIfIndex?: number | null;
       vpnHold?: boolean;
       processFolder?: string | null;
     } }

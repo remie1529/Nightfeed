@@ -29,6 +29,7 @@ export interface VpnStatus {
   configPath: string | null;
   configName: string | null;
   bindAddress: string | null;
+  bindIfIndex: number | null;
   requireForTorrents: boolean;
   usernameSet: boolean;
   /** True when we asked openvpn for route-nopull (torrent-only intent). */
@@ -137,6 +138,41 @@ function parseVpnGateway(chunk: string): string | null {
     if (m?.[1] && !m[1].startsWith('127.') && m[1] !== '0.0.0.0') return m[1];
   }
   return null;
+}
+
+function parseIfIndexFromLog(chunk: string): number | null {
+  const patterns = [
+    /ARP Flush on interface \[(\d+)\]/i,
+    /IPv4 MTU set to \d+ on interface (\d+)/i,
+    /interface \[(\d+)\] \{[0-9A-F-]+\}/i,
+  ];
+  for (const re of patterns) {
+    const m = chunk.match(re);
+    if (m?.[1]) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+function windowsIfIndexForIp(ip: string): number | null {
+  if (process.platform !== 'win32' || !ip) return null;
+  try {
+    const out = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-Command',
+        `(Get-NetIPAddress -AddressFamily IPv4 -IPAddress '${ip.replace(/'/g, "''")}' -ErrorAction SilentlyContinue | Select-Object -First 1).InterfaceIndex`,
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 8000 }
+    );
+    const n = parseInt(String(out).trim(), 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseIpFromLog(chunk: string): string | null {
@@ -743,6 +779,7 @@ export class VpnManager extends EventEmitter {
   private openvpnPath: string | null = null;
   private openvpnFound = false;
   private bindAddress: string | null = null;
+  private bindIfIndex: number | null = null;
   private logBuffer = '';
   private logOffset = 0;
   private ipsBeforeConnect = new Set<string>();
@@ -783,6 +820,7 @@ export class VpnManager extends EventEmitter {
       configPath: settings.vpnConfigPath || null,
       configName: settings.vpnConfigName || null,
       bindAddress: this.bindAddress,
+      bindIfIndex: this.bindIfIndex,
       requireForTorrents: !!settings.vpnRequireForTorrents,
       usernameSet: !!(settings.vpnUsername && settings.vpnUsername.trim()),
       routeNopull: true,
@@ -798,6 +836,18 @@ export class VpnManager extends EventEmitter {
 
   getBindAddress(): string | null {
     return this.bindAddress;
+  }
+
+  getBindIfIndex(): number | null {
+    return this.bindIfIndex;
+  }
+
+  private resolveBindIfIndex(): void {
+    if (this.bindIfIndex) return;
+    const fromLog = parseIfIndexFromLog(this.logBuffer);
+    if (fromLog) this.bindIfIndex = fromLog;
+    else if (this.bindAddress) this.bindIfIndex = windowsIfIndexForIp(this.bindAddress);
+    if (this.bindIfIndex) this.emit('bind', this.bindAddress);
   }
 
   private setState(state: VpnConnectionState, message: string): void {
@@ -883,6 +933,7 @@ export class VpnManager extends EventEmitter {
       const ip = guessVpnInterfaceIp(this.ipsBeforeConnect);
       if (ip) {
         this.bindAddress = ip;
+        this.resolveBindIfIndex();
         this.scheduleSplitTunnelFix(ip);
         if (this.state === 'connected' || this.state === 'connecting') {
           this.setState('connected', `Connected — torrent bind ${ip}`);
@@ -1008,6 +1059,7 @@ export class VpnManager extends EventEmitter {
       const guessed = guessVpnInterfaceIp(this.ipsBeforeConnect);
       if (guessed) this.bindAddress = guessed;
     }
+    this.resolveBindIfIndex();
     this.lastError = null;
     this.clearConnectTimeout();
     if (this.bindAddress) this.scheduleSplitTunnelFix(this.bindAddress);
@@ -1110,6 +1162,7 @@ export class VpnManager extends EventEmitter {
       this.clearSplitFixTimers();
       this.clearAuthFile();
       this.bindAddress = null;
+    this.bindIfIndex = null;
       this.mgmtPort = null;
       this.mgmtPassword = null;
       this.launchMethod = null;
@@ -1128,6 +1181,7 @@ export class VpnManager extends EventEmitter {
     const wasConnected = this.state === 'connected';
     const wasActive = wasConnected || this.state === 'connecting';
     this.bindAddress = null;
+    this.bindIfIndex = null;
     this.mgmtPort = null;
     this.mgmtPassword = null;
     if (this.state === 'error' && /Authentication failed/i.test(this.message)) {
@@ -1161,6 +1215,7 @@ export class VpnManager extends EventEmitter {
       this.child = null;
       this.ownedPid = null;
       this.bindAddress = null;
+    this.bindIfIndex = null;
       this.clearAuthFile();
       this.lastError = err.message || 'Failed to start openvpn';
       this.setState('error', this.lastError);
@@ -1246,6 +1301,7 @@ export class VpnManager extends EventEmitter {
 
     this.ipsBeforeConnect = this.snapshotLocalIps();
     this.bindAddress = null;
+    this.bindIfIndex = null;
     this.logBuffer = '';
     this.logOffset = 0;
     this.lastError = null;
@@ -1422,6 +1478,7 @@ export class VpnManager extends EventEmitter {
     }
     this.clearAuthFile();
     this.bindAddress = null;
+    this.bindIfIndex = null;
     this.mgmtPort = null;
     this.mgmtPassword = null;
     this.launchMethod = null;

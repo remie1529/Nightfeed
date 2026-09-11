@@ -7,6 +7,7 @@ import { buildEpisodePath, buildMoviePath, sanitizeName } from './paths';
 import type { QualityRules } from './search';
 import { resolutionRank } from './search';
 import { probeVideoFile } from './video-probe';
+import { patchTcpConnectUnicastIf } from './unicast-if';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const WebTorrent = require('webtorrent') as any;
@@ -125,6 +126,8 @@ export interface EngineSettings {
   maxUploadSpeedKBps?: number;
   /** Bind outgoing torrent TCP sockets to this local IPv4 (VPN TUN/TAP). */
   bindAddress?: string | null;
+  /** Windows adapter index for IP_UNICAST_IF (TAP/TUN). */
+  bindIfIndex?: number | null;
   /** When true, no torrent sockets — pause active downloads (VPN kill switch). */
   vpnHold?: boolean;
   /** Staging folder: download here, then verify/rename/move into the library. */
@@ -140,6 +143,7 @@ export class DownloadEngine extends EventEmitter {
   private maxDownloadSpeedKBps = 0;
   private maxUploadSpeedKBps = 0;
   private bindAddress: string | null = null;
+  private bindIfIndex: number | null = null;
   private vpnHold = false;
   private processFolder: string | null = null;
   private netBindPatched = false;
@@ -157,11 +161,22 @@ export class DownloadEngine extends EventEmitter {
     if (typeof settings.maxUploadSpeedKBps === 'number') {
       this.maxUploadSpeedKBps = Math.max(0, Math.floor(settings.maxUploadSpeedKBps));
     }
-    if ('bindAddress' in settings) {
-      const next = settings.bindAddress ? String(settings.bindAddress) : null;
-      if (next !== this.bindAddress) {
-        this.bindAddress = next;
-        // Recreate client so new sockets use the updated localAddress bind.
+    if ('bindAddress' in settings || 'bindIfIndex' in settings) {
+      const nextAddr =
+        'bindAddress' in settings
+          ? settings.bindAddress
+            ? String(settings.bindAddress)
+            : null
+          : this.bindAddress;
+      const nextIf =
+        'bindIfIndex' in settings
+          ? settings.bindIfIndex && settings.bindIfIndex > 0
+            ? Math.floor(settings.bindIfIndex)
+            : null
+          : this.bindIfIndex;
+      if (nextAddr !== this.bindAddress || nextIf !== this.bindIfIndex) {
+        this.bindAddress = nextAddr;
+        this.bindIfIndex = nextIf;
         this.destroyClientOnly();
       }
     }
@@ -203,6 +218,7 @@ export class DownloadEngine extends EventEmitter {
     };
     (net as any).connect = patched;
     (net as any).createConnection = patched;
+    patchTcpConnectUnicastIf(() => self.bindIfIndex);
     this.netBindPatched = true;
   }
 
