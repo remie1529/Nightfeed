@@ -69,6 +69,16 @@ export interface AppSettings {
   defaultResolution: Resolution;
   /** Global preferred resolution for movies (per-movie override on Movie). */
   defaultMovieResolution: Resolution;
+  /** Never auto-accept TV below this. */
+  minimumResolution: Resolution;
+  /** Never auto-accept movies below this. */
+  minimumMovieResolution: Resolution;
+  /** Minimum finished file size in MB per resolution (0 = no extra floor). */
+  minSizeMb720p: number;
+  minSizeMb1080p: number;
+  minSizeMb2160p: number;
+  /** Optional staging folder: download, verify, rename, then move into the library. */
+  processFolder: string;
   refreshIntervalMinutes: number;
   /**
    * @deprecated Use torrentSources. Kept so older electron-store data still loads.
@@ -354,6 +364,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   movieLibraryRoots: [],
   defaultResolution: '1080p',
   defaultMovieResolution: '1080p',
+  minimumResolution: '720p',
+  minimumMovieResolution: '720p',
+  minSizeMb720p: 200,
+  minSizeMb1080p: 500,
+  minSizeMb2160p: 2000,
+  processFolder: '',
   refreshIntervalMinutes: 60,
   torrentSources: { ...DEFAULT_TORRENT_SOURCES },
   searchProvider: 'apibay',

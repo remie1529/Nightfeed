@@ -131,43 +131,62 @@ function shellCss(): string {
   --text-dim: #9a9690;
   --accent: #d4a017;
   --accent-dim: #a67c0f;
+  --accent-soft: rgba(212,160,23,0.12);
   --danger: #c45c5c;
   --ok: #6a9a6a;
   --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  --radius: 6px;
+  --radius: 8px;
 }
 * { box-sizing: border-box; }
+html { scrollbar-width: thin; scrollbar-color: #3a3a3a #121212; }
 body {
   margin: 0; min-height: 100vh;
-  background: var(--bg); color: var(--text);
-  font-family: var(--font); font-size: 14px; line-height: 1.45;
+  background: radial-gradient(1200px 500px at 10% -10%, #1c180e 0%, #121212 55%);
+  color: var(--text);
+  font-family: var(--font); font-size: 15px; line-height: 1.5;
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-.wrap { max-width: 820px; margin: 0 auto; padding: 1.5rem 1.1rem 3rem; }
-.brand { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 1.25rem; }
-.brand h1 { margin: 0; font-size: 1.35rem; letter-spacing: 0.02em; color: var(--accent); }
-.brand span { color: var(--text-dim); font-size: 0.85rem; }
-.nav { display: flex; gap: 1rem; margin-bottom: 1.25rem; color: var(--text-dim); }
+.wrap { max-width: 880px; margin: 0 auto; padding: 1.75rem 1.2rem 3.5rem; }
+.wrap.wide { max-width: 1080px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+.brand { display: flex; align-items: baseline; gap: 0.65rem; }
+.brand h1 { margin: 0; font-size: 1.45rem; letter-spacing: 0.02em; color: var(--accent); }
+.brand span { color: var(--text-dim); font-size: 0.88rem; }
+.nav { display: flex; gap: 0.4rem; }
+.nav a {
+  color: var(--text-dim); padding: 0.35rem 0.7rem; border-radius: 999px;
+  text-decoration: none; border: 1px solid transparent;
+}
+.nav a:hover { color: var(--text); background: var(--bg-hover); text-decoration: none; }
+.nav a.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-dim); }
+.hero { margin-bottom: 1.1rem; }
+.hero h2 { margin: 0 0 0.35rem; font-size: 1.35rem; }
+.hero p { margin: 0; color: var(--text-dim); }
 .card {
   background: var(--bg-elevated); border: 1px solid var(--border);
-  border-radius: 8px; padding: 1rem 1.1rem; margin-bottom: 1rem;
+  border-radius: 12px; padding: 1.15rem 1.2rem; margin-bottom: 1rem;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.25);
 }
-.field { margin-bottom: 0.85rem; }
-.field label { display: block; margin-bottom: 0.35rem; color: var(--text-dim); font-size: 0.85rem; }
-input, select, button {
-  font: inherit; color: inherit;
-}
+.field { margin-bottom: 0.95rem; }
+.field label { display: block; margin-bottom: 0.4rem; color: var(--text-dim); font-size: 0.82rem; font-weight: 500; }
+input, select, button { font: inherit; color: inherit; }
 input, select {
   width: 100%; background: var(--bg-input); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 0.55rem 0.7rem; outline: none;
+  border-radius: var(--radius); padding: 0.65rem 0.8rem; outline: none;
 }
 input:focus, select:focus { border-color: var(--accent-dim); }
 .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+.pills { display: flex; gap: 0.45rem; }
+.pill {
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim);
+  border-radius: 999px; padding: 0.4rem 0.9rem; cursor: pointer;
+}
+.pill.on { background: var(--accent); border-color: var(--accent); color: #1a1408; font-weight: 600; }
 button {
   cursor: pointer; border: 1px solid var(--border-strong);
   background: var(--bg-elevated); border-radius: var(--radius);
-  padding: 0.5rem 0.9rem;
+  padding: 0.55rem 0.95rem;
 }
 button:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--accent-dim); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -179,45 +198,58 @@ button.primary:hover:not(:disabled) { background: #e0b328; border-color: #e0b328
 button.danger { border-color: var(--danger); color: #f0c0c0; }
 button.ok { border-color: var(--ok); color: #c8e0c8; }
 .hint { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.35rem; }
-.msg { margin-top: 0.75rem; padding: 0.65rem 0.8rem; border-radius: var(--radius); border: 1px solid var(--border); }
-.msg.ok { border-color: var(--ok); color: #c8e0c8; }
-.msg.err { border-color: var(--danger); color: #f0c0c0; }
-.msg.info { border-color: var(--accent-dim); }
+.msg { margin-top: 0.75rem; padding: 0.7rem 0.85rem; border-radius: var(--radius); border: 1px solid var(--border); }
+.msg.ok { border-color: var(--ok); color: #c8e0c8; background: #1a241a; }
+.msg.err { border-color: var(--danger); color: #f0c0c0; background: #241a1a; }
+.msg.info { border-color: var(--accent-dim); background: var(--accent-soft); }
+.results { display: flex; flex-direction: column; gap: 0.65rem; }
 .result {
-  display: flex; gap: 0.75rem; align-items: flex-start;
-  padding: 0.65rem 0; border-bottom: 1px solid var(--border);
+  display: flex; gap: 0.9rem; align-items: stretch;
+  padding: 0.75rem; border: 1px solid var(--border); border-radius: 10px;
+  background: #161616;
 }
-.result:last-child { border-bottom: none; }
 .poster {
-  width: 48px; height: 72px; object-fit: cover; border-radius: 4px;
+  width: 72px; height: 108px; object-fit: cover; border-radius: 6px;
   background: #0a0a0a; flex-shrink: 0;
 }
-.result-body { flex: 1; min-width: 0; }
-.result-title { font-weight: 600; }
-.result-meta { color: var(--text-dim); font-size: 0.85rem; }
+.result-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.result-title { font-weight: 650; font-size: 1.02rem; }
+.result-meta { color: var(--text-dim); font-size: 0.88rem; margin-top: 0.25rem; flex: 1; }
 .badge {
-  display: inline-block; font-size: 0.75rem; padding: 0.15rem 0.45rem;
+  display: inline-block; font-size: 0.72rem; padding: 0.18rem 0.5rem;
   border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
 }
-.badge.pending { border-color: var(--accent-dim); color: var(--accent); }
-.badge.approved { border-color: var(--ok); color: var(--ok); }
-.badge.denied { border-color: var(--danger); color: var(--danger); }
+.badge.pending { border-color: var(--accent-dim); color: var(--accent); background: var(--accent-soft); }
+.badge.approved { border-color: var(--ok); color: #c8e0c8; background: #1a241a; }
+.badge.denied { border-color: var(--danger); color: #f0c0c0; background: #241a1a; }
+.stats { display: flex; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.stat {
+  flex: 1; min-width: 120px; background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0.75rem 0.9rem;
+}
+.stat b { display: block; font-size: 1.35rem; color: var(--accent); }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td {
-  text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid var(--border);
+  text-align: left; padding: 0.7rem 0.45rem; border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
-.table th { color: var(--text-dim); font-weight: 500; font-size: 0.8rem; }
-.req-cell { display: flex; gap: 0.75rem; align-items: flex-start; }
+.table th { color: var(--text-dim); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.req-cell { display: flex; gap: 0.85rem; align-items: flex-start; }
 .req-poster {
-  width: 40px; height: 60px; object-fit: cover; border-radius: 4px;
+  width: 56px; height: 84px; object-fit: cover; border-radius: 6px;
   background: #0a0a0a; flex-shrink: 0;
 }
 .req-poster.ph { display: grid; place-items: center; color: var(--text-dim); font-size: 0.65rem; }
+.status-card { display: flex; gap: 0.9rem; align-items: center; }
+@media (max-width: 640px) {
+  .poster { width: 56px; height: 84px; }
+  .req-poster { width: 44px; height: 66px; }
+}
 `;
 }
 
-function layout(title: string, body: string, active: 'request' | 'admin'): string {
+function layout(title: string, body: string, active: 'request' | 'admin', wide = false): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -230,11 +262,13 @@ function layout(title: string, body: string, active: 'request' | 'admin'): strin
   <style>${shellCss()}</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="brand"><h1>Nightfeed</h1><span>${escapeHtml(title)}</span></div>
-    <div class="nav">
-      <a href="/request"${active === 'request' ? ' style="color:var(--accent)"' : ''}>Request</a>
-      <a href="/admin"${active === 'admin' ? ' style="color:var(--accent)"' : ''}>Admin</a>
+  <div class="wrap${wide ? ' wide' : ''}">
+    <div class="topbar">
+      <div class="brand"><h1>Nightfeed</h1><span>${escapeHtml(title)}</span></div>
+      <div class="nav">
+        <a href="/request"${active === 'request' ? ' class="active"' : ''}>Request</a>
+        <a href="/admin"${active === 'admin' ? ' class="active"' : ''}>Admin</a>
+      </div>
     </div>
     ${body}
   </div>
@@ -244,26 +278,31 @@ function layout(title: string, body: string, active: 'request' | 'admin'): strin
 
 function requestPageHtml(): string {
   const body = `
+<div class="hero">
+  <h2>Request a title</h2>
+  <p>Search TV or movies and send a request. No account needed.</p>
+</div>
 <div class="card">
   <div class="field">
     <label>Type</label>
-    <select id="mediaType">
-      <option value="show">TV show</option>
-      <option value="movie">Movie</option>
-    </select>
+    <div class="pills">
+      <button type="button" class="pill on" id="typeShow">TV show</button>
+      <button type="button" class="pill" id="typeMovie">Movie</button>
+    </div>
+    <input type="hidden" id="mediaType" value="show" />
   </div>
   <div class="field">
     <label>Search</label>
     <div class="row">
-      <input id="query" placeholder="Title…" style="flex:1" />
+      <input id="query" placeholder="Title…" style="flex:1" autofocus />
       <button type="button" class="primary" id="searchBtn">Search</button>
     </div>
-    <div class="hint">TV via TVMaze · Movies via IMDb. No login required.</div>
+    <div class="hint">TV via TVMaze · Movies via IMDb</div>
   </div>
   <div id="msg"></div>
-  <div id="results" class="card" style="display:none;margin-top:1rem;padding-top:0.4rem"></div>
-  <div id="statusBox" class="card" style="display:none;margin-top:1rem"></div>
 </div>
+<div id="statusBox" class="card" style="display:none"></div>
+<div id="results" class="results" style="display:none"></div>
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -282,10 +321,14 @@ function requestPageHtml(): string {
       const r = data.request;
       const box = $('statusBox');
       box.style.display = 'block';
-      box.innerHTML = '<div style="font-weight:600;margin-bottom:0.35rem">Your request</div>' +
+      const poster = r.posterUrl
+        ? '<img class="poster" src="' + escape(r.posterUrl) + '" alt="" />'
+        : '<div class="poster"></div>';
+      box.innerHTML = '<div class="status-card">' + poster + '<div>' +
+        '<div style="font-weight:650;margin-bottom:0.3rem">Your request</div>' +
         '<div>' + escape(r.title) + (r.year ? ' (' + r.year + ')' : '') +
         ' · <span class="badge ' + r.status + '">' + r.status + '</span></div>' +
-        '<div class="hint">Id: ' + escape(r.id) + ' · refresh this page to update</div>';
+        '<div class="hint">Id: ' + escape(r.id) + '</div></div></div>';
     } catch (_) {}
   }
 
@@ -371,6 +414,13 @@ function requestPageHtml(): string {
     }
   }
 
+  function setType(t) {
+    $('mediaType').value = t;
+    $('typeShow').classList.toggle('on', t === 'show');
+    $('typeMovie').classList.toggle('on', t === 'movie');
+  }
+  $('typeShow').onclick = () => setType('show');
+  $('typeMovie').onclick = () => setType('movie');
   $('query').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') $('searchBtn').click();
   });
@@ -381,16 +431,20 @@ function requestPageHtml(): string {
 
 function adminLoginHtml(error?: string): string {
   const body = `
-<div class="card" style="max-width:420px">
+<div class="hero">
+  <h2>Admin</h2>
+  <p>Approve or deny incoming requests.</p>
+</div>
+<div class="card" style="max-width:440px">
   <form method="POST" action="/admin/login">
     <div class="field">
-      <label>Admin password</label>
+      <label>Password</label>
       <input type="password" name="password" autocomplete="current-password" required autofocus />
     </div>
     ${error ? `<div class="msg err">${escapeHtml(error)}</div>` : ''}
     <button type="submit" class="primary">Log in</button>
   </form>
-  <div class="hint" style="margin-top:0.75rem">Password is set in Nightfeed Settings → Web portal.</div>
+  <div class="hint" style="margin-top:0.75rem">Set in Nightfeed Settings → Web portal.</div>
 </div>`;
   return layout('Admin login', body, 'admin');
 }
@@ -411,8 +465,10 @@ function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): s
     return `<tr>
       <td><code>${escapeHtml(r.id)}</code></td>
       <td><div class="req-cell">${posterHtml(r)}<div>
-        <div>${escapeHtml(type)}: ${escapeHtml(r.title)}${escapeHtml(year)}</div>
-        <div class="hint">${escapeHtml(src)} · ${escapeHtml(who)}</div>
+        <div style="font-weight:650">${escapeHtml(type)}: ${escapeHtml(r.title)}${escapeHtml(year)}</div>
+        <div class="hint">${escapeHtml(src)} · ${escapeHtml(who)}${
+          r.overview ? ' · ' + escapeHtml(r.overview.slice(0, 140)) : ''
+        }</div>
       </div></div></td>
       <td><span class="badge ${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
       <td>${
@@ -433,9 +489,14 @@ function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): s
   };
 
   const body = `
-<div class="row" style="justify-content:space-between;margin-bottom:0.75rem">
-  <div class="hint">Approve / Deny uses the same backend as Telegram.</div>
+<div class="row" style="justify-content:space-between;margin-bottom:0.85rem">
+  <div class="hint">Same approve/deny pipeline as Telegram. Auto-refreshes every 30s.</div>
   <form method="POST" action="/admin/logout"><button type="submit">Log out</button></form>
+</div>
+<div class="stats">
+  <div class="stat"><b>${pending.length}</b> pending</div>
+  <div class="stat"><b>${recent.filter((r) => r.status === 'approved').length}</b> approved</div>
+  <div class="stat"><b>${recent.filter((r) => r.status === 'denied').length}</b> denied</div>
 </div>
 <div class="card">
   <div style="font-weight:600;margin-bottom:0.5rem">Pending</div>
@@ -454,8 +515,9 @@ function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): s
          <tbody>${recent.map((r) => row(r, false)).join('')}</tbody></table>`
       : `<div class="hint">No recent decisions yet.</div>`
   }
-</div>`;
-  return layout('Admin', body, 'admin');
+</div>
+<script>setTimeout(function(){ if (!document.hidden) location.reload(); }, 30000);</script>`;
+  return layout('Admin', body, 'admin', true);
 }
 
 export function portalBindHost(settings: AppSettings): string {

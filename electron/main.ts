@@ -31,7 +31,13 @@ import {
   fetchShowDetail,
   ignoreAiredEpisodes,
 } from './services/tvmaze';
-import { extractInfoHash, MIN_AUTO_SEEDERS, pickAutoDownload } from './services/search';
+import {
+  extractInfoHash,
+  filterQualityResults,
+  MIN_AUTO_SEEDERS,
+  pickAutoDownload,
+  type QualityRules,
+} from './services/search';
 import { searchEpisodeTorrents, searchMovieTorrents, destroySearchPool, getSearchPoolInfo } from './services/search-pool';
 import { searchShowsMeta, searchMoviesMeta, destroyMetadataPool, getMetadataPoolInfo } from './services/metadata-pool';
 import {
@@ -266,6 +272,7 @@ function applyTorrentBindFromVpn(): void {
     // default route. OpenVPN pulls routes so torrent traffic uses the VPN.
     bindAddress: null,
     vpnHold: torrentVpnHold(),
+    processFolder: getSettings().processFolder || '',
   });
 }
 
@@ -391,6 +398,23 @@ function showForDownload(show: Show, seasonNumber: number): Show {
   };
 }
 
+function qualityRules(kind: 'episode' | 'movie', preferredOverride?: Resolution | null): QualityRules {
+  const s = getSettings();
+  const preferred =
+    (preferredOverride ||
+      (kind === 'movie' ? s.defaultMovieResolution || s.defaultResolution : s.defaultResolution)) as Resolution;
+  const minimum = (kind === 'movie' ? s.minimumMovieResolution || s.minimumResolution : s.minimumResolution) || '720p';
+  return {
+    preferred,
+    minimum: minimum as Resolution,
+    minSizeMb: {
+      '720p': s.minSizeMb720p || 0,
+      '1080p': s.minSizeMb1080p || 0,
+      '2160p': s.minSizeMb2160p || 0,
+    },
+  };
+}
+
 function movieForDownload(movie: Movie): Movie {
   const roots = movieRoots();
   return {
@@ -446,15 +470,13 @@ function toHealthyPreferredCandidates(
     infoHash?: string;
     title?: string;
     seeders?: number;
-    resolution?: string | null;
+    resolution?: Resolution | null;
+    size?: number;
   }>,
-  preferred: Resolution
+  preferred: Resolution,
+  kind: 'episode' | 'movie'
 ): TorrentCandidate[] {
-  return toCandidates(
-    (results || []).filter(
-      (r) => r.resolution === preferred && (r.seeders || 0) >= MIN_AUTO_SEEDERS
-    )
-  );
+  return toCandidates(filterQualityResults(results as any, preferred, kind, qualityRules(kind, preferred)));
 }
 
 function pickNextCandidate(
@@ -498,7 +520,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
             movie.releaseYear,
             preferred
           );
-          candidates = toHealthyPreferredCandidates(res.results, preferred);
+          candidates = toHealthyPreferredCandidates(res.results, preferred, 'movie');
           next = pickNextCandidate(candidates, tried, item.magnet);
         }
       } else if (item.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
@@ -513,7 +535,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
             preferred,
             { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
-          candidates = toHealthyPreferredCandidates(res.results, preferred);
+          candidates = toHealthyPreferredCandidates(res.results, preferred, 'episode');
           next = pickNextCandidate(candidates, tried, item.magnet);
         }
       }
@@ -522,10 +544,10 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
     }
   }
 
-  notify(`Skipped .exe, trying another torrent for ${item.name}`, 'warn');
+  notify(`Skipped: ${item.error || 'bad torrent'} — trying another for ${item.name}`, 'warn');
 
   if (!next?.magnet) {
-    notify(`No alternative torrents after skipping .exe for ${item.name}`, 'error');
+    notify(`No alternative torrents after skipping ${item.name}`, 'error');
     pushDownloads({ persist: 'now' });
     return;
   }
@@ -541,6 +563,10 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
         movieLibraryRoot: movieRoots(settings)[0] || settings.movieLibraryRoot,
         candidates,
         triedInfoHashes: triedList,
+        quality: qualityRules(
+          'movie',
+          movie.preferredResolution || settings.defaultMovieResolution || settings.defaultResolution
+        ),
       });
       upsertMovie(withMovieLocalStatus(movie));
       mainWindow?.webContents.send('movies:changed');
@@ -556,6 +582,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
         episodeTitle: item.episodeTitle,
         candidates,
         triedInfoHashes: triedList,
+        quality: qualityRules('episode', show.preferredResolution || settings.defaultResolution),
       });
       emitLibraryChanged();
     }
@@ -693,9 +720,10 @@ async function autoDownloadForShows(
             preferred,
             { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
-          const best = pickAutoDownload(results, preferred, 'episode');
+          const rules = qualityRules('episode', preferred);
+          const best = pickAutoDownload(results, preferred, 'episode', rules);
           if (!best?.magnet) continue;
-          const candidates = toHealthyPreferredCandidates(results, preferred);
+          const candidates = toHealthyPreferredCandidates(results, preferred, 'episode');
           await downloadEngine.start({
             magnet: best.magnet,
             show: showForDownload(show, ep.seasonNumber),
@@ -707,6 +735,7 @@ async function autoDownloadForShows(
             triedInfoHashes: [],
             notifyChatId: notifyCtx?.notifyChatId,
             telegramRequestId: notifyCtx?.telegramRequestId,
+            quality: rules,
           });
           started += 1;
           pushDownloads({ persist: 'now' });
@@ -766,9 +795,10 @@ async function autoDownloadMovie(
     movie.releaseYear,
     preferred
   );
-  const best = pickAutoDownload(res.results, preferred, 'movie');
+  const rules = qualityRules('movie', preferred);
+  const best = pickAutoDownload(res.results, preferred, 'movie', rules);
   if (!best?.magnet) return false;
-  const candidates = toHealthyPreferredCandidates(res.results, preferred);
+  const candidates = toHealthyPreferredCandidates(res.results, preferred, 'movie');
   await downloadEngine.startMovie({
     magnet: best.magnet,
     movie: movieForDownload(movie),
@@ -777,6 +807,7 @@ async function autoDownloadMovie(
     triedInfoHashes: [],
     notifyChatId: notifyCtx?.notifyChatId,
     telegramRequestId: notifyCtx?.telegramRequestId,
+    quality: rules,
   });
   upsertMovie(withMovieLocalStatus(movie));
   pushDownloads({ persist: 'now' });
@@ -886,6 +917,7 @@ function applySettingsSideEffects(next: AppSettings): void {
     maxUploadSpeedKBps: next.maxUploadSpeedKBps,
     bindAddress: null,
     vpnHold: !!(next.vpnEnabled && next.vpnRequireForTorrents && !vpnManager.isConnected()),
+    processFolder: next.processFolder || '',
   });
   configureUpdaterFeed();
   if (!next.vpnEnabled) {
@@ -2044,6 +2076,7 @@ function registerIpc() {
       const candidates = payload.candidates?.length
         ? toCandidates(payload.candidates)
         : toCandidates([{ magnet: payload.magnet }]);
+      const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
       const item = await downloadEngine.start({
         magnet: payload.magnet,
         show: showForDownload(show, payload.season),
@@ -2053,6 +2086,7 @@ function registerIpc() {
         episodeTitle: payload.episodeTitle,
         candidates,
         triedInfoHashes: [],
+        quality: qualityRules('episode', preferred),
       });
       pushDownloads({ persist: 'now' });
       return item;
@@ -2188,12 +2222,16 @@ function registerIpc() {
       const candidates = payload.candidates?.length
         ? toCandidates(payload.candidates)
         : toCandidates([{ magnet: payload.magnet }]);
+      const preferred = (movie.preferredResolution ||
+        settings.defaultMovieResolution ||
+        settings.defaultResolution) as Resolution;
       const item = await downloadEngine.startMovie({
         magnet: payload.magnet,
         movie: movieForDownload(movie),
         movieLibraryRoot: mRoots[0],
         candidates,
         triedInfoHashes: [],
+        quality: qualityRules('movie', preferred),
       });
       // Mark downloading in store for UI
       upsertMovie(withMovieLocalStatus(movie));
@@ -2237,7 +2275,9 @@ function registerIpc() {
       maxConnections: settings.maxConnections,
       maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
       maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
-      bindAddress: vpnManager.getBindAddress(),
+      bindAddress: null,
+      vpnHold: torrentVpnHold(),
+      processFolder: settings.processFolder || '',
     });
     applyLoginItem(!!settings.launchOnStartup);
     telegramBot.sync(settings);
@@ -2496,6 +2536,7 @@ app.whenReady().then(async () => {
     maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
     bindAddress: null,
     vpnHold: torrentVpnHold(),
+    processFolder: settings.processFolder || '',
   });
   applyLoginItem(!!settings.launchOnStartup);
   scheduleRefresh();

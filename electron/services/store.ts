@@ -102,6 +102,20 @@ export function getSettings(): AppSettings {
   if (!merged.defaultMovieResolution) {
     merged.defaultMovieResolution = merged.defaultResolution || '1080p';
   }
+  if (merged.minimumResolution !== '720p' && merged.minimumResolution !== '1080p' && merged.minimumResolution !== '2160p') {
+    merged.minimumResolution = '720p';
+  }
+  if (
+    merged.minimumMovieResolution !== '720p' &&
+    merged.minimumMovieResolution !== '1080p' &&
+    merged.minimumMovieResolution !== '2160p'
+  ) {
+    merged.minimumMovieResolution = '720p';
+  }
+  if (typeof merged.minSizeMb720p !== 'number' || merged.minSizeMb720p < 0) merged.minSizeMb720p = 200;
+  if (typeof merged.minSizeMb1080p !== 'number' || merged.minSizeMb1080p < 0) merged.minSizeMb1080p = 500;
+  if (typeof merged.minSizeMb2160p !== 'number' || merged.minSizeMb2160p < 0) merged.minSizeMb2160p = 2000;
+  if (merged.processFolder == null) merged.processFolder = '';
   if (typeof merged.ftpEnabled !== 'boolean') merged.ftpEnabled = false;
   if (merged.ftpHost == null) merged.ftpHost = '';
   if (!merged.ftpPort || merged.ftpPort < 1) merged.ftpPort = 21;

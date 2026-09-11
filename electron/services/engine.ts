@@ -2,8 +2,11 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
-import { DownloadItem, Movie, Show, TorrentCandidate } from '../types';
-import { buildEpisodePath, buildMoviePath } from './paths';
+import { DownloadItem, Movie, Resolution, Show, TorrentCandidate } from '../types';
+import { buildEpisodePath, buildMoviePath, sanitizeName } from './paths';
+import type { QualityRules } from './search';
+import { resolutionRank } from './search';
+import { probeVideoFile } from './video-probe';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const WebTorrent = require('webtorrent') as any;
@@ -30,6 +33,7 @@ type EpisodeStartOpts = {
   triedInfoHashes?: string[];
   notifyChatId?: number;
   telegramRequestId?: string;
+  quality?: QualityRules;
 };
 
 type MovieStartOpts = {
@@ -40,6 +44,7 @@ type MovieStartOpts = {
   triedInfoHashes?: string[];
   notifyChatId?: number;
   telegramRequestId?: string;
+  quality?: QualityRules;
 };
 
 type PendingJob = { kind: 'episode'; opts: EpisodeStartOpts } | { kind: 'movie'; opts: MovieStartOpts };
@@ -122,6 +127,8 @@ export interface EngineSettings {
   bindAddress?: string | null;
   /** When true, no torrent sockets — pause active downloads (VPN kill switch). */
   vpnHold?: boolean;
+  /** Staging folder: download here, then verify/rename/move into the library. */
+  processFolder?: string | null;
 }
 
 export class DownloadEngine extends EventEmitter {
@@ -134,6 +141,7 @@ export class DownloadEngine extends EventEmitter {
   private maxUploadSpeedKBps = 0;
   private bindAddress: string | null = null;
   private vpnHold = false;
+  private processFolder: string | null = null;
   private netBindPatched = false;
   private lastProgressEmit = 0;
   private progressEmitTimer: NodeJS.Timeout | null = null;
@@ -161,6 +169,10 @@ export class DownloadEngine extends EventEmitter {
       this.vpnHold = settings.vpnHold;
       if (this.vpnHold) this.engageKillSwitch();
       else this.releaseKillSwitch();
+    }
+    if ('processFolder' in settings) {
+      const next = settings.processFolder ? String(settings.processFolder).trim() : '';
+      this.processFolder = next || null;
     }
     if (this.client) {
       this.client.maxConns = this.maxConns;
@@ -390,13 +402,62 @@ export class DownloadEngine extends EventEmitter {
     }
   }
 
-  private async handleRejectExe(id: string, item: DownloadItem, torrent: any): Promise<void> {
+  private workDir(id: string, fallback: string): string {
+    if (!this.processFolder) return fallback;
+    const dir = path.join(this.processFolder, sanitizeName(`nf-${id}`) || id);
+    fs.mkdirSync(this.processFolder, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  private async cleanupWorkDir(dir: string): Promise<void> {
+    if (!this.processFolder || !dir) return;
+    const root = path.resolve(this.processFolder);
+    const target = path.resolve(dir);
+    const prefix = root.toLowerCase();
+    const t = target.toLowerCase();
+    if (t !== prefix && !t.startsWith(prefix + path.sep.toLowerCase()) && !t.startsWith(prefix + '/')) {
+      return;
+    }
+    try {
+      await fsp.rm(target, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+
+  private async assertQuality(
+    filePath: string,
+    fileSize: number,
+    quality?: QualityRules
+  ): Promise<{ ok: true; resolution: Resolution | null } | { ok: false; reason: string }> {
+    const probe = await probeVideoFile(filePath);
+    const res = probe.resolution;
+    if (quality?.minimum && resolutionRank(res) < resolutionRank(quality.minimum)) {
+      return {
+        ok: false,
+        reason: `Resolution ${res || `${probe.height || '?'}p`} is below minimum ${quality.minimum}`,
+      };
+    }
+    if (quality?.minSizeMb && res) {
+      const minMb = quality.minSizeMb[res] || 0;
+      if (minMb > 0 && fileSize < minMb * 1024 * 1024) {
+        return {
+          ok: false,
+          reason: `File too small for ${res} (${Math.round(fileSize / 1024 / 1024)} MB < ${minMb} MB)`,
+        };
+      }
+    }
+    return { ok: true, resolution: res };
+  }
+
+  private async handleRejectExe(id: string, item: DownloadItem, torrent: any, reason?: string): Promise<void> {
     const tried = new Set((item.triedInfoHashes || []).map((h) => h.toLowerCase()));
     if (item.infoHash) tried.add(item.infoHash.toLowerCase());
     const snapshot: DownloadItem = {
       ...item,
       status: 'error',
-      error: 'Rejected .exe / non-video payload',
+      error: reason || 'Rejected .exe / non-video payload',
       triedInfoHashes: Array.from(tried),
     };
     // Destroy torrent and delete downloaded files — do NOT mark Downloaded
@@ -412,22 +473,18 @@ export class DownloadEngine extends EventEmitter {
     this.torrents.delete(id);
     this.jobs.delete(id);
     this.items.delete(id);
+    const work = item.savePath;
     this.emitUpdateNow();
     this.emit('reject-exe', snapshot);
     this.pumpQueue();
+    void this.cleanupWorkDir(work);
   }
 
   private async finalizeEpisodeDone(
     id: string,
     item: DownloadItem,
     torrent: any,
-    opts: {
-      show: Show;
-      libraryRoot: string;
-      seasonNumber: number;
-      episodeNumber: number;
-      episodeTitle: string;
-    }
+    opts: EpisodeStartOpts
   ): Promise<void> {
     const files = torrent.files.map((f: any) => ({
       name: f.name,
@@ -441,6 +498,12 @@ export class DownloadEngine extends EventEmitter {
     }
 
     const best = pickVideoFile(files);
+    const src = best.path;
+    const check = await this.assertQuality(src, best.length || 0, opts.quality);
+    if (!check.ok) {
+      await this.handleRejectExe(id, item, torrent, check.reason);
+      return;
+    }
     const ext = path.extname(best.name) || '.mkv';
     const finalPaths = buildEpisodePath(
       opts.show,
@@ -450,7 +513,6 @@ export class DownloadEngine extends EventEmitter {
       opts.episodeTitle,
       ext
     );
-    const src = best.path;
     const dest = finalPaths.filePath;
     if (src !== dest) {
       try {
@@ -460,6 +522,7 @@ export class DownloadEngine extends EventEmitter {
         // if move fails, keep original path
       }
     }
+    await this.cleanupWorkDir(item.savePath);
     item.progress = 1;
     item.downloadSpeed = 0;
     item.status = 'done';
@@ -473,7 +536,7 @@ export class DownloadEngine extends EventEmitter {
     id: string,
     item: DownloadItem,
     torrent: any,
-    opts: { movie: Movie; movieLibraryRoot: string }
+    opts: MovieStartOpts
   ): Promise<void> {
     const files = torrent.files.map((f: any) => ({
       name: f.name,
@@ -487,9 +550,14 @@ export class DownloadEngine extends EventEmitter {
     }
 
     const best = pickVideoFile(files);
+    const src = best.path;
+    const check = await this.assertQuality(src, best.length || 0, opts.quality);
+    if (!check.ok) {
+      await this.handleRejectExe(id, item, torrent, check.reason);
+      return;
+    }
     const ext = path.extname(best.name) || '.mkv';
     const finalPaths = buildMoviePath(opts.movie, opts.movieLibraryRoot, ext);
-    const src = best.path;
     const dest = finalPaths.filePath;
     if (src !== dest) {
       try {
@@ -499,6 +567,7 @@ export class DownloadEngine extends EventEmitter {
         // keep original
       }
     }
+    await this.cleanupWorkDir(item.savePath);
     item.progress = 1;
     item.downloadSpeed = 0;
     item.status = 'done';
@@ -518,6 +587,10 @@ export class DownloadEngine extends EventEmitter {
       opts.episodeTitle,
       '.mkv'
     );
+    const workDir = this.workDir(
+      `${opts.show.tmdbId}-S${opts.seasonNumber}E${opts.episodeNumber}`,
+      provisional.seasonDir
+    );
     const item: DownloadItem = {
       id,
       infoHash: '',
@@ -532,7 +605,7 @@ export class DownloadEngine extends EventEmitter {
       uploadSpeed: 0,
       numPeers: 0,
       status: 'queued',
-      savePath: provisional.seasonDir,
+      savePath: workDir,
       magnet: opts.magnet,
       candidates: opts.candidates,
       triedInfoHashes: opts.triedInfoHashes ? [...opts.triedInfoHashes] : [],
@@ -634,6 +707,7 @@ export class DownloadEngine extends EventEmitter {
   async startMovie(opts: MovieStartOpts): Promise<DownloadItem> {
     const id = `movie-${opts.movie.tmdbId}-${Date.now()}`;
     const provisional = buildMoviePath(opts.movie, opts.movieLibraryRoot, '.mkv');
+    const workDir = this.workDir(`movie-${opts.movie.tmdbId}`, provisional.movieDir);
     const item: DownloadItem = {
       id,
       infoHash: '',
@@ -648,7 +722,7 @@ export class DownloadEngine extends EventEmitter {
       uploadSpeed: 0,
       numPeers: 0,
       status: 'queued',
-      savePath: provisional.movieDir,
+      savePath: workDir,
       magnet: opts.magnet,
       kind: 'movie',
       movieId: opts.movie.tmdbId,
