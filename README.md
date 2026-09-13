@@ -58,6 +58,17 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 
 ---
 
+---
+
+## License
+
+Copyright © 2026 **HoffSoftware**. All rights reserved.
+
+Nightfeed is free for **private, personal use** only. Business use, resale, and commercial redistribution are not allowed without written permission from HoffSoftware.
+
+Full terms: [LICENSE](LICENSE)
+
+
 ## Develop
 
 ```bash
