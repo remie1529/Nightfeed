@@ -10,3 +10,4 @@ release
 *.zip
 win-unpacked
 tsconfig.node.tsbuildinfo
+docs/features-preview.html
