@@ -77,8 +77,7 @@ HoffSoftware / Nightfeed **does not condone** downloading movies or TV shows you
 
 Nightfeed is a desktop tool. **You** choose what to search and download. Prefer legal sources and content you own or are licensed to use.
 
-**Wij beheren en hosten geen torrents of illegale bestanden.**  
-(We do not manage or host torrents or illegal files.)
+**We do not manage or host torrents or illegal files.**
 
 
 ## Develop

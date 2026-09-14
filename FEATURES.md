@@ -8,7 +8,7 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 ---
 
-> **Disclaimer:** HoffSoftware does not condone downloading content you do not have rights to. Wij beheren en hosten geen torrents of illegale bestanden.
+> **Disclaimer:** HoffSoftware does not condone downloading content you do not have rights to. We do not manage or host torrents or illegal files.
 
 ## At a glance
 
