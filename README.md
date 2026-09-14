@@ -69,6 +69,18 @@ Nightfeed is free for **private, personal use** only. Business use, resale, and 
 Full terms: [LICENSE](LICENSE)
 
 
+---
+
+## Disclaimer
+
+HoffSoftware / Nightfeed **does not condone** downloading movies or TV shows you do not have the rights to.
+
+Nightfeed is a desktop tool. **You** choose what to search and download. Prefer legal sources and content you own or are licensed to use.
+
+**Wij beheren en hosten geen torrents of illegale bestanden.**  
+(We do not manage or host torrents or illegal files.)
+
+
 ## Develop
 
 ```bash
