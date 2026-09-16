@@ -2,6 +2,10 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.3
+
+- Loading screen stays up until the torrent engine, VPN detect, and settings are ready — then the UI appears
+
 ## 1.9.2
 
 - Startup loading screen while Nightfeed initializes

@@ -42,15 +42,30 @@ export default function App() {
   const [updateBanner, setUpdateBanner] = useState<UpdateStatus | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const [liveTvOn, setLiveTvOn] = useState(false);
+  const [bootReady, setBootReady] = useState(false);
 
   useEffect(() => {
+    const markReady = () => setBootReady(true);
+    window.torrentAPI.isAppReady?.().then((r) => {
+      if (r) markReady();
+    }).catch(() => undefined);
+    const offReady = window.torrentAPI.onAppReady?.(markReady);
+    return () => {
+      offReady?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!bootReady) return;
     const splash = document.getElementById('boot-splash');
-    const hideSplash = () => {
-      if (!splash || splash.classList.contains('boot-hide')) return;
+    if (splash && !splash.classList.contains('boot-hide')) {
       splash.classList.add('boot-hide');
       setTimeout(() => splash.remove(), 280);
-    };
-    const splashTimer = window.setTimeout(hideSplash, 450);
+    }
+  }, [bootReady]);
+
+  useEffect(() => {
+    if (!bootReady) return;
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || ''))).catch(() => undefined);
     window.torrentAPI
       .getSettings()
@@ -115,9 +130,8 @@ export default function App() {
       offUpd?.();
       offSettings?.();
       clearInterval(pendingTimer);
-      window.clearTimeout(splashTimer);
     };
-  }, []);
+  }, [bootReady]);
 
   useEffect(() => {
     if (!liveTvOn && view === 'livetv') setView('settings');
@@ -133,6 +147,8 @@ export default function App() {
     setSelectedMovieId(movie.tmdbId);
     setView('movie');
   };
+
+  if (!bootReady) return null;
 
   return (
     <div className="app-shell">

@@ -93,6 +93,12 @@ const api = {
   exportBackup: () => ipcRenderer.invoke('backup:export'),
   importBackup: () => ipcRenderer.invoke('backup:import'),
 
+  isAppReady: () => ipcRenderer.invoke('app:isReady'),
+  onAppReady: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('app:ready', listener);
+    return () => ipcRenderer.removeListener('app:ready', listener);
+  },
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   getThreadInfo: () => ipcRenderer.invoke('app:getThreadInfo'),
   getUpdateStatus: () => ipcRenderer.invoke('update:status'),
