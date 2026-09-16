@@ -63,6 +63,13 @@ import {
 import { uploadFinishedFile } from './services/ftp';
 import { vpnManager } from './services/vpn';
 import { liveTv, withLogoPreview } from './services/live-tv';
+import {
+  applyCrashRestartTask,
+  clearSessionLock,
+  isCrashWatchdogArg,
+  runCrashWatchdog,
+  writeSessionLock,
+} from './services/crash-watchdog';
 import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
 import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
@@ -97,6 +104,20 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, bypassCSP: true },
   },
 ]);
+
+if (!isCrashWatchdogArg()) {
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+  } else {
+    app.on('second-instance', () => {
+      if (!mainWindow) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    });
+  }
+}
 
 process.on('uncaughtException', (err) => {
   if (isIgnorableTorrentSocketError(err)) {
@@ -153,6 +174,7 @@ function createWindow() {
     backgroundColor: '#121212',
     title: 'Nightfeed',
     autoHideMenuBar: true,
+    show: false,
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -174,6 +196,13 @@ function createWindow() {
   } catch {
     // ignore
   }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+  });
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) mainWindow.show();
+  }, 4000);
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -950,6 +979,10 @@ function ensureWebPortalSecrets(settings: AppSettings): AppSettings {
 function applySettingsSideEffects(next: AppSettings): void {
   scheduleRefresh();
   applyLoginItem(!!next.launchOnStartup);
+  const crashTask = applyCrashRestartTask(!!next.restartOnCrash);
+  if (next.restartOnCrash && !crashTask.ok) {
+    notify(`Could not register crash-restart task: ${crashTask.message}`, 'warn');
+  }
   telegramBot.sync(next);
   const portalSettings = ensureWebPortalSecrets(next);
   webPortal.sync(portalSettings);
@@ -2564,6 +2597,11 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  if (isCrashWatchdogArg()) {
+    runCrashWatchdog();
+    app.exit(0);
+    return;
+  }
   try {
     protocol.handle('nfimg', async (request) => {
       const file = resolveNfimgFile(request.url);
@@ -2581,6 +2619,8 @@ app.whenReady().then(async () => {
     // ignore
   }
   registerIpc();
+  createWindow();
+  writeSessionLock();
   wireTelegram();
   setupAutoUpdater();
   await vpnManager.refreshDetect();
@@ -2684,7 +2724,6 @@ app.whenReady().then(async () => {
     pushDownloads({ persist: 'now' });
     void maybeFtpUpload(item?.savePath, item?.name || path.basename(item?.savePath || 'file'));
   });
-  createWindow();
   const settings = getSettings();
   downloadEngine.applySettings({
     maxConnections: settings.maxConnections,
@@ -2696,6 +2735,7 @@ app.whenReady().then(async () => {
     processFolder: settings.processFolder || '',
   });
   applyLoginItem(!!settings.launchOnStartup);
+  applyCrashRestartTask(!!settings.restartOnCrash);
   scheduleRefresh();
   void autoConnectVpnOnLaunch();
 
@@ -2718,8 +2758,13 @@ app.whenReady().then(async () => {
   });
 });
 
+app.on('before-quit', () => {
+  clearSessionLock();
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    clearSessionLock();
     telegramBot.stop();
     webPortal.stop();
     liveTv.stop();

@@ -5,8 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: nfimg:; connect-src 'self' https://api.tvmaze.com https://apibay.org https://api.knaben.org https://yourbittorrent.com https://torrents-csv.com https://eztvx.to https://feed.animetosho.org https://nyaa.si https://www.limetorrents.fun https://www.limetorrents.lol ws: wss: blob:; media-src 'self' blob:" />
     <title>Nightfeed</title>
+    <style>
+      #boot-splash {
+        position: fixed; inset: 0; z-index: 99999;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 0.85rem;
+        background: #121212; color: #e8e6e3;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        transition: opacity 0.25s ease;
+      }
+      #boot-splash.boot-hide { opacity: 0; pointer-events: none; }
+      #boot-splash .boot-name {
+        color: #d4a017; font-size: 1.7rem; font-weight: 700; letter-spacing: 0.04em;
+      }
+      #boot-splash .boot-sub { color: #9a9690; font-size: 0.92rem; }
+      #boot-spin {
+        width: 28px; height: 28px; margin-top: 0.35rem;
+        border: 3px solid #2a2a2a; border-top-color: #d4a017; border-radius: 50%;
+        animation: bootspin 0.75s linear infinite;
+      }
+      @keyframes bootspin { to { transform: rotate(360deg); } }
+    </style>
   </head>
   <body>
+    <div id="boot-splash">
+      <div class="boot-name">Nightfeed</div>
+      <div class="boot-sub">Starting…</div>
+      <div id="boot-spin"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

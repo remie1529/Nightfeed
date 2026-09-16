@@ -67,6 +67,7 @@ export interface AppSettings {
   autoDownload: boolean;
   autoDownloadDelayMinutes: number;
   launchOnStartup: boolean;
+  restartOnCrash: boolean;
   telegramEnabled: boolean;
   telegramBotToken: string;
   /** @deprecated Prefer telegramAdminChatIds */

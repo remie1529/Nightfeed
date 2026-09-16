@@ -44,6 +44,13 @@ export default function App() {
   const [liveTvOn, setLiveTvOn] = useState(false);
 
   useEffect(() => {
+    const splash = document.getElementById('boot-splash');
+    const hideSplash = () => {
+      if (!splash || splash.classList.contains('boot-hide')) return;
+      splash.classList.add('boot-hide');
+      setTimeout(() => splash.remove(), 280);
+    };
+    const splashTimer = window.setTimeout(hideSplash, 450);
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || ''))).catch(() => undefined);
     window.torrentAPI
       .getSettings()
@@ -108,6 +115,7 @@ export default function App() {
       offUpd?.();
       offSettings?.();
       clearInterval(pendingTimer);
+      window.clearTimeout(splashTimer);
     };
   }, []);
 

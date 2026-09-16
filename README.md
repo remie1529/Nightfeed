@@ -97,6 +97,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.9.2** — Startup loading screen; optional Task Scheduler restart after a crash.
+
 **1.9.1** — Live TV icons actually show in Nightfeed and are served as PNGs for Plex.
 
 **1.9.0** — Live TV: custom channel icons, EPG mapping, and fake guide for channels with no XMLTV.

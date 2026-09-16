@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.9.1 — Live TV channel icons display and Plex PNG URLs.
+**Current:** v1.9.2 — Startup splash + crash restart via Task Scheduler.
+
+# Status v1.9.2
+
+## New
+- Loading screen on launch
+- Settings: Restart Nightfeed if it crashes (Task Scheduler watchdog)
 
 # Status v1.9.1
 

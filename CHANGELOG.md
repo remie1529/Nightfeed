@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.2
+
+- Startup loading screen while Nightfeed initializes
+- Settings: restart Nightfeed after a crash via Task Scheduler (`NightfeedCrashRestart`); a normal quit does not restart
+
 ## 1.9.1
 
 - Live TV icons: CSP no longer blocks previews; custom files are stored as PNG and served at `/icon/{id}.png` for Plex
