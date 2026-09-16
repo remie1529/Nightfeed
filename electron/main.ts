@@ -25,6 +25,8 @@ import {
   upsertMovie,
   upsertShow,
   upsertTelegramRequest,
+  getLiveTvLineup,
+  setLiveTvLineup,
 } from './services/store';
 import {
   applyLocalStatuses,
@@ -60,6 +62,7 @@ import {
 } from './services/web-portal';
 import { uploadFinishedFile } from './services/ftp';
 import { vpnManager } from './services/vpn';
+import { liveTv } from './services/live-tv';
 import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
 import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
@@ -81,6 +84,7 @@ import {
   Resolution,
   Show,
   ShowListItem,
+  LiveTvChannel,
   TelegramRequest,
   TorrentCandidate,
   UpdateStatus,
@@ -230,7 +234,7 @@ function persistDownloadsDebounced(items: DownloadItem[], force = false): void {
     return;
   }
   if (!persistDownloadsTimer) {
-    persistDownloadsTimer = setTimeout(flush, 5000);
+    persistDownloadsTimer = setTimeout(flush, 15000);
   }
 }
 
@@ -949,6 +953,7 @@ function applySettingsSideEffects(next: AppSettings): void {
   telegramBot.sync(next);
   const portalSettings = ensureWebPortalSecrets(next);
   webPortal.sync(portalSettings);
+  liveTv.sync(next);
   downloadEngine.applySettings({
     maxConnections: next.maxConnections,
     maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
@@ -1768,6 +1773,7 @@ function wireWebPortal() {
     resolveRequest: async (id, action) => resolveTelegramRequest(id, action, 0),
   });
   webPortal.sync(ensureWebPortalSecrets(getSettings()));
+  liveTv.sync(getSettings());
 }
 
 
@@ -1998,9 +2004,24 @@ function registerIpc() {
     if (incoming.webPortalBind != null && incoming.webPortalBind !== 'lan') {
       incoming.webPortalBind = 'localhost';
     }
+    if (incoming.liveTvPort != null) {
+      const n = Number(incoming.liveTvPort);
+      incoming.liveTvPort = Number.isFinite(n) ? Math.max(1, Math.min(65535, Math.floor(n))) : 34400;
+    }
+    if (incoming.liveTvBind != null && incoming.liveTvBind !== 'localhost') {
+      incoming.liveTvBind = 'lan';
+    }
+    if (incoming.liveTvTuners != null) {
+      const n = Number(incoming.liveTvTuners);
+      incoming.liveTvTuners = Number.isFinite(n) ? Math.max(1, Math.min(16, Math.floor(n))) : 3;
+    }
+    if (incoming.liveTvBufferMode != null && incoming.liveTvBufferMode !== 'off' && incoming.liveTvBufferMode !== 'ffmpeg') {
+      incoming.liveTvBufferMode = 'memory';
+    }
 
     const next = setSettings(incoming);
     applySettingsSideEffects(next);
+    mainWindow?.webContents.send('settings:changed', next);
     return next;
   });
 
@@ -2398,6 +2419,33 @@ function registerIpc() {
       return resolveTelegramRequest(String(id || ''), action, 0);
     }
   );
+  ipcMain.handle('liveTv:status', () => liveTv.getStatus(getSettings()));
+  ipcMain.handle('liveTv:channels', () => getLiveTvLineup());
+  ipcMain.handle('liveTv:refresh', async () => liveTv.refreshSources());
+  ipcMain.handle('liveTv:setChannels', (_e, channels: LiveTvChannel[]) => {
+    if (!Array.isArray(channels)) return getLiveTvLineup();
+    setLiveTvLineup(
+      channels.map((c, i) => ({
+        id: String(c.id || ''),
+        name: String(c.name || `Channel ${i + 1}`),
+        number: Math.max(1, Math.floor(Number(c.number) || i + 1)),
+        group: String(c.group || ''),
+        logo: String(c.logo || ''),
+        tvgId: String(c.tvgId || ''),
+        url: String(c.url || ''),
+        enabled: !!c.enabled,
+      }))
+    );
+    return getLiveTvLineup();
+  });
+  ipcMain.handle('dialog:pickFile', async (_e, filters?: Array<{ name: string; extensions: string[] }>) => {
+    const r = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile'],
+      filters: filters?.length ? filters : [{ name: 'M3U', extensions: ['m3u', 'm3u8', 'txt'] }],
+    });
+    return r.canceled ? null : r.filePaths[0] || null;
+  });
+
   ipcMain.handle('webPortal:status', () => {
     const s = getSettings();
     const st = webPortal.getStatus(s);
@@ -2659,6 +2707,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     telegramBot.stop();
     webPortal.stop();
+    liveTv.stop();
     void vpnManager.disconnect();
     downloadEngine.destroy();
     void destroySearchPool();

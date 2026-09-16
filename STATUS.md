@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.8.7 — Calendar week view + Library missing-episodes filter.
+**Current:** v1.8.8 — Live TV for Plex + download freeze/speed fix.
+
+# Status v1.8.8
+
+## New
+- IPTV → Plex HDHomeRun tuner (M3U / Xtream / direct), channel picker, tuners, buffer
+- WebTorrent no longer recreates the client on VPN ifIndex-only updates; fewer peers / slower UI ticks
 
 # Status v1.8.7
 

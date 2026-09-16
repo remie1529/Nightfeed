@@ -107,7 +107,7 @@ const empty: AppSettings = {
   telegramDailyBriefing: false,
   telegramDailyBriefingHour: 9,
   githubToken: '',
-  maxConnections: 200,
+  maxConnections: 55,
   maxDownloadSpeedKBps: 0,
   maxUploadSpeedKBps: 0,
   ftpEnabled: false,
@@ -127,6 +127,26 @@ const empty: AppSettings = {
   webPortalBind: 'localhost',
   webPortalAdminPasswordHash: '',
   webPortalSessionSecret: '',
+  liveTvEnabled: false,
+  liveTvPort: 34400,
+  liveTvBind: 'lan',
+  liveTvTuners: 3,
+  liveTvBufferMode: 'memory',
+  liveTvBufferKb: 1024,
+  liveTvBufferTimeoutMs: 8000,
+  liveTvUserAgent: 'VLC/3.0.20 LibVLC/3.0.20',
+  liveTvFfmpegPath: '',
+  liveTvHideAdult: true,
+  liveTvSourceType: 'none',
+  liveTvDirectUrl: '',
+  liveTvDirectName: '',
+  liveTvM3uUrl: '',
+  liveTvXmltvUrl: '',
+  liveTvXtreamHost: '',
+  liveTvXtreamUsername: '',
+  liveTvXtreamPassword: '',
+  liveTvXtreamPort: 80,
+  liveTvXtreamHls: false,
 };
 
 export default function SettingsView() {
@@ -643,11 +663,11 @@ export default function SettingsView() {
             type="number"
             min={10}
             max={500}
-            value={settings.maxConnections ?? 200}
+            value={settings.maxConnections ?? 55}
             onChange={(e) =>
               setLocal({
                 ...settings,
-                maxConnections: Math.max(10, parseInt(e.target.value || '200', 10) || 200),
+                maxConnections: Math.max(10, parseInt(e.target.value || '55', 10) || 55),
               })
             }
           />
@@ -1185,6 +1205,97 @@ export default function SettingsView() {
           </div>
         </div>
       </div>
+
+        <div className="settings-section">Live TV (Plex)</div>
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.liveTvEnabled}
+              onChange={(e) => setLocal({ ...settings, liveTvEnabled: e.target.checked })}
+            />
+            <span>Enable Live TV tuner for Plex</span>
+          </label>
+          <div className="hint">
+            Nightfeed pretends to be an HDHomeRun so Plex Live TV &amp; DVR can use IPTV (M3U, Xtream, or a
+            direct stream) plus a TV guide. <strong>Plex Pass required.</strong> A Live TV tab appears on the
+            left after Save. Streams stay on your ISP path, not the torrent VPN.
+          </div>
+        </div>
+        <div className="field">
+          <label>Listen</label>
+          <select
+            value={settings.liveTvBind || 'lan'}
+            onChange={(e) =>
+              setLocal({ ...settings, liveTvBind: e.target.value === 'localhost' ? 'localhost' : 'lan' })
+            }
+          >
+            <option value="lan">LAN (Plex on another PC)</option>
+            <option value="localhost">This PC only</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Port</label>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={settings.liveTvPort ?? 34400}
+            onChange={(e) => setLocal({ ...settings, liveTvPort: Number(e.target.value) || 34400 })}
+          />
+        </div>
+        <div className="field">
+          <label>Tuners (simultaneous streams)</label>
+          <input
+            type="number"
+            min={1}
+            max={16}
+            value={settings.liveTvTuners ?? 3}
+            onChange={(e) => setLocal({ ...settings, liveTvTuners: Number(e.target.value) || 3 })}
+          />
+          <div className="hint">Match your IPTV provider’s connection limit. Each Plex watch or recording uses one.</div>
+        </div>
+        <div className="field">
+          <label>Buffer</label>
+          <select
+            value={settings.liveTvBufferMode || 'memory'}
+            onChange={(e) => {
+              const v = e.target.value;
+              setLocal({
+                ...settings,
+                liveTvBufferMode: v === 'off' || v === 'ffmpeg' ? v : 'memory',
+              });
+            }}
+          >
+            <option value="off">Off (direct proxy)</option>
+            <option value="memory">Memory</option>
+            <option value="ffmpeg">ffmpeg remux (needs ffmpeg on PATH)</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Buffer size (KB)</label>
+          <input
+            type="number"
+            min={64}
+            max={16384}
+            value={settings.liveTvBufferKb ?? 1024}
+            onChange={(e) => setLocal({ ...settings, liveTvBufferKb: Number(e.target.value) || 1024 })}
+          />
+        </div>
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.liveTvHideAdult !== false}
+              onChange={(e) => setLocal({ ...settings, liveTvHideAdult: e.target.checked })}
+            />
+            <span>Hide adult groups when refreshing the playlist</span>
+          </label>
+        </div>
+        <div className="hint">
+          Source (M3U / Xtream / direct URL), which channels go to Plex, and the Plex tuner/guide URLs are on
+          the <strong>Live TV</strong> tab.
+        </div>
 
       <div className="settings-section" style={{ maxWidth: 760 }}>Updates</div>
       <div className="field" style={{ maxWidth: 760 }}>

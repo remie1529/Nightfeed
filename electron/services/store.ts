@@ -6,6 +6,7 @@ import {
   DEFAULT_SETTINGS,
   DownloadItem,
   EpisodeOverrideStatus,
+  LiveTvChannel,
   Movie,
   DownloadHistoryItem,
   Show,
@@ -23,6 +24,8 @@ export interface AppData {
   telegramRequests: TelegramRequest[];
   downloadHistory: DownloadHistoryItem[];
   lastDailyBriefingDate: string;
+  liveTvLineup: LiveTvChannel[];
+  liveTvXmltvCache: string;
 }
 
 const defaults: AppData = {
@@ -38,6 +41,8 @@ const defaults: AppData = {
   telegramRequests: [],
   downloadHistory: [],
   lastDailyBriefingDate: '',
+  liveTvLineup: [],
+  liveTvXmltvCache: '',
 };
 
 export const store = new Store<AppData>({
@@ -122,7 +127,8 @@ export function getSettings(): AppSettings {
   if (merged.ftpUser == null) merged.ftpUser = '';
   if (merged.ftpPassword == null) merged.ftpPassword = '';
   if (merged.ftpRemoteBasePath == null) merged.ftpRemoteBasePath = '';
-  if (!merged.maxConnections || merged.maxConnections < 1) merged.maxConnections = 200;
+  if (!merged.maxConnections || merged.maxConnections < 1) merged.maxConnections = 55;
+  if (merged.maxConnections > 80) merged.maxConnections = 80;
   if (typeof merged.vpnEnabled !== 'boolean') merged.vpnEnabled = false;
   if (merged.vpnConfigPath == null) merged.vpnConfigPath = '';
   if (merged.vpnConfigName == null) merged.vpnConfigName = '';
@@ -144,6 +150,27 @@ export function getSettings(): AppSettings {
   if (merged.webPortalBind !== 'lan') merged.webPortalBind = 'localhost';
   if (merged.webPortalAdminPasswordHash == null) merged.webPortalAdminPasswordHash = '';
   if (merged.webPortalSessionSecret == null) merged.webPortalSessionSecret = '';
+  if (typeof merged.liveTvEnabled !== 'boolean') merged.liveTvEnabled = false;
+  if (!merged.liveTvPort || merged.liveTvPort < 1) merged.liveTvPort = 34400;
+  if (merged.liveTvBind !== 'localhost') merged.liveTvBind = 'lan';
+  if (!merged.liveTvTuners || merged.liveTvTuners < 1) merged.liveTvTuners = 3;
+  merged.liveTvTuners = Math.max(1, Math.min(16, Math.floor(merged.liveTvTuners)));
+  if (merged.liveTvBufferMode !== 'off' && merged.liveTvBufferMode !== 'ffmpeg') merged.liveTvBufferMode = 'memory';
+  if (!merged.liveTvBufferKb || merged.liveTvBufferKb < 64) merged.liveTvBufferKb = 1024;
+  if (!merged.liveTvBufferTimeoutMs || merged.liveTvBufferTimeoutMs < 500) merged.liveTvBufferTimeoutMs = 8000;
+  if (merged.liveTvUserAgent == null) merged.liveTvUserAgent = DEFAULT_SETTINGS.liveTvUserAgent;
+  if (merged.liveTvFfmpegPath == null) merged.liveTvFfmpegPath = '';
+  if (typeof merged.liveTvHideAdult !== 'boolean') merged.liveTvHideAdult = true;
+  if (!merged.liveTvSourceType) merged.liveTvSourceType = 'none';
+  if (merged.liveTvDirectUrl == null) merged.liveTvDirectUrl = '';
+  if (merged.liveTvDirectName == null) merged.liveTvDirectName = '';
+  if (merged.liveTvM3uUrl == null) merged.liveTvM3uUrl = '';
+  if (merged.liveTvXmltvUrl == null) merged.liveTvXmltvUrl = '';
+  if (merged.liveTvXtreamHost == null) merged.liveTvXtreamHost = '';
+  if (merged.liveTvXtreamUsername == null) merged.liveTvXtreamUsername = '';
+  if (merged.liveTvXtreamPassword == null) merged.liveTvXtreamPassword = '';
+  if (!merged.liveTvXtreamPort || merged.liveTvXtreamPort < 1) merged.liveTvXtreamPort = 80;
+  if (typeof merged.liveTvXtreamHls !== 'boolean') merged.liveTvXtreamHls = false;
   return merged;
 }
 
@@ -324,6 +351,23 @@ export function setLastDailyBriefingDate(day: string): void {
   store.set('lastDailyBriefingDate', day);
 }
 
+export function getLiveTvLineup(): LiveTvChannel[] {
+  const raw = store.get('liveTvLineup');
+  return Array.isArray(raw) ? raw : [];
+}
+
+export function setLiveTvLineup(channels: LiveTvChannel[]): void {
+  store.set('liveTvLineup', channels);
+}
+
+export function getLiveTvXmltvCache(): string {
+  return store.get('liveTvXmltvCache') || '';
+}
+
+export function setLiveTvXmltvCache(xml: string): void {
+  store.set('liveTvXmltvCache', xml || '');
+}
+
 /** Full app data snapshot for backup (includes secrets from settings). */
 export function exportBackupData(): AppData & { exportedAt: string; app: string; version: number } {
   return {
@@ -335,6 +379,8 @@ export function exportBackupData(): AppData & { exportedAt: string; app: string;
     telegramRequests: getTelegramRequests(),
     downloadHistory: getDownloadHistory(),
     lastDailyBriefingDate: getLastDailyBriefingDate(),
+    liveTvLineup: getLiveTvLineup(),
+    liveTvXmltvCache: '',
     exportedAt: new Date().toISOString(),
     app: 'Nightfeed',
     version: 1,

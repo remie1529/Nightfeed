@@ -17,9 +17,9 @@ const VALID_VIDEO_EXTS = new Set(['.mkv', '.mp4', '.avi', '.m4v', '.wmv', '.ts',
 /** Also accepted when selecting the largest video from a torrent (legacy extras). */
 const SELECT_VIDEO_EXTS = new Set([...VALID_VIDEO_EXTS, '.webm']);
 
-const PROGRESS_THROTTLE_MS = 1500;
-/** Cap peer sockets — WebTorrent default is 55; 200+ with uTP hits Windows ENOBUFS. */
-const MAX_PEER_CONNS = 80;
+const PROGRESS_THROTTLE_MS = 2500;
+/** Cap peer sockets — too many TCP peers on Windows freeze the UI and cut download speed. */
+const MAX_PEER_CONNS = 48;
 /** Only this many torrents in WebTorrent at once; the rest stay queued. */
 const MAX_ACTIVE_DOWNLOADS = 3;
 
@@ -174,9 +174,11 @@ export class DownloadEngine extends EventEmitter {
             ? Math.floor(settings.bindIfIndex)
             : null
           : this.bindIfIndex;
-      if (nextAddr !== this.bindAddress || nextIf !== this.bindIfIndex) {
+      this.bindIfIndex = nextIf;
+      if (nextAddr !== this.bindAddress) {
         this.bindAddress = nextAddr;
-        this.bindIfIndex = nextIf;
+        // Recreate client only when the bind IP changes. ifIndex is applied
+        // per-socket via IP_UNICAST_IF — tearing down mid-download kills speed.
         this.destroyClientOnly();
       }
     }
