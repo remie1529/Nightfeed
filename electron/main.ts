@@ -135,6 +135,12 @@ process.on('unhandledRejection', (reason) => {
 });
 
 let mainWindow: BrowserWindow | null = null;
+let uiBackendReady = false;
+
+function signalUiReady(): void {
+  uiBackendReady = true;
+  mainWindow?.webContents.send('app:ready');
+}
 let refreshTimer: NodeJS.Timeout | null = null;
 let autoDownloadRunning = false;
 
@@ -199,6 +205,9 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+  });
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (uiBackendReady) mainWindow?.webContents.send('app:ready');
   });
   setTimeout(() => {
     if (mainWindow && !mainWindow.isVisible()) mainWindow.show();
@@ -2501,6 +2510,7 @@ function registerIpc() {
     return st;
   });
 
+  ipcMain.handle('app:isReady', () => uiBackendReady);
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('app:getThreadInfo', () => {
     const search = getSearchPoolInfo();
@@ -2738,6 +2748,7 @@ app.whenReady().then(async () => {
   applyCrashRestartTask(!!settings.restartOnCrash);
   scheduleRefresh();
   void autoConnectVpnOnLaunch();
+  signalUiReady();
 
   // Non-blocking update check on startup, then every 6 hours
   setTimeout(() => {

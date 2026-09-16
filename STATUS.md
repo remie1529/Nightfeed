@@ -1,6 +1,11 @@
 ## Nightfeed status
 
-**Current:** v1.9.2 — Startup splash + crash restart via Task Scheduler.
+**Current:** v1.9.3 — Splash until engine/VPN/settings are ready.
+
+# Status v1.9.3
+
+## New
+- Do not reveal the main UI until startup work has finished
 
 # Status v1.9.2
 
