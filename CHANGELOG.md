@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.9
+
+- Live TV streams to Plex: convert HLS (.m3u8) to MPEG-TS (Plex cannot play a raw playlist)
+- Honor VLC M3U extras (`#EXTVLCOPT`, `|User-Agent=`), skip HEAD probes, TLS quirks, surface provider errors
+
 ## 1.8.8
 
 - Live TV for Plex: HDHomeRun tuner + XMLTV (M3U, Xtream Codes, or a direct stream)

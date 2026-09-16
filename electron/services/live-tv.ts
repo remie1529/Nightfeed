@@ -13,6 +13,9 @@ import { PassThrough } from 'stream';
 import type { AppSettings, LiveTvChannel, LiveTvStatus } from '../types';
 import { getLiveTvLineup, getLiveTvXmltvCache, getSettings, setLiveTvLineup, setLiveTvXmltvCache } from './store';
 
+const insecureHttps = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
+const keepAliveHttp = new http.Agent({ keepAlive: true });
+
 const ADULT_RE = /xxx|adult|porn|erotic|18\+|nsfw|playboy/i;
 const FFMPEG_CANDIDATES = [
   'C:\\ffmpeg\\bin\\ffmpeg.exe',
@@ -117,13 +120,39 @@ function fetchText(url: string, ua: string, timeoutMs = 25000): Promise<string> 
   });
 }
 
+function parseStreamTarget(raw: string): { url: string; headers: Record<string, string> } {
+  const parts = String(raw || '').split('|');
+  const url = (parts[0] || '').trim();
+  const headers: Record<string, string> = {};
+  for (const p of parts.slice(1)) {
+    const i = p.indexOf('=');
+    if (i < 0) continue;
+    let k = p.slice(0, i).trim();
+    const v = p.slice(i + 1).trim();
+    if (/^(http-)?user-agent$/i.test(k)) k = 'User-Agent';
+    else if (/^(http-)?referr?er$/i.test(k)) k = 'Referer';
+    else if (/^origin$/i.test(k)) k = 'Origin';
+    if (k && v) headers[k] = v;
+  }
+  return { url, headers };
+}
+
 function parseM3u(text: string): LiveTvChannel[] {
   const lines = text.split(/\r?\n/);
   const out: LiveTvChannel[] = [];
   let meta: { name: string; group: string; logo: string; tvgId: string } | null = null;
+  const vlc: string[] = [];
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
+    if (line.startsWith('#EXTVLCOPT:')) {
+      const opt = line.slice('#EXTVLCOPT:'.length).trim();
+      const ua = opt.match(/^http-user-agent=(.+)/i);
+      if (ua) vlc.push(`User-Agent=${ua[1].trim()}`);
+      const ref = opt.match(/^http-referr?er=(.+)/i);
+      if (ref) vlc.push(`Referer=${ref[1].trim()}`);
+      continue;
+    }
     if (line.startsWith('#EXTINF')) {
       const comma = line.indexOf(',');
       const attrs = comma >= 0 ? line.slice(0, comma) : line;
@@ -141,21 +170,139 @@ function parseM3u(text: string): LiveTvChannel[] {
       continue;
     }
     if (line.startsWith('#')) continue;
-    if (!/^https?:\/\//i.test(line)) continue;
+    const rawUrl = line.replace(/^['"]|['"]$/g, '');
+    if (!/^https?:\/\//i.test(rawUrl.split('|')[0])) continue;
+    const extra = vlc.length && !rawUrl.includes('|') ? `|${vlc.join('|')}` : '';
+    vlc.length = 0;
+    const streamUrl = rawUrl + extra;
     const info = meta || { name: 'Channel', group: '', logo: '', tvgId: '' };
     out.push({
-      id: channelId(line),
+      id: channelId(streamUrl.split('|')[0]),
       name: info.name,
       number: out.length + 1,
       group: info.group,
       logo: info.logo,
       tvgId: info.tvgId,
-      url: line,
+      url: streamUrl,
       enabled: false,
     });
     meta = null;
   }
   return out;
+}
+
+function openUpstream(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number
+): Promise<http.IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      reject(new Error('Bad stream URL'));
+      return;
+    }
+    const isHttps = u.protocol === 'https:';
+    const lib = isHttps ? https : http;
+    const req = lib.request(
+      {
+        hostname: u.hostname,
+        port: u.port || (isHttps ? 443 : 80),
+        path: u.pathname + u.search,
+        method: 'GET',
+        family: 4,
+        agent: isHttps ? insecureHttps : keepAliveHttp,
+        timeout: Math.max(3000, timeoutMs),
+        headers: {
+          Accept: '*/*',
+          Connection: 'keep-alive',
+          ...headers,
+        },
+      },
+      (res) => {
+        const code = res.statusCode || 0;
+        if (code >= 300 && code < 400 && res.headers.location) {
+          res.resume();
+          const next = new URL(res.headers.location, url).toString();
+          openUpstream(next, headers, timeoutMs).then(resolve, reject);
+          return;
+        }
+        resolve(res);
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Timeout connecting to provider'));
+    });
+    req.end();
+  });
+}
+
+async function readStreamLimited(stream: http.IncomingMessage, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let n = 0;
+  return new Promise((resolve, reject) => {
+    stream.on('data', (c: Buffer) => {
+      n += c.length;
+      if (n > limit) {
+        stream.destroy();
+        reject(new Error('Body too large'));
+        return;
+      }
+      chunks.push(c);
+    });
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', reject);
+  });
+}
+
+function parseHlsPlaylist(text: string, baseUrl: string): {
+  variants: { bw: number; url: string }[];
+  segments: { url: string; dur: number }[];
+  target: number;
+  ended: boolean;
+  fmp4: boolean;
+} {
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  const variants: { bw: number; url: string }[] = [];
+  const segments: { url: string; dur: number }[] = [];
+  let pendingBw = 0;
+  let pendingDur = 6;
+  let target = 6;
+  let ended = false;
+  let fmp4 = false;
+  let master = false;
+  for (const line of lines) {
+    if (!line) continue;
+    if (line.startsWith('#EXT-X-TARGETDURATION:')) {
+      target = Math.max(1, Number(line.split(':')[1]) || 6);
+      continue;
+    }
+    if (line.startsWith('#EXT-X-STREAM-INF:')) {
+      master = true;
+      const m = line.match(/BANDWIDTH=(\d+)/i);
+      pendingBw = m ? Number(m[1]) : 0;
+      continue;
+    }
+    if (line.startsWith('#EXTINF:')) {
+      pendingDur = Number(line.slice(8).split(',')[0]) || target;
+      continue;
+    }
+    if (line.startsWith('#EXT-X-MAP:')) fmp4 = true;
+    if (line === '#EXT-X-ENDLIST') ended = true;
+    if (line.startsWith('#')) continue;
+    const abs = new URL(line, baseUrl).toString();
+    if (master) {
+      variants.push({ bw: pendingBw, url: abs });
+      pendingBw = 0;
+    } else {
+      segments.push({ url: abs, dur: pendingDur });
+    }
+  }
+  return { variants, segments, target, ended, fmp4 };
 }
 
 function xtreamBase(host: string, port: number): string {
@@ -189,6 +336,7 @@ class LiveTvServer {
   private server: http.Server | null = null;
   private slots = new Map<string, TunerSlot>();
   private lastError: string | null = null;
+  private lastStreamError: string | null = null;
   private lastRefresh: string | null = null;
   private xmltvMem = '';
   private refreshTimer: NodeJS.Timeout | null = null;
@@ -272,7 +420,7 @@ class LiveTvServer {
       tunersInUse: this.slots.size,
       channelCount: lineup.length,
       enabledCount: enabled.length,
-      lastError: this.lastError,
+      lastError: this.lastStreamError || this.lastError,
       lastRefresh: this.lastRefresh,
       tunerUrl: `http://${host}:${port}`,
       xmltvUrl: `http://${host}:${port}/xmltv.xml`,
@@ -281,9 +429,16 @@ class LiveTvServer {
   }
 
   enabledChannels(): LiveTvChannel[] {
-    return getLiveTvLineup()
+    const list = getLiveTvLineup()
       .filter((c) => c.enabled && c.url)
       .sort((a, b) => a.number - b.number || a.name.localeCompare(b.name));
+    const used = new Set<number>();
+    return list.map((c, i) => {
+      let n = c.number || i + 1;
+      while (used.has(n)) n += 1;
+      used.add(n);
+      return n === c.number ? c : { ...c, number: n };
+    });
   }
 
   async refreshSources(): Promise<LiveTvChannel[]> {
@@ -434,6 +589,11 @@ class LiveTvServer {
     }
     const auto = p.match(/^\/auto\/v(\d+)/);
     if (auto) {
+      if (req.method === 'HEAD' || req.method === 'OPTIONS') {
+        res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
       this.streamChannel(Number(auto[1]), req, res, settings);
       return;
     }
@@ -454,6 +614,133 @@ class LiveTvServer {
     res.end(JSON.stringify(body));
   }
 
+  private failStream(res: http.ServerResponse, cleanup: () => void, chName: string, err: unknown): void {
+    const msg = err instanceof Error ? err.message : String(err);
+    this.lastStreamError = `${chName}: ${msg}`;
+    try {
+      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
+      res.end(msg);
+    } catch {
+      // ignore
+    }
+    cleanup();
+  }
+
+  private spawnFfmpeg(
+    url: string,
+    headers: Record<string, string>,
+    res: http.ServerResponse,
+    cleanup: () => void,
+    ff: string,
+    chName: string
+  ): ChildProcessWithoutNullStreams {
+    const ua = headers['User-Agent'] || DEFAULT_UA;
+    const args = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-fflags',
+      '+genpts+discardcorrupt',
+      '-user_agent',
+      ua,
+      '-reconnect',
+      '1',
+      '-reconnect_streamed',
+      '1',
+      '-reconnect_delay_max',
+      '5',
+    ];
+    if (headers.Referer) args.push('-headers', `Referer: ${headers.Referer}\r\n`);
+    args.push('-i', url, '-map', '0:v?', '-map', '0:a?', '-c', 'copy', '-f', 'mpegts', 'pipe:1');
+    const child = spawn(ff, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let errBuf = '';
+    child.stderr?.on('data', (d: Buffer) => {
+      errBuf = (errBuf + d.toString('utf8')).slice(-2000);
+    });
+    if (!res.headersSent) {
+      res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
+    }
+    child.stdout.pipe(res);
+    child.on('error', (err) => this.failStream(res, cleanup, chName, err));
+    child.on('exit', (code) => {
+      if (code && code !== 0) this.lastStreamError = `${chName}: ffmpeg ${errBuf.trim() || `exit ${code}`}`;
+      cleanup();
+    });
+    return child;
+  }
+
+  private async pipeHls(
+    playlistUrl: string,
+    headers: Record<string, string>,
+    res: http.ServerResponse,
+    req: http.IncomingMessage,
+    cleanup: () => void,
+    settings: AppSettings,
+    chName: string
+  ): Promise<void> {
+    const aborted = () => req.destroyed || res.destroyed;
+    const timeout = settings.liveTvBufferTimeoutMs || 8000;
+    let mediaUrl = playlistUrl;
+    const first = await openUpstream(mediaUrl, headers, timeout);
+    if ((first.statusCode || 0) >= 400) {
+      throw new Error(`Provider HTTP ${first.statusCode}`);
+    }
+    const body = await readStreamLimited(first, 4_000_000);
+    const text = body.toString('utf8');
+    if (!text.includes('#EXTM3U')) {
+      if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
+      res.write(body);
+      return;
+    }
+    let parsed = parseHlsPlaylist(text, mediaUrl);
+    if (parsed.fmp4) throw new Error('fMP4 HLS needs ffmpeg (Settings → Buffer = ffmpeg)');
+    if (parsed.variants.length) {
+      parsed.variants.sort((a, b) => b.bw - a.bw);
+      mediaUrl = parsed.variants[0].url;
+      const second = await openUpstream(mediaUrl, headers, timeout);
+      const t2 = (await readStreamLimited(second, 4_000_000)).toString('utf8');
+      parsed = parseHlsPlaylist(t2, mediaUrl);
+    }
+    if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
+    const seen = new Set<string>();
+    let loops = 0;
+    while (!aborted() && loops < 20000) {
+      loops += 1;
+      const fresh = loops === 1 ? parsed : parseHlsPlaylist(
+        (await readStreamLimited(await openUpstream(mediaUrl, headers, timeout), 4_000_000)).toString('utf8'),
+        mediaUrl
+      );
+      const newSegs = fresh.segments.filter((s) => !seen.has(s.url));
+      if (!newSegs.length && fresh.ended) break;
+      for (const seg of newSegs) {
+        if (aborted()) return;
+        seen.add(seg.url);
+        const segRes = await openUpstream(seg.url, headers, timeout);
+        if ((segRes.statusCode || 0) >= 400) continue;
+        segRes.socket?.setTimeout(0);
+        await new Promise<void>((resolve, reject) => {
+          segRes.on('data', (c: Buffer) => {
+            if (aborted()) {
+              segRes.destroy();
+              resolve();
+              return;
+            }
+            try {
+              res.write(c);
+            } catch (e) {
+              reject(e);
+            }
+          });
+          segRes.on('end', () => resolve());
+          segRes.on('error', reject);
+        });
+      }
+      if (fresh.ended) break;
+      await new Promise((r) => setTimeout(r, Math.min(4000, Math.max(400, (fresh.target * 1000) / 2))));
+    }
+    cleanup();
+  }
+
   private streamChannel(
     number: number,
     req: http.IncomingMessage,
@@ -466,7 +753,7 @@ class LiveTvServer {
       res.end('Unknown channel');
       return;
     }
-    const max = settings.liveTvTuners || 3;
+    const max = Math.max(1, settings.liveTvTuners || 3);
     if (this.slots.size >= max) {
       res.writeHead(503, { 'Content-Type': 'text/plain' });
       res.end('All tuners in use');
@@ -474,17 +761,17 @@ class LiveTvServer {
     }
     const slotId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const ua = settings.liveTvUserAgent || DEFAULT_UA;
+    const parsed = parseStreamTarget(ch.url);
+    const headers: Record<string, string> = { 'User-Agent': ua, ...parsed.headers };
+    if (!headers['User-Agent']) headers['User-Agent'] = ua;
     let child: ChildProcessWithoutNullStreams | null = null;
-    let upstream: http.ClientRequest | null = null;
+    let alive = true;
     const cleanup = () => {
+      if (!alive) return;
+      alive = false;
       this.slots.delete(slotId);
       try {
         child?.kill();
-      } catch {
-        // ignore
-      }
-      try {
-        upstream?.destroy();
       } catch {
         // ignore
       }
@@ -495,95 +782,52 @@ class LiveTvServer {
 
     const mode = settings.liveTvBufferMode;
     const ff = this.ffmpegPath;
-    if (mode === 'ffmpeg' && ff) {
-      child = spawn(
-        ff,
-        [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-user_agent',
-          ua,
-          '-reconnect',
-          '1',
-          '-reconnect_streamed',
-          '1',
-          '-i',
-          ch.url,
-          '-c',
-          'copy',
-          '-f',
-          'mpegts',
-          'pipe:1',
-        ],
-        { windowsHide: true }
-      );
-      res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
-      child.stdout.pipe(res);
-      child.on('error', () => {
-        if (!res.headersSent) res.writeHead(502);
-        res.end();
-        cleanup();
-      });
-      child.on('exit', () => cleanup());
-      return;
-    }
+    const url = parsed.url;
+    const hls = /\.m3u8(\?|$)/i.test(url);
 
-    try {
-      const u = new URL(ch.url);
-      const lib = u.protocol === 'https:' ? https : http;
-      upstream = lib.request(
-        {
-          hostname: u.hostname,
-          port: u.port || (u.protocol === 'https:' ? 443 : 80),
-          path: u.pathname + u.search,
-          method: 'GET',
-          headers: { 'User-Agent': ua, Accept: '*/*' },
-          timeout: settings.liveTvBufferTimeoutMs || 8000,
-        },
-        (up) => {
-          const code = up.statusCode || 200;
-          if (code >= 300 && code < 400 && up.headers.location) {
-            up.resume();
-            ch.url = new URL(up.headers.location, ch.url).toString();
-            this.slots.delete(slotId);
-            this.streamChannel(number, req, res, settings);
+    const run = async () => {
+      try {
+        if ((mode === 'ffmpeg' || (hls && ff)) && ff) {
+          child = this.spawnFfmpeg(url, headers, res, cleanup, ff, ch.name);
+          return;
+        }
+        if (hls) {
+          await this.pipeHls(url, headers, res, req, cleanup, settings, ch.name);
+          return;
+        }
+        const up = await openUpstream(url, headers, settings.liveTvBufferTimeoutMs || 8000);
+        up.socket?.setTimeout(0);
+        const code = up.statusCode || 200;
+        if (code >= 400) throw new Error(`Provider HTTP ${code}`);
+        const ctype = String(up.headers['content-type'] || '');
+        if (/mpegurl|m3u8/i.test(ctype)) {
+          up.resume();
+          if (ff) {
+            child = this.spawnFfmpeg(url, headers, res, cleanup, ff, ch.name);
             return;
           }
-          if (code >= 400) {
-            if (!res.headersSent) res.writeHead(code);
-            res.end();
-            cleanup();
-            return;
-          }
+          await this.pipeHls(url, headers, res, req, cleanup, settings, ch.name);
+          return;
+        }
+        if (!res.headersSent) {
           res.writeHead(200, {
-            'Content-Type': up.headers['content-type'] || 'video/mp2t',
+            'Content-Type': 'video/mp2t',
             'Cache-Control': 'no-store',
           });
-          const dest =
-            mode === 'memory'
-              ? new PassThrough({ highWaterMark: Math.max(64, settings.liveTvBufferKb || 1024) * 1024 })
-              : res;
-          if (mode === 'memory') dest.pipe(res);
-          up.pipe(dest);
         }
-      );
-      upstream.on('error', () => {
-        if (!res.headersSent) res.writeHead(502);
-        res.end();
-        cleanup();
-      });
-      upstream.on('timeout', () => {
-        upstream?.destroy();
-        cleanup();
-      });
-      upstream.end();
-    } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      if (!res.headersSent) res.writeHead(502);
-      res.end();
-      cleanup();
-    }
+        const dest =
+          mode === 'memory'
+            ? new PassThrough({ highWaterMark: Math.max(64, settings.liveTvBufferKb || 1024) * 1024 })
+            : res;
+        if (mode === 'memory') dest.pipe(res);
+        up.pipe(dest);
+        up.on('end', cleanup);
+        up.on('error', (err) => this.failStream(res, cleanup, ch.name, err));
+      } catch (err) {
+        this.failStream(res, cleanup, ch.name, err);
+      }
+    };
+    void run();
   }
 }
 
