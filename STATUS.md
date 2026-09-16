@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.9.0 — Live TV icons, EPG mapping, fake guide.
+**Current:** v1.9.1 — Live TV channel icons display and Plex PNG URLs.
+
+# Status v1.9.1
+
+## New
+- Icon previews use data URLs (CSP was blocking tuner HTTP)
+- Icons saved as PNG and listed in XMLTV + lineup.json for Plex
 
 # Status v1.9.0
 

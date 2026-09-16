@@ -345,11 +345,7 @@ export default function LiveTvView() {
             </thead>
             <tbody>
               {visible.map((c) => {
-                const iconSrc = /^https?:\/\//i.test(c.logo)
-                  ? c.logo
-                  : c.logo && status?.tunerUrl
-                    ? `${status.tunerUrl}/icon/${encodeURIComponent(c.id)}`
-                    : '';
+                const iconSrc = c.logoPreview || (/^https?:\/\//i.test(c.logo) ? c.logo : '');
                 return (
                 <tr key={c.id}>
                   <td>

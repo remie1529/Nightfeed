@@ -10,7 +10,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { PassThrough } from 'stream';
-import { app } from 'electron';
+import { app, nativeImage } from 'electron';
 import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus } from '../types';
 import { getLiveTvLineup, getLiveTvXmltvCache, getSettings, setLiveTvLineup, setLiveTvXmltvCache } from './store';
 
@@ -371,20 +371,76 @@ export function findChannelIconFile(channelId: string): string | null {
   return null;
 }
 
+function clearIconFiles(channelId: string): void {
+  try {
+    const dir = iconDir();
+    if (!fs.existsSync(dir)) return;
+    for (const old of fs.readdirSync(dir).filter((f) => f === channelId || f.startsWith(`${channelId}.`))) {
+      try {
+        fs.unlinkSync(path.join(dir, old));
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function writeIconBuffer(channelId: string, buf: Buffer): string {
+  fs.mkdirSync(iconDir(), { recursive: true });
+  clearIconFiles(channelId);
+  let png = buf;
+  try {
+    const img = nativeImage.createFromBuffer(buf);
+    if (!img.isEmpty()) png = img.toPNG();
+  } catch {
+    // keep original bytes
+  }
+  const dest = path.join(iconDir(), `${channelId}.png`);
+  fs.writeFileSync(dest, png);
+  return dest;
+}
+
 export function saveChannelIconFile(channelId: string, fromPath: string): string {
   if (!fromPath || !fs.existsSync(fromPath)) throw new Error('Icon file not found');
   fs.mkdirSync(iconDir(), { recursive: true });
-  const ext = (path.extname(fromPath) || '.png').toLowerCase();
-  const dest = path.join(iconDir(), `${channelId}${ext}`);
-  for (const old of fs.readdirSync(iconDir()).filter((f) => f.startsWith(`${channelId}.`))) {
+  clearIconFiles(channelId);
+  const dest = path.join(iconDir(), `${channelId}.png`);
+  try {
+    const img = nativeImage.createFromPath(fromPath);
+    if (!img.isEmpty()) {
+      fs.writeFileSync(dest, img.toPNG());
+      return dest;
+    }
+  } catch {
+    // fall through
+  }
+  fs.copyFileSync(fromPath, dest);
+  return dest;
+}
+
+export function logoPreviewDataUrl(ch: LiveTvChannel): string {
+  const file =
+    findChannelIconFile(ch.id) ||
+    (ch.logo && !/^https?:\/\//i.test(ch.logo) && fs.existsSync(ch.logo) ? ch.logo : null);
+  if (file) {
     try {
-      fs.unlinkSync(path.join(iconDir(), old));
+      const buf = fs.readFileSync(file);
+      if (buf.length > 16 && buf.length < 2_000_000) {
+        return `data:${mimeForIcon(file)};base64,${buf.toString('base64')}`;
+      }
     } catch {
       // ignore
     }
   }
-  fs.copyFileSync(fromPath, dest);
-  return dest;
+  if (/^https?:\/\//i.test(ch.logo || '')) return ch.logo;
+  return '';
+}
+
+export function withLogoPreview(ch: LiveTvChannel): LiveTvChannel & { logoPreview?: string } {
+  const logoPreview = logoPreviewDataUrl(ch);
+  return logoPreview ? { ...ch, logoPreview } : ch;
 }
 
 function mimeForIcon(file: string): string {
@@ -589,6 +645,7 @@ class LiveTvServer {
       this.lastError = null;
       await this.refreshXmltv(s, ua);
       this.reindexXmltv();
+      void this.cacheEnabledLogos().catch(() => undefined);
       return merged;
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
@@ -673,13 +730,35 @@ class LiveTvServer {
       c.id === channelId ? { ...c, logo: dest, logoCustom: true } : c
     );
     setLiveTvLineup(next);
-    return next;
+    return next.map(withLogoPreview);
   }
 
   private iconUrl(ch: LiveTvChannel, base: string): string {
-    if (!ch.logo) return '';
-    if (/^https?:\/\//i.test(ch.logo)) return ch.logo;
-    return `${base}/icon/${encodeURIComponent(ch.id)}`;
+    if (findChannelIconFile(ch.id) || (ch.logo && !/^https?:\/\//i.test(ch.logo))) {
+      return `${base}/icon/${encodeURIComponent(ch.id)}.png`;
+    }
+    if (/^https?:\/\//i.test(ch.logo || '')) return ch.logo;
+    return '';
+  }
+
+  private async cacheEnabledLogos(): Promise<void> {
+    const ua = getSettings().liveTvUserAgent || DEFAULT_UA;
+    for (const ch of this.enabledChannels()) {
+      if (ch.logoCustom) continue;
+      if (findChannelIconFile(ch.id)) continue;
+      if (!/^https?:\/\//i.test(ch.logo || '')) continue;
+      try {
+        const up = await openUpstream(ch.logo, { 'User-Agent': ua }, 12000);
+        if ((up.statusCode || 0) >= 400) {
+          up.resume();
+          continue;
+        }
+        const buf = await readStreamLimited(up, 1_500_000);
+        if (buf.length > 32) writeIconBuffer(ch.id, buf);
+      } catch {
+        // keep remote URL
+      }
+    }
   }
 
   composeXmltv(base: string): string {
@@ -742,11 +821,16 @@ class LiveTvServer {
     }
     if (p === '/lineup.json') {
       const base = this.baseUrl(req, settings);
-      const rows = this.enabledChannels().map((c) => ({
-        GuideNumber: String(c.number),
-        GuideName: c.name,
-        URL: `${base}/auto/v${c.number}`,
-      }));
+      const rows = this.enabledChannels().map((c) => {
+        const logo = this.iconUrl(c, base);
+        return {
+          GuideNumber: String(c.number),
+          GuideName: c.name,
+          HD: 1,
+          URL: `${base}/auto/v${c.number}`,
+          ...(logo ? { Logo: logo } : {}),
+        };
+      });
       this.json(res, rows);
       return;
     }
@@ -766,16 +850,25 @@ class LiveTvServer {
       return;
     }
     if (p.startsWith('/icon/')) {
-      const id = decodeURIComponent(p.slice('/icon/'.length).split('/')[0] || '');
-      const file = findChannelIconFile(id);
+      let id = decodeURIComponent(p.slice('/icon/'.length).split('/')[0] || '');
+      id = id.replace(/\.(png|jpg|jpeg|gif|webp|svg)$/i, '');
       const lineup = id ? getLiveTvLineup().find((c) => c.id === id) : null;
-      const disk = file || (lineup && lineup.logo && !/^https?:\/\//i.test(lineup.logo) && fs.existsSync(lineup.logo) ? lineup.logo : null);
+      const file = findChannelIconFile(id);
+      const disk =
+        file ||
+        (lineup && lineup.logo && !/^https?:\/\//i.test(lineup.logo) && fs.existsSync(lineup.logo)
+          ? lineup.logo
+          : null);
       if (!disk) {
         res.writeHead(404);
         res.end();
         return;
       }
-      res.writeHead(200, { 'Content-Type': mimeForIcon(disk), 'Cache-Control': 'public, max-age=86400' });
+      res.writeHead(200, {
+        'Content-Type': mimeForIcon(disk),
+        'Cache-Control': 'public, max-age=3600',
+        'Access-Control-Allow-Origin': '*',
+      });
       fs.createReadStream(disk).pipe(res);
       return;
     }

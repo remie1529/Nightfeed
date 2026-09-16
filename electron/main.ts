@@ -62,7 +62,7 @@ import {
 } from './services/web-portal';
 import { uploadFinishedFile } from './services/ftp';
 import { vpnManager } from './services/vpn';
-import { liveTv } from './services/live-tv';
+import { liveTv, withLogoPreview } from './services/live-tv';
 import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
 import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
@@ -2428,7 +2428,7 @@ function registerIpc() {
     }
   );
   ipcMain.handle('liveTv:status', () => liveTv.getStatus(getSettings()));
-  ipcMain.handle('liveTv:channels', () => getLiveTvLineup());
+  ipcMain.handle('liveTv:channels', () => getLiveTvLineup().map(withLogoPreview));
   ipcMain.handle('liveTv:refresh', async () => liveTv.refreshSources());
   ipcMain.handle('liveTv:setChannels', (_e, channels: LiveTvChannel[]) => {
     if (!Array.isArray(channels)) return getLiveTvLineup();
