@@ -97,6 +97,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.9.4** — Collapsible Settings sections; library grid fills the window when maximized.
+
 **1.9.3** — Loading screen stays until the backend is ready, then the UI is shown.
 
 **1.9.2** — Startup loading screen; optional Task Scheduler restart after a crash.

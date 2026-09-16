@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus, VpnStatus, WebPortalStatus } from '../lib/types';
 import FolderScanImport from '../components/FolderScanImport';
 import { DEFAULT_TORRENT_SOURCES } from '../lib/types';
@@ -75,6 +75,28 @@ function LibraryRootsEditor({
         Add folder…
       </button>
     </div>
+  );
+}
+
+function SettingsSection({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details
+      className="settings-fold"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="settings-section">{title}</summary>
+      <div className="settings-fold-body">{children}</div>
+    </details>
   );
 }
 
@@ -438,7 +460,7 @@ export default function SettingsView() {
   const enabledCount = SOURCE_OPTIONS.filter((o) => !!settings.torrentSources?.[o.id]).length;
 
   return (
-    <div className="page">
+    <div className="page page-settings">
       <div className="page-header">
         <div>
           <h1>Settings</h1>
@@ -452,8 +474,8 @@ export default function SettingsView() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="form-grid form-grid-wide">
-        <div className="settings-section">Library & quality</div>
+      <div className="settings-stack">
+        <SettingsSection title="Library & quality">
 
         <div className="field">
           <label>TV library roots</label>
@@ -609,7 +631,9 @@ export default function SettingsView() {
           <div className="hint">0 = no extra size floor. Applied to search picks and after download.</div>
         </div>
 
-        <div className="settings-section">Episode checks & auto-download</div>
+        </SettingsSection>
+
+        <SettingsSection title="Episode checks & auto-download">
 
         <div className="field">
           <label>Episode check interval (minutes)</label>
@@ -659,7 +683,9 @@ export default function SettingsView() {
           <div className="hint">Optional pause between starting each auto-download. 0 = minimal delay only.</div>
         </div>
 
-        <div className="settings-section">Downloads (WebTorrent)</div>
+        </SettingsSection>
+
+        <SettingsSection title="Downloads (WebTorrent)">
 
         <div className="field">
           <label>Max peer connections</label>
@@ -716,7 +742,9 @@ export default function SettingsView() {
           <div className="hint">0 = unlimited. Applied via WebTorrent client.throttleUpload (bytes/s).</div>
         </div>
 
-        <div className="settings-section">FTP upload (optional)</div>
+        </SettingsSection>
+
+        <SettingsSection title="FTP upload (optional)">
 
         <div className="field">
           <label className="toggle-row">
@@ -791,7 +819,9 @@ export default function SettingsView() {
           </>
         )}
 
-        <div className="settings-section">VPN (OpenVPN)</div>
+        </SettingsSection>
+
+        <SettingsSection title="VPN (OpenVPN)">
 
         <div className="field">
           <label className="toggle-row">
@@ -927,7 +957,9 @@ export default function SettingsView() {
           </>
         )}
 
-        <div className="settings-section">Startup</div>
+        </SettingsSection>
+
+        <SettingsSection title="Startup">
 
         <div className="field">
           <label className="toggle-row">
@@ -959,7 +991,9 @@ export default function SettingsView() {
           </div>
         </div>
 
-        <div className="settings-section">Metadata & search</div>
+        </SettingsSection>
+
+        <SettingsSection title="Metadata & search">
 
         <div className="field">
           <label>TV metadata</label>
@@ -1020,7 +1054,9 @@ export default function SettingsView() {
           </>
         )}
 
-        <div className="settings-section">Telegram</div>
+        </SettingsSection>
+
+        <SettingsSection title="Telegram">
 
         <div className="field">
           <label className="toggle-row">
@@ -1142,7 +1178,9 @@ export default function SettingsView() {
           </div>
         </div>
 
-        <div className="settings-section">Web portal</div>
+        </SettingsSection>
+
+        <SettingsSection title="Web portal">
 
         <div className="field">
           <label className="toggle-row">
@@ -1224,9 +1262,9 @@ export default function SettingsView() {
             {settings.webPortalBind === 'lan' ? ' On LAN, use this PC’s IP in the URL.' : ''}
           </div>
         </div>
-      </div>
+        </SettingsSection>
 
-        <div className="settings-section">Live TV (Plex)</div>
+        <SettingsSection title="Live TV (Plex)">
         <div className="field">
           <label className="toggle-row">
             <input
@@ -1350,9 +1388,10 @@ export default function SettingsView() {
           Source (M3U / Xtream / direct URL), which channels go to Plex, and the Plex tuner/guide URLs are on
           the <strong>Live TV</strong> tab.
         </div>
+        </SettingsSection>
 
-      <div className="settings-section" style={{ maxWidth: 760 }}>Updates</div>
-      <div className="field" style={{ maxWidth: 760 }}>
+        <SettingsSection title="Updates" defaultOpen>
+      <div className="field">
         <label>App version</label>
         <div className="status-line">v{appVersion}</div>
         <div className="row" style={{ marginTop: 8 }}>
@@ -1387,7 +1426,7 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="field" style={{ maxWidth: 760 }}>
+      <div className="field">
         <label>GitHub personal access token</label>
         <input
           type="password"
@@ -1407,9 +1446,10 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="settings-section">Backup</div>
+        </SettingsSection>
 
-      <div className="field" style={{ maxWidth: 760 }}>
+        <SettingsSection title="Backup" defaultOpen>
+      <div className="field">
         <label>Export / import library &amp; settings</label>
         <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => void exportBackup()} disabled={backupBusy}>
@@ -1426,18 +1466,9 @@ export default function SettingsView() {
         </div>
         {backupMsg && <div className="hint" style={{ color: 'var(--ok, #6c6)' }}>{backupMsg}</div>}
       </div>
+        </SettingsSection>
 
-      <div
-        style={{
-          marginTop: '2rem',
-          padding: '1rem 1.1rem',
-          border: '1px solid var(--border)',
-          borderRadius: 8,
-          background: 'var(--bg-elevated)',
-          maxWidth: 760,
-        }}
-      >
-        <div style={{ fontWeight: 650, marginBottom: 6 }}>About Nightfeed</div>
+        <SettingsSection title="About Nightfeed" defaultOpen>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
           Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via IMDb.com scrape (no API key).
           Torrent search and library zoekfunctie (TVMaze / IMDb) run on <code>worker_threads</code>.
@@ -1455,6 +1486,7 @@ export default function SettingsView() {
             </div>
           )}
         </div>
+        </SettingsSection>
       </div>
     </div>
   );

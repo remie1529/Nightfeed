@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.4
+
+- Settings sections are collapsible (collapsed by default); Updates, Backup, and About stay open
+- Library/Movies grid uses the full window width when maximized
+
 ## 1.9.3
 
 - Loading screen stays up until the torrent engine, VPN detect, and settings are ready — then the UI appears

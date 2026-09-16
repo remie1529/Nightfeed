@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.9.3 — Splash until engine/VPN/settings are ready.
+**Current:** v1.9.4 — Collapsible Settings; library uses full window width.
+
+# Status v1.9.4
+
+## New
+- Settings accordion (Updates / Backup / About stay open)
+- Poster grid fills maximized width
 
 # Status v1.9.3
 
