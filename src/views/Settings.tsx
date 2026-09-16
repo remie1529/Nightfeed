@@ -99,6 +99,7 @@ const empty: AppSettings = {
   autoDownload: true,
   autoDownloadDelayMinutes: 0,
   launchOnStartup: false,
+  restartOnCrash: false,
   telegramEnabled: false,
   telegramBotToken: '',
   telegramAllowedChatIds: '',
@@ -939,6 +940,22 @@ export default function SettingsView() {
           </label>
           <div className="hint">
             Uses Electron openAtLogin. You may also need to allow “Nightfeed” under Windows Settings → Apps → Startup.
+          </div>
+        </div>
+
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={!!settings.restartOnCrash}
+              onChange={(e) => setLocal({ ...settings, restartOnCrash: e.target.checked })}
+            />
+            <span>Restart Nightfeed if it crashes</span>
+          </label>
+          <div className="hint">
+            Registers a Windows Task Scheduler task (<code>NightfeedCrashRestart</code>) that checks every minute.
+            If Nightfeed closed unexpectedly it is started again. Quitting the app normally does not restart it.
+            Save to apply.
           </div>
         </div>
 

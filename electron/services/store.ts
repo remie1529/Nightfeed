@@ -135,6 +135,7 @@ export function getSettings(): AppSettings {
   if (merged.vpnUsername == null) merged.vpnUsername = '';
   if (merged.vpnPassword == null) merged.vpnPassword = '';
   if (typeof merged.vpnRequireForTorrents !== 'boolean') merged.vpnRequireForTorrents = false;
+  if (typeof merged.restartOnCrash !== 'boolean') merged.restartOnCrash = false;
   if (merged.telegramAdminChatIds == null) merged.telegramAdminChatIds = '';
   if (merged.telegramRequestChatIds == null) merged.telegramRequestChatIds = '';
   // Migrate legacy single allow-list into Admin when new fields are empty.

@@ -94,6 +94,8 @@ export interface AppSettings {
   autoDownloadDelayMinutes: number;
   /** Launch app when Windows starts (Electron openAtLogin). */
   launchOnStartup: boolean;
+  /** Task Scheduler watchdog: restart Nightfeed after a crash (not a normal quit). */
+  restartOnCrash: boolean;
   /** Enable Telegram bot polling in the main process. */
   telegramEnabled: boolean;
   /** Bot token from @BotFather — never log this. */
@@ -456,6 +458,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoDownload: true,
   autoDownloadDelayMinutes: 0,
   launchOnStartup: false,
+  restartOnCrash: false,
   telegramEnabled: false,
   telegramBotToken: '',
   telegramAllowedChatIds: '',
