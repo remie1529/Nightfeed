@@ -195,11 +195,17 @@ a { color: var(--accent); }
 
 .page {
   padding: 1.5rem 1.75rem 2.5rem;
-  max-width: 1200px;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+.page.page-settings {
+  max-width: 880px;
 }
 
 .page.page-wide {
-  max-width: 1360px;
+  max-width: none;
 }
 
 .cal-grid {
@@ -585,10 +591,52 @@ table.dense tr:hover td {
   font-weight: 700;
 }
 
-.settings-section:first-child {
-  margin-top: 0;
-  padding-top: 0;
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.settings-fold {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.settings-fold > summary.settings-section {
+  margin: 0;
+  padding: 0.7rem 0.95rem;
   border-top: none;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.settings-fold > summary.settings-section::-webkit-details-marker {
+  display: none;
+}
+
+.settings-fold > summary.settings-section::after {
+  content: "▸";
+  color: var(--text-faint);
+  font-size: 0.8rem;
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+}
+
+.settings-fold[open] > summary.settings-section::after {
+  transform: rotate(90deg);
+}
+
+.settings-fold-body {
+  padding: 0.2rem 0.95rem 0.95rem;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 1rem;
 }
 
 .toggle-row {
@@ -840,6 +888,7 @@ table.dense tr:hover td {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   gap: 1.1rem;
+  width: 100%;
 }
 
 .poster-card {
