@@ -139,6 +139,8 @@ export interface LiveTvChannel {
   logoCustom?: boolean;
   epgCustom?: boolean;
   fakeEpg?: boolean;
+  /** UI-only data URL; not persisted. */
+  logoPreview?: string;
 }
 
 export interface LiveTvEpgOption {

@@ -97,6 +97,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.9.1** — Live TV icons actually show in Nightfeed and are served as PNGs for Plex.
+
 **1.9.0** — Live TV: custom channel icons, EPG mapping, and fake guide for channels with no XMLTV.
 
 **1.8.9** — Live TV: HLS playlists remuxed to MPEG-TS so Plex actually gets a stream.
