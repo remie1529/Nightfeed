@@ -7,9 +7,19 @@ import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import Requests from './views/Requests';
 import SettingsView from './views/Settings';
-import type { DownloadItem, Movie, UpdateStatus, VpnStatus } from './lib/types';
+import LiveTvView from './views/LiveTv';
+import type { AppSettings, DownloadItem, Movie, UpdateStatus, VpnStatus } from './lib/types';
 
-type View = 'library' | 'calendar' | 'movies' | 'downloads' | 'requests' | 'settings' | 'show' | 'movie';
+type View =
+  | 'library'
+  | 'calendar'
+  | 'movies'
+  | 'downloads'
+  | 'requests'
+  | 'settings'
+  | 'show'
+  | 'movie'
+  | 'livetv';
 
 interface Toast {
   id: number;
@@ -31,9 +41,17 @@ export default function App() {
   const [vpnKillSwitch, setVpnKillSwitch] = useState(false);
   const [updateBanner, setUpdateBanner] = useState<UpdateStatus | null>(null);
   const [appVersion, setAppVersion] = useState('');
+  const [liveTvOn, setLiveTvOn] = useState(false);
 
   useEffect(() => {
     window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || ''))).catch(() => undefined);
+    window.torrentAPI
+      .getSettings()
+      .then((s) => setLiveTvOn(!!(s as AppSettings).liveTvEnabled))
+      .catch(() => undefined);
+    const offSettings = window.torrentAPI.onSettingsChanged?.((s) => {
+      setLiveTvOn(!!(s as AppSettings)?.liveTvEnabled);
+    });
     const countActive = (items: DownloadItem[]) =>
       items.filter((d) => d.status === 'downloading' || d.status === 'queued' || d.status === 'paused').length;
     window.torrentAPI
@@ -88,9 +106,14 @@ export default function App() {
       offReq?.();
       offVpn?.();
       offUpd?.();
+      offSettings?.();
       clearInterval(pendingTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!liveTvOn && view === 'livetv') setView('settings');
+  }, [liveTvOn, view]);
 
   const openShow = (tmdbId: number, back: View = 'library') => {
     setSelectedId(tmdbId);
@@ -141,6 +164,14 @@ export default function App() {
           Requests
           {pendingRequests > 0 ? <span className="nav-badge">{pendingRequests}</span> : null}
         </button>
+        {liveTvOn && (
+          <button
+            className={`nav-item ${view === 'livetv' ? 'active' : ''}`}
+            onClick={() => setView('livetv')}
+          >
+            Live TV
+          </button>
+        )}
         <button
           className={`nav-item ${view === 'settings' ? 'active' : ''}`}
           onClick={() => setView('settings')}
@@ -197,6 +228,7 @@ export default function App() {
         )}
         {view === 'downloads' && <Downloads />}
         {view === 'requests' && <Requests refreshToken={requestsKey} />}
+        {view === 'livetv' && liveTvOn && <LiveTvView />}
         {view === 'settings' && <SettingsView />}
       </main>
       <div className="toast-stack" aria-live="polite">

@@ -75,6 +75,17 @@ const api = {
   resolveRequest: (id: string, action: 'approved' | 'denied') =>
     ipcRenderer.invoke('requests:resolve', id, action),
   getWebPortalStatus: () => ipcRenderer.invoke('webPortal:status'),
+  pickFile: (filters?: Array<{ name: string; extensions: string[] }>) =>
+    ipcRenderer.invoke('dialog:pickFile', filters),
+  getLiveTvStatus: () => ipcRenderer.invoke('liveTv:status'),
+  getLiveTvChannels: () => ipcRenderer.invoke('liveTv:channels'),
+  refreshLiveTv: () => ipcRenderer.invoke('liveTv:refresh'),
+  setLiveTvChannels: (channels: unknown[]) => ipcRenderer.invoke('liveTv:setChannels', channels),
+  onSettingsChanged: (cb: (s: unknown) => void) => {
+    const listener = (_: unknown, s: unknown) => cb(s);
+    ipcRenderer.on('settings:changed', listener);
+    return () => ipcRenderer.removeListener('settings:changed', listener);
+  },
 
   exportBackup: () => ipcRenderer.invoke('backup:export'),
   importBackup: () => ipcRenderer.invoke('backup:import'),

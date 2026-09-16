@@ -102,6 +102,55 @@ export interface AppSettings {
   /** Present when a password has been set (hash never shown in UI). */
   webPortalAdminPasswordHash?: string;
   webPortalSessionSecret?: string;
+  liveTvEnabled: boolean;
+  liveTvPort: number;
+  liveTvBind: 'localhost' | 'lan';
+  liveTvTuners: number;
+  liveTvBufferMode: 'off' | 'memory' | 'ffmpeg';
+  liveTvBufferKb: number;
+  liveTvBufferTimeoutMs: number;
+  liveTvUserAgent: string;
+  liveTvFfmpegPath: string;
+  liveTvHideAdult: boolean;
+  liveTvSourceType: 'none' | 'direct' | 'm3u' | 'xtream';
+  liveTvDirectUrl: string;
+  liveTvDirectName: string;
+  liveTvM3uUrl: string;
+  liveTvXmltvUrl: string;
+  liveTvXtreamHost: string;
+  liveTvXtreamUsername: string;
+  liveTvXtreamPassword: string;
+  liveTvXtreamPort: number;
+  liveTvXtreamHls: boolean;
+}
+
+export interface LiveTvChannel {
+  id: string;
+  name: string;
+  number: number;
+  group: string;
+  logo: string;
+  tvgId: string;
+  url: string;
+  enabled: boolean;
+}
+
+export interface LiveTvStatus {
+  enabled: boolean;
+  listening: boolean;
+  port: number;
+  bind: 'localhost' | 'lan';
+  ffmpegFound: boolean;
+  ffmpegPath: string | null;
+  tuners: number;
+  tunersInUse: number;
+  channelCount: number;
+  enabledCount: number;
+  lastError: string | null;
+  lastRefresh: string | null;
+  tunerUrl: string;
+  xmltvUrl: string;
+  active: Array<{ number: number; name: string }>;
 }
 
 export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';

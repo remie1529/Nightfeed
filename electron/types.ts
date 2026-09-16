@@ -149,6 +149,55 @@ export interface AppSettings {
   webPortalAdminPasswordHash: string;
   /** HMAC secret for admin session cookies. */
   webPortalSessionSecret: string;
+  liveTvEnabled: boolean;
+  liveTvPort: number;
+  liveTvBind: 'localhost' | 'lan';
+  liveTvTuners: number;
+  liveTvBufferMode: 'off' | 'memory' | 'ffmpeg';
+  liveTvBufferKb: number;
+  liveTvBufferTimeoutMs: number;
+  liveTvUserAgent: string;
+  liveTvFfmpegPath: string;
+  liveTvHideAdult: boolean;
+  liveTvSourceType: 'none' | 'direct' | 'm3u' | 'xtream';
+  liveTvDirectUrl: string;
+  liveTvDirectName: string;
+  liveTvM3uUrl: string;
+  liveTvXmltvUrl: string;
+  liveTvXtreamHost: string;
+  liveTvXtreamUsername: string;
+  liveTvXtreamPassword: string;
+  liveTvXtreamPort: number;
+  liveTvXtreamHls: boolean;
+}
+
+export interface LiveTvChannel {
+  id: string;
+  name: string;
+  number: number;
+  group: string;
+  logo: string;
+  tvgId: string;
+  url: string;
+  enabled: boolean;
+}
+
+export interface LiveTvStatus {
+  enabled: boolean;
+  listening: boolean;
+  port: number;
+  bind: 'localhost' | 'lan';
+  ffmpegFound: boolean;
+  ffmpegPath: string | null;
+  tuners: number;
+  tunersInUse: number;
+  channelCount: number;
+  enabledCount: number;
+  lastError: string | null;
+  lastRefresh: string | null;
+  tunerUrl: string;
+  xmltvUrl: string;
+  active: Array<{ number: number; name: string }>;
 }
 
 export type VpnConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -400,7 +449,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramDailyBriefing: false,
   telegramDailyBriefingHour: 9,
   githubToken: '',
-  maxConnections: 200,
+  maxConnections: 55,
   maxDownloadSpeedKBps: 0,
   maxUploadSpeedKBps: 0,
   ftpEnabled: false,
@@ -420,4 +469,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webPortalBind: 'localhost',
   webPortalAdminPasswordHash: '',
   webPortalSessionSecret: '',
+  liveTvEnabled: false,
+  liveTvPort: 34400,
+  liveTvBind: 'lan',
+  liveTvTuners: 3,
+  liveTvBufferMode: 'memory',
+  liveTvBufferKb: 1024,
+  liveTvBufferTimeoutMs: 8000,
+  liveTvUserAgent: 'VLC/3.0.20 LibVLC/3.0.20',
+  liveTvFfmpegPath: '',
+  liveTvHideAdult: true,
+  liveTvSourceType: 'none',
+  liveTvDirectUrl: '',
+  liveTvDirectName: '',
+  liveTvM3uUrl: '',
+  liveTvXmltvUrl: '',
+  liveTvXtreamHost: '',
+  liveTvXtreamUsername: '',
+  liveTvXtreamPassword: '',
+  liveTvXtreamPort: 80,
+  liveTvXtreamHls: false,
 };

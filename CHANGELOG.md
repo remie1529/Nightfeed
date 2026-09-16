@@ -2,6 +2,14 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.8.8
+
+- Live TV for Plex: HDHomeRun tuner + XMLTV (M3U, Xtream Codes, or a direct stream)
+- Settings enable toggle; Live TV tab to pick channels, tuners, and Plex URLs
+- Buffer: off, memory, or ffmpeg remux; IPTV stays off the torrent VPN
+- Downloads: stop tearing down WebTorrent when only the VPN interface index changes (that froze the UI and killed speed)
+- Cap peer connections at 48; slower progress/save ticks so the app stays responsive while torrents run
+
 ## 1.8.7
 
 - Calendar tab: week view of episode air dates (Monday–Sunday), click an episode to open the show

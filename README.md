@@ -40,6 +40,7 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 - **UNC paths** — Windows network library roots supported
 - **Multiple library roots** — several TV/movie folders, drag to reorder; top is default for new titles
 - **OpenVPN** — Nightfeed starts Community `openvpn.exe` (not the GUI), auto-connect, torrent-only split tunnel, kill switch
+- **Live TV** — optional HDHomeRun tuner + XMLTV for Plex (M3U, Xtream Codes, or a direct stream)
 
 ---
 
@@ -95,6 +96,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 ## Version log
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
+
+**1.8.8** — Live TV tuner + guide for Plex (M3U / Xtream / direct); download freeze/speed fix while torrents run.
 
 **1.8.7** — Calendar week view of air dates; Library filter for shows with missing episodes.
 
