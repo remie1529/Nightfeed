@@ -110,7 +110,8 @@ export default function LiveTvView() {
       <div className="settings-section">Plex</div>
       <div className="hint" style={{ marginBottom: 12 }}>
         Plex Pass → Settings → Live TV &amp; DVR → Set Up Plex DVR → “Don’t see your HDHomeRun?” → paste the tuner
-        URL. Then add the XMLTV guide URL.
+        URL. Then add the XMLTV guide URL. Plex needs MPEG-TS; Nightfeed converts HLS (.m3u8) automatically. If a
+        channel still won’t play, install ffmpeg and set Settings → Live TV → Buffer to ffmpeg.
       </div>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         <code className="status-line">{status?.tunerUrl || '—'}</code>

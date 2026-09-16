@@ -1,6 +1,11 @@
 ## Nightfeed status
 
-**Current:** v1.8.8 — Live TV for Plex + download freeze/speed fix.
+**Current:** v1.8.9 — Live TV HLS→MPEG-TS so Plex can play.
+
+# Status v1.8.9
+
+## New
+- Convert IPTV HLS to MPEG-TS for Plex; VLC M3U headers; stream errors in the Live TV tab
 
 # Status v1.8.8
 

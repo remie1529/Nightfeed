@@ -97,6 +97,8 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.8.9** — Live TV: HLS playlists remuxed to MPEG-TS so Plex actually gets a stream.
+
 **1.8.8** — Live TV tuner + guide for Plex (M3U / Xtream / direct); download freeze/speed fix while torrents run.
 
 **1.8.7** — Calendar week view of air dates; Library filter for shows with missing episodes.
