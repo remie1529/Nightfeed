@@ -2,6 +2,12 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.0
+
+- Live TV: custom channel icon (URL or local file) and EPG id mapping from the XMLTV guide
+- Fake EPG: repeating Live blocks per channel or automatically when a channel has no guide
+- Custom icon/EPG survive playlist refresh
+
 ## 1.8.9
 
 - Live TV streams to Plex: convert HLS (.m3u8) to MPEG-TS (Plex cannot play a raw playlist)

@@ -10,7 +10,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { PassThrough } from 'stream';
-import type { AppSettings, LiveTvChannel, LiveTvStatus } from '../types';
+import { app } from 'electron';
+import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus } from '../types';
 import { getLiveTvLineup, getLiveTvXmltvCache, getSettings, setLiveTvLineup, setLiveTvXmltvCache } from './store';
 
 const insecureHttps = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
@@ -328,8 +329,118 @@ function mergeLineup(incoming: LiveTvChannel[], existing: LiveTvChannel[]): Live
       enabled: old.enabled,
       number: old.number || c.number || i + 1,
       name: old.name && old.name !== c.name ? old.name : c.name,
+      logo: old.logoCustom && old.logo ? old.logo : c.logo,
+      tvgId: old.epgCustom && old.tvgId ? old.tvgId : c.tvgId,
+      logoCustom: !!old.logoCustom,
+      epgCustom: !!old.epgCustom,
+      fakeEpg: !!old.fakeEpg,
     };
   });
+}
+
+function xmlEsc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function xmltvTs(d: Date): string {
+  const p = (n: number, w = 2) => String(n).padStart(w, '0');
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const ah = Math.floor(Math.abs(off) / 60);
+  const am = Math.abs(off) % 60;
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())} ${sign}${p(ah)}${p(am)}`;
+}
+
+function iconDir(): string {
+  return path.join(app.getPath('userData'), 'live-tv-icons');
+}
+
+export function findChannelIconFile(channelId: string): string | null {
+  try {
+    const dir = iconDir();
+    if (!fs.existsSync(dir)) return null;
+    const hit = fs.readdirSync(dir).find((f) => f === channelId || f.startsWith(`${channelId}.`));
+    if (hit) return path.join(dir, hit);
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function saveChannelIconFile(channelId: string, fromPath: string): string {
+  if (!fromPath || !fs.existsSync(fromPath)) throw new Error('Icon file not found');
+  fs.mkdirSync(iconDir(), { recursive: true });
+  const ext = (path.extname(fromPath) || '.png').toLowerCase();
+  const dest = path.join(iconDir(), `${channelId}${ext}`);
+  for (const old of fs.readdirSync(iconDir()).filter((f) => f.startsWith(`${channelId}.`))) {
+    try {
+      fs.unlinkSync(path.join(iconDir(), old));
+    } catch {
+      // ignore
+    }
+  }
+  fs.copyFileSync(fromPath, dest);
+  return dest;
+}
+
+function mimeForIcon(file: string): string {
+  const e = path.extname(file).toLowerCase();
+  if (e === '.jpg' || e === '.jpeg') return 'image/jpeg';
+  if (e === '.gif') return 'image/gif';
+  if (e === '.webp') return 'image/webp';
+  if (e === '.svg') return 'image/svg+xml';
+  return 'image/png';
+}
+
+function parseXmltvChannels(xml: string): LiveTvEpgOption[] {
+  const out: LiveTvEpgOption[] = [];
+  const seen = new Set<string>();
+  const re = /<channel\s+id="([^"]+)"[^>]*>([\s\S]*?)<\/channel>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    const id = m[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const name = (m[2].match(/<display-name[^>]*>([^<]+)<\/display-name>/i) || [])[1] || id;
+    out.push({ id, name: name.trim() });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return out;
+}
+
+function indexXmltvProgrammes(xml: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const re = /<programme\b[^>]*\bchannel="([^"]+)"[^>]*>[\s\S]*?<\/programme>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    const id = m[1];
+    map.set(id, (map.get(id) || '') + m[0] + '\n');
+  }
+  return map;
+}
+
+function fakeProgrammesXml(channelId: string, title: string, minutes: number, days: number): string {
+  const slot = Math.max(15, Math.min(240, Math.floor(minutes) || 60));
+  const span = Math.max(1, Math.min(7, Math.floor(days) || 2));
+  const start = new Date();
+  start.setSeconds(0, 0);
+  start.setMinutes(Math.floor(start.getMinutes() / slot) * slot);
+  const endMs = start.getTime() + span * 24 * 60 * 60 * 1000;
+  const chunks: string[] = [];
+  const cid = xmlEsc(channelId);
+  const ttl = xmlEsc(title || 'Live');
+  for (let t = start.getTime(); t < endMs; t += slot * 60 * 1000) {
+    const a = new Date(t);
+    const b = new Date(t + slot * 60 * 1000);
+    chunks.push(
+      `<programme start="${xmltvTs(a)}" stop="${xmltvTs(b)}" channel="${cid}"><title>${ttl}</title><desc>Live</desc></programme>`
+    );
+  }
+  return chunks.join('\n');
 }
 
 class LiveTvServer {
@@ -339,6 +450,8 @@ class LiveTvServer {
   private lastStreamError: string | null = null;
   private lastRefresh: string | null = null;
   private xmltvMem = '';
+  private xmltvIds: LiveTvEpgOption[] = [];
+  private xmltvByChannel = new Map<string, string>();
   private refreshTimer: NodeJS.Timeout | null = null;
   private ffmpegPath: string | null = null;
 
@@ -366,6 +479,8 @@ class LiveTvServer {
       this.server.listen(port, host, () => {
         this.lastError = null;
       });
+      this.xmltvMem = getLiveTvXmltvCache();
+      this.reindexXmltv();
       this.scheduleRefresh();
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
@@ -473,6 +588,7 @@ class LiveTvServer {
       this.lastRefresh = new Date().toISOString();
       this.lastError = null;
       await this.refreshXmltv(s, ua);
+      this.reindexXmltv();
       return merged;
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
@@ -522,16 +638,74 @@ class LiveTvServer {
     }
     if (!url) {
       this.xmltvMem = getLiveTvXmltvCache();
+      this.reindexXmltv();
       return;
     }
     try {
       const xml = await fetchText(url, ua, 60000);
       this.xmltvMem = xml;
       setLiveTvXmltvCache(xml.length > 8_000_000 ? '' : xml);
+      this.reindexXmltv();
     } catch (err) {
       this.xmltvMem = getLiveTvXmltvCache();
+      this.reindexXmltv();
       if (!this.xmltvMem) throw err;
     }
+  }
+
+  private reindexXmltv(): void {
+    const xml = this.xmltvMem || '';
+    this.xmltvIds = xml ? parseXmltvChannels(xml) : [];
+    this.xmltvByChannel = xml ? indexXmltvProgrammes(xml) : new Map();
+  }
+
+  epgOptions(): LiveTvEpgOption[] {
+    if (!this.xmltvIds.length && (this.xmltvMem || getLiveTvXmltvCache())) {
+      this.xmltvMem = this.xmltvMem || getLiveTvXmltvCache();
+      this.reindexXmltv();
+    }
+    return this.xmltvIds;
+  }
+
+  applyChannelIcon(channelId: string, filePath: string): LiveTvChannel[] {
+    const dest = saveChannelIconFile(channelId, filePath);
+    const next = getLiveTvLineup().map((c) =>
+      c.id === channelId ? { ...c, logo: dest, logoCustom: true } : c
+    );
+    setLiveTvLineup(next);
+    return next;
+  }
+
+  private iconUrl(ch: LiveTvChannel, base: string): string {
+    if (!ch.logo) return '';
+    if (/^https?:\/\//i.test(ch.logo)) return ch.logo;
+    return `${base}/icon/${encodeURIComponent(ch.id)}`;
+  }
+
+  composeXmltv(base: string): string {
+    const s = getSettings();
+    const minutes = s.liveTvFakeEpgMinutes || 60;
+    const days = s.liveTvFakeEpgDays || 2;
+    const fakeMissing = s.liveTvFakeEpgMissing !== false;
+    const enabled = this.enabledChannels();
+    const chXml: string[] = [];
+    const prXml: string[] = [];
+    for (const ch of enabled) {
+      const cid = (ch.tvgId || `nf-${ch.id}`).trim();
+      const icon = this.iconUrl(ch, base);
+      chXml.push(
+        `<channel id="${xmlEsc(cid)}"><display-name>${xmlEsc(ch.name)}</display-name>${
+          icon ? `<icon src="${xmlEsc(icon)}" />` : ''
+        }</channel>`
+      );
+      const mapped = ch.tvgId ? this.xmltvByChannel.get(ch.tvgId) : '';
+      const useFake = !!ch.fakeEpg || (fakeMissing && !mapped);
+      if (useFake) prXml.push(fakeProgrammesXml(cid, ch.name, minutes, days));
+      else if (mapped) prXml.push(mapped);
+    }
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="Nightfeed">\n${chXml.join(
+      '\n'
+    )}\n${prXml.join('\n')}\n</tv>\n`;
   }
 
   private baseUrl(req: http.IncomingMessage, settings: AppSettings): string {
@@ -582,9 +756,27 @@ class LiveTvServer {
       return;
     }
     if (p === '/xmltv.xml' || p === '/xmltv') {
-      const xml = this.xmltvMem || getLiveTvXmltvCache() || '<?xml version="1.0"?><tv></tv>';
+      if (!this.xmltvIds.length && (this.xmltvMem || getLiveTvXmltvCache())) {
+        this.xmltvMem = this.xmltvMem || getLiveTvXmltvCache();
+        this.reindexXmltv();
+      }
+      const xml = this.composeXmltv(this.baseUrl(req, settings));
       res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
       res.end(xml);
+      return;
+    }
+    if (p.startsWith('/icon/')) {
+      const id = decodeURIComponent(p.slice('/icon/'.length).split('/')[0] || '');
+      const file = findChannelIconFile(id);
+      const lineup = id ? getLiveTvLineup().find((c) => c.id === id) : null;
+      const disk = file || (lineup && lineup.logo && !/^https?:\/\//i.test(lineup.logo) && fs.existsSync(lineup.logo) ? lineup.logo : null);
+      if (!disk) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': mimeForIcon(disk), 'Cache-Control': 'public, max-age=86400' });
+      fs.createReadStream(disk).pipe(res);
       return;
     }
     const auto = p.match(/^\/auto\/v(\d+)/);

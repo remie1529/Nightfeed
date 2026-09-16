@@ -2018,6 +2018,14 @@ function registerIpc() {
     if (incoming.liveTvBufferMode != null && incoming.liveTvBufferMode !== 'off' && incoming.liveTvBufferMode !== 'ffmpeg') {
       incoming.liveTvBufferMode = 'memory';
     }
+    if (incoming.liveTvFakeEpgMinutes != null) {
+      const n = Number(incoming.liveTvFakeEpgMinutes);
+      incoming.liveTvFakeEpgMinutes = [30, 60, 120].includes(n) ? n : 60;
+    }
+    if (incoming.liveTvFakeEpgDays != null) {
+      const n = Number(incoming.liveTvFakeEpgDays);
+      incoming.liveTvFakeEpgDays = Number.isFinite(n) ? Math.max(1, Math.min(7, Math.floor(n))) : 2;
+    }
 
     const next = setSettings(incoming);
     applySettingsSideEffects(next);
@@ -2434,9 +2442,16 @@ function registerIpc() {
         tvgId: String(c.tvgId || ''),
         url: String(c.url || ''),
         enabled: !!c.enabled,
+        logoCustom: !!c.logoCustom,
+        epgCustom: !!c.epgCustom,
+        fakeEpg: !!c.fakeEpg,
       }))
     );
     return getLiveTvLineup();
+  });
+  ipcMain.handle('liveTv:epgOptions', () => liveTv.epgOptions());
+  ipcMain.handle('liveTv:setIcon', (_e, channelId: string, filePath: string) => {
+    return liveTv.applyChannelIcon(String(channelId || ''), String(filePath || ''));
   });
   ipcMain.handle('dialog:pickFile', async (_e, filters?: Array<{ name: string; extensions: string[] }>) => {
     const r = await dialog.showOpenDialog(mainWindow!, {

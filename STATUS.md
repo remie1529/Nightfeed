@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.8.9 — Live TV HLS→MPEG-TS so Plex can play.
+**Current:** v1.9.0 — Live TV icons, EPG mapping, fake guide.
+
+# Status v1.9.0
+
+## New
+- Per-channel custom icon and XMLTV EPG id
+- Fake repeating EPG (per channel or auto when missing)
 
 # Status v1.8.9
 

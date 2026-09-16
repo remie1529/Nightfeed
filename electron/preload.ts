@@ -81,6 +81,9 @@ const api = {
   getLiveTvChannels: () => ipcRenderer.invoke('liveTv:channels'),
   refreshLiveTv: () => ipcRenderer.invoke('liveTv:refresh'),
   setLiveTvChannels: (channels: unknown[]) => ipcRenderer.invoke('liveTv:setChannels', channels),
+  getLiveTvEpgOptions: () => ipcRenderer.invoke('liveTv:epgOptions'),
+  setLiveTvIcon: (channelId: string, filePath: string) =>
+    ipcRenderer.invoke('liveTv:setIcon', channelId, filePath),
   onSettingsChanged: (cb: (s: unknown) => void) => {
     const listener = (_: unknown, s: unknown) => cb(s);
     ipcRenderer.on('settings:changed', listener);

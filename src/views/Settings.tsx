@@ -147,6 +147,9 @@ const empty: AppSettings = {
   liveTvXtreamPassword: '',
   liveTvXtreamPort: 80,
   liveTvXtreamHls: false,
+  liveTvFakeEpgMissing: true,
+  liveTvFakeEpgMinutes: 60,
+  liveTvFakeEpgDays: 2,
 };
 
 export default function SettingsView() {
@@ -1291,6 +1294,40 @@ export default function SettingsView() {
             />
             <span>Hide adult groups when refreshing the playlist</span>
           </label>
+        </div>
+        <div className="field">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.liveTvFakeEpgMissing !== false}
+              onChange={(e) => setLocal({ ...settings, liveTvFakeEpgMissing: e.target.checked })}
+            />
+            <span>Fake EPG for channels with no guide mapping</span>
+          </label>
+          <div className="hint">
+            Repeating “Live” blocks so Plex always has a guide. Per-channel Fake/EPG id is on the Live TV tab.
+          </div>
+        </div>
+        <div className="field">
+          <label>Fake EPG block length (minutes)</label>
+          <select
+            value={String(settings.liveTvFakeEpgMinutes || 60)}
+            onChange={(e) => setLocal({ ...settings, liveTvFakeEpgMinutes: Number(e.target.value) || 60 })}
+          >
+            <option value="30">30</option>
+            <option value="60">60</option>
+            <option value="120">120</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Fake EPG days ahead</label>
+          <input
+            type="number"
+            min={1}
+            max={7}
+            value={settings.liveTvFakeEpgDays ?? 2}
+            onChange={(e) => setLocal({ ...settings, liveTvFakeEpgDays: Number(e.target.value) || 2 })}
+          />
         </div>
         <div className="hint">
           Source (M3U / Xtream / direct URL), which channels go to Plex, and the Plex tuner/guide URLs are on
