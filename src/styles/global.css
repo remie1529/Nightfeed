@@ -294,6 +294,20 @@ a { color: var(--accent); }
   margin-top: 0.05rem;
 }
 
+.ltv-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  background: #0a0a0a;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.ltv-logo-empty {
+  display: inline-block;
+}
+
 .page-header {
   display: flex;
   align-items: flex-end;

@@ -169,6 +169,10 @@ export interface AppSettings {
   liveTvXtreamPassword: string;
   liveTvXtreamPort: number;
   liveTvXtreamHls: boolean;
+  /** Generate a repeating fake guide when a channel has no XMLTV programmes. */
+  liveTvFakeEpgMissing: boolean;
+  liveTvFakeEpgMinutes: number;
+  liveTvFakeEpgDays: number;
 }
 
 export interface LiveTvChannel {
@@ -180,6 +184,17 @@ export interface LiveTvChannel {
   tvgId: string;
   url: string;
   enabled: boolean;
+  /** Keep this logo on playlist refresh. */
+  logoCustom?: boolean;
+  /** Keep this tvgId on playlist refresh. */
+  epgCustom?: boolean;
+  /** Always emit a fake repeating guide for this channel. */
+  fakeEpg?: boolean;
+}
+
+export interface LiveTvEpgOption {
+  id: string;
+  name: string;
 }
 
 export interface LiveTvStatus {
@@ -489,4 +504,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   liveTvXtreamPassword: '',
   liveTvXtreamPort: 80,
   liveTvXtreamHls: false,
+  liveTvFakeEpgMissing: true,
+  liveTvFakeEpgMinutes: 60,
+  liveTvFakeEpgDays: 2,
 };

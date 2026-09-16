@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AppSettings, LiveTvChannel, LiveTvStatus } from '../lib/types';
+import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus } from '../lib/types';
 
 export default function LiveTvView() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -10,16 +10,19 @@ export default function LiveTvView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [epgOptions, setEpgOptions] = useState<LiveTvEpgOption[]>([]);
 
   const load = useCallback(async () => {
-    const [s, st, ch] = await Promise.all([
+    const [s, st, ch, epg] = await Promise.all([
       window.torrentAPI.getSettings(),
       window.torrentAPI.getLiveTvStatus?.(),
       window.torrentAPI.getLiveTvChannels?.(),
+      window.torrentAPI.getLiveTvEpgOptions?.(),
     ]);
     setSettings(s as AppSettings);
     setStatus((st || null) as LiveTvStatus | null);
     setChannels(Array.isArray(ch) ? (ch as LiveTvChannel[]) : []);
+    setEpgOptions(Array.isArray(epg) ? (epg as LiveTvEpgOption[]) : []);
   }, []);
 
   useEffect(() => {
@@ -43,6 +46,8 @@ export default function LiveTvView() {
       const ch = (await window.torrentAPI.refreshLiveTv?.()) as LiveTvChannel[];
       setChannels(Array.isArray(ch) ? ch : []);
       setStatus((await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus);
+      const epg = await window.torrentAPI.getLiveTvEpgOptions?.();
+      setEpgOptions(Array.isArray(epg) ? (epg as LiveTvEpgOption[]) : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -286,7 +291,38 @@ export default function LiveTvView() {
         >
           Disable visible
         </button>
+        <button
+          type="button"
+          onClick={() =>
+            void persist(
+              channels.map((c) => (visible.some((v) => v.id === c.id) ? { ...c, fakeEpg: true } : c))
+            )
+          }
+        >
+          Fake EPG on visible
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void persist(
+              channels.map((c) => (visible.some((v) => v.id === c.id) ? { ...c, fakeEpg: false } : c))
+            )
+          }
+        >
+          Clear fake on visible
+        </button>
       </div>
+      <div className="hint" style={{ marginBottom: 10 }}>
+        Icon: URL or Browse a local image (Plex reads it from the XMLTV guide). EPG id: pick a guide channel or type
+        one. Fake: repeating Live blocks when you don’t have a real mapping.
+      </div>
+      <datalist id="nf-epg-ids">
+        {epgOptions.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name !== o.id ? `${o.name}` : o.id}
+          </option>
+        ))}
+      </datalist>
 
       {channels.length === 0 ? (
         <div className="empty-state">
@@ -300,13 +336,21 @@ export default function LiveTvView() {
               <tr>
                 <th style={{ width: 52 }}>On</th>
                 <th style={{ width: 70 }}>#</th>
+                <th style={{ width: 52 }}>Icon</th>
                 <th>Name</th>
                 <th>Group</th>
                 <th>EPG id</th>
+                <th style={{ width: 70 }}>Fake</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map((c) => (
+              {visible.map((c) => {
+                const iconSrc = /^https?:\/\//i.test(c.logo)
+                  ? c.logo
+                  : c.logo && status?.tunerUrl
+                    ? `${status.tunerUrl}/icon/${encodeURIComponent(c.id)}`
+                    : '';
+                return (
                 <tr key={c.id}>
                   <td>
                     <input
@@ -330,6 +374,29 @@ export default function LiveTvView() {
                     />
                   </td>
                   <td>
+                    <div className="row" style={{ gap: 4, alignItems: 'center' }}>
+                      {iconSrc ? (
+                        <img className="ltv-logo" src={iconSrc} alt="" />
+                      ) : (
+                        <span className="ltv-logo ltv-logo-empty" />
+                      )}
+                      <button
+                        type="button"
+                        style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
+                        onClick={async () => {
+                          const p = await window.torrentAPI.pickFile?.([
+                            { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+                          ]);
+                          if (!p) return;
+                          const next = (await window.torrentAPI.setLiveTvIcon?.(c.id, p)) as LiveTvChannel[];
+                          if (Array.isArray(next)) setChannels(next);
+                        }}
+                      >
+                        …
+                      </button>
+                    </div>
+                  </td>
+                  <td>
                     <input
                       value={c.name}
                       onChange={(e) =>
@@ -339,11 +406,37 @@ export default function LiveTvView() {
                     />
                   </td>
                   <td style={{ color: 'var(--text-dim)' }}>{c.group || '—'}</td>
-                  <td className="mono" style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>
-                    {c.tvgId || '—'}
+                  <td>
+                    <input
+                      className="mono"
+                      list="nf-epg-ids"
+                      placeholder="guide id"
+                      value={c.tvgId}
+                      onChange={(e) =>
+                        setChannels(
+                          channels.map((x) =>
+                            x.id === c.id ? { ...x, tvgId: e.target.value, epgCustom: true } : x
+                          )
+                        )
+                      }
+                      onBlur={() => void persist(channels)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={!!c.fakeEpg}
+                      title="Always use a fake repeating guide for this channel"
+                      onChange={(e) =>
+                        void persist(
+                          channels.map((x) => (x.id === c.id ? { ...x, fakeEpg: e.target.checked } : x))
+                        )
+                      }
+                    />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

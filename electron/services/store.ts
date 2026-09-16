@@ -171,6 +171,9 @@ export function getSettings(): AppSettings {
   if (merged.liveTvXtreamPassword == null) merged.liveTvXtreamPassword = '';
   if (!merged.liveTvXtreamPort || merged.liveTvXtreamPort < 1) merged.liveTvXtreamPort = 80;
   if (typeof merged.liveTvXtreamHls !== 'boolean') merged.liveTvXtreamHls = false;
+  if (typeof merged.liveTvFakeEpgMissing !== 'boolean') merged.liveTvFakeEpgMissing = true;
+  if (!merged.liveTvFakeEpgMinutes || merged.liveTvFakeEpgMinutes < 15) merged.liveTvFakeEpgMinutes = 60;
+  if (!merged.liveTvFakeEpgDays || merged.liveTvFakeEpgDays < 1) merged.liveTvFakeEpgDays = 2;
   return merged;
 }
 

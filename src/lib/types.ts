@@ -122,6 +122,9 @@ export interface AppSettings {
   liveTvXtreamPassword: string;
   liveTvXtreamPort: number;
   liveTvXtreamHls: boolean;
+  liveTvFakeEpgMissing: boolean;
+  liveTvFakeEpgMinutes: number;
+  liveTvFakeEpgDays: number;
 }
 
 export interface LiveTvChannel {
@@ -133,6 +136,14 @@ export interface LiveTvChannel {
   tvgId: string;
   url: string;
   enabled: boolean;
+  logoCustom?: boolean;
+  epgCustom?: boolean;
+  fakeEpg?: boolean;
+}
+
+export interface LiveTvEpgOption {
+  id: string;
+  name: string;
 }
 
 export interface LiveTvStatus {
