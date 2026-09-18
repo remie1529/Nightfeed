@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v2.0.2 — Remove GitHub token UI from Settings (public releases).
+**Current:** v2.0.3 — Episode search requires show-name match (Monster anthology fix).
+
+# Status v2.0.3
+
+## Fixed
+- Find / auto-download no longer list other anthology shows that share a franchise word + SxxExx (e.g. Monster Ed Gein / Dahmer when searching Lizzie Borden)
+- After episode-tag match, torrent titles must match distinctive show-name tokens; exact-ish show matches soft-rank first
 
 # Status v2.0.2
 
