@@ -11,3 +11,6 @@ release
 win-unpacked
 tsconfig.node.tsbuildinfo
 docs/features-preview.html
+
+scripts/.cache/
+build/icon-source-landscape.png

@@ -1,8 +1,8 @@
 ## Nightfeed status
 
-**Current:** v1.9.9 — Large torrent source expansion (+9 indexers); TheRarBG multi-host fallback.
+**Current:** v2.0.0 — Large torrent source expansion (+9 indexers); TheRarBG multi-host fallback.
 
-# Status v1.9.9
+# Status v2.0.0
 
 ## New
 - Settings: minimum file size for TV shows and for movies (per 720p / 1080p / 2160p); legacy shared mins migrate into both
@@ -93,5 +93,5 @@
 # Status v1.8.1
 
 ## New
-- Private GitHub updates use a full installer download (no .blockmap hang)
+- In-app updates use a full installer download (no .blockmap hang)
 - Progress percent, Retry download, Restart & install when the file is actually ready

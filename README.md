@@ -8,12 +8,16 @@ Desktop TV show & movie manager with embedded torrent downloads.
 
 **[Features & screenshots →](FEATURES.md)** — full showcase of Library, Movies, Downloads, Requests, Settings, VPN, Telegram, and the web portal.
 
+**Made in cooperation with Grok AI.**
+
+**v2.0.0** — public release: TV + movies library, embedded downloads, multi-source torrents, Requests (web/Telegram), OpenVPN split tunnel, Live TV/calendar, backup, folder import, and more.
+
 ---
 
 ## Install
 
 1. Open [Releases](https://github.com/remie1529/Nightfeed/releases)
-2. Download `Nightfeed-Setup-x.y.z.exe` (Windows x64)
+2. Download `Nightfeed-Setup-2.0.0.exe` (Windows x64)
 3. Run the installer and launch **Nightfeed**
 
 In-app updates check GitHub Releases on startup and every few hours.
@@ -91,17 +95,3 @@ npm run dist         # Windows NSIS installer → release/
 Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains `tv-show-manager` for continuity.
 
 ---
-
-## Version log
-
-Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
-
-**1.9.8** — AnimeTosho off by default in Settings Anime section; added YTS, TheRarBG, TorrentDownloads, Tokyo Toshokan.
-**1.9.7** — Web request portal: Your requests history, clearer already-available message, poster fix.
-**1.9.6** — Separate minimum file size for TV shows vs movies (per resolution).
-**1.9.5** — Crash-restart Task Scheduler without admin; Settings fills maximized width.
-**1.9.4** — Collapsible Settings sections; library grid fills the window when maximized.
-**1.9.3** — Loading screen stays until the backend is ready.
-**1.9.2** — Startup loading screen; optional Task Scheduler restart after a crash.
-**1.9.1** – **1.9.0** — Live TV icons, EPG mapping, fake guide for channels with no XMLTV.
-**1.8.x** — Live TV for Plex, calendar, OpenVPN split tunnel, process-folder quality gates, web portal restyle, and more (see CHANGELOG).
