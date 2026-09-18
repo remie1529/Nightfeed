@@ -30,7 +30,7 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 - **Requests** — in-app Requests tab + web/Telegram request workflow with posters and approve/deny
 - **Embedded downloads** — WebTorrent in an Electron `utilityProcess` when available
 - **Multi-thread search** — torrent index fetch/merge/rank on `worker_threads`; library zoekfunctie (TVMaze / IMDb) on its own worker so search stays responsive during downloads
-- **Multi-source torrents** — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, YTS, TheRarBG, TorrentDownloads, LimeTorrents; Anime section (Nyaa, Tokyo Toshokan, AnimeTosho off by default); optional Jackett
+- **Multi-source torrents** — 22 indexers: Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, YTS, TheRarBG, TorrentDownloads, SolidTorrents/BitSearch, TorrentDownload.info, TPB mirrors, LimeTorrents; Anime (Nyaa, Tokyo Toshokan, AnimeTosho/Bangumi/Mikan/DMHY/ACGNX/SubsPlease/Sukebei — several off by default); optional Jackett
 - **Quality gates** — preferred + minimum resolution; separate TV vs movie minimum file size per resolution
 - **Auto-download** — missing episodes on a schedule; skip ignored
 - **FTP upload** — optional upload when a download finishes

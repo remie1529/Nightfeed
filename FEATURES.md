@@ -2,7 +2,7 @@
 
 Dark chrome, gold accents — a desktop TV & movie manager with embedded torrents, requests, VPN split tunnel, and a local web portal.
 
-**v1.9.7** · Electron · React · WebTorrent · TVMaze · IMDb
+**v1.9.9** · Electron · React · WebTorrent · TVMaze · IMDb
 
 [← Back to README](README.md)
 
@@ -67,7 +67,7 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 - **WebTorrent** embedded — prefers Electron `utilityProcess` so hashing/peers stay off the UI thread
 - Up to **3 torrents** active; the rest stay queued
 - Pause / resume / cancel anytime
-- **Multi-source search** on `worker_threads`: Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, YTS, TheRarBG, TorrentDownloads, LimeTorrents; Anime (Nyaa, Tokyo Toshokan, AnimeTosho off by default); optional Jackett
+- **Multi-source search** on `worker_threads`: 22 indexers — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, YTS, TheRarBG, TorrentDownloads, SolidTorrents/BitSearch, TorrentDownload.info, TPB mirrors, LimeTorrents; Anime (Nyaa, Tokyo Toshokan, AnimeTosho/Bangumi/Mikan/DMHY/ACGNX/SubsPlease/Sukebei — several off by default); optional Jackett
 - Library/show search (TVMaze / IMDb) also runs on its own worker so typing stays responsive during downloads
 - Rank by preferred resolution, then seeders; skip junk (CAM/TS) and low-seed results
 - Optional **process folder**: download → `ffprobe` resolution & min size → rename → move into the library

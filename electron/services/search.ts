@@ -179,8 +179,12 @@ function decodeHtmlEntities(s: string): string {
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)));
 }
 
+function stripCdata(s: string): string {
+  return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1');
+}
+
 function stripTags(s: string): string {
-  return decodeHtmlEntities(s.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  return decodeHtmlEntities(stripCdata(s).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
 function parseSizeToBytes(text: string): number {
@@ -643,12 +647,10 @@ async function searchYts(query: string): Promise<SearchResult[]> {
   return results;
 }
 
-/** TheRarBG public JSON search — no API key. */
+/** TheRarBG / TorrentGalaxy-family public JSON search — no API key. */
 async function searchTheRarBg(query: string): Promise<SearchResult[]> {
-  const url = `https://therarbg.com/get-posts/keywords:${encodeURIComponent(query)}/?format=json`;
-  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 20000);
-  if (!res.ok) throw new Error(`TheRarBG HTTP ${res.status}`);
-  const data = (await res.json()) as {
+  const hosts = ['therarbg.com', 'torrentgalaxy.info', 'therarbg.to'];
+  let data: {
     results?: Array<{
       n?: string;
       s?: number;
@@ -656,7 +658,23 @@ async function searchTheRarBg(query: string): Promise<SearchResult[]> {
       le?: number;
       h?: string;
     }>;
-  };
+  } | null = null;
+  let lastErr = '';
+  for (const host of hosts) {
+    try {
+      const url = `https://${host}/get-posts/keywords:${encodeURIComponent(query)}/?format=json`;
+      const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 15000);
+      if (!res.ok) {
+        lastErr = `HTTP ${res.status}`;
+        continue;
+      }
+      data = (await res.json()) as typeof data;
+      break;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+  }
+  if (!data) throw new Error(`TheRarBG ${lastErr || 'unreachable'}`);
   const results: SearchResult[] = [];
   for (const item of data.results || []) {
     const title = item.n || '';
@@ -748,6 +766,425 @@ async function searchTokyoTosho(query: string): Promise<SearchResult[]> {
   return results;
 }
 
+
+/** SolidTorrents / BitSearch public JSON API — no key. */
+async function searchSolidTorrents(query: string): Promise<SearchResult[]> {
+  const hosts = [
+    `https://solidtorrents.to/api/v1/search?q=${encodeURIComponent(query)}&category=all&sort=seeders`,
+    `https://bitsearch.eu/api/v1/search?q=${encodeURIComponent(query)}&sort=seeders&limit=50`,
+    `https://bitsearch.to/api/v1/search?q=${encodeURIComponent(query)}&sort=seeders&limit=50`,
+  ];
+  let data: {
+    results?: Array<{
+      title?: string;
+      infohash?: string;
+      size?: number;
+      seeders?: number;
+      leechers?: number;
+    }>;
+  } | null = null;
+  let lastErr = '';
+  for (const url of hosts) {
+    try {
+      const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 15000);
+      if (!res.ok) {
+        lastErr = `HTTP ${res.status}`;
+        continue;
+      }
+      data = (await res.json()) as typeof data;
+      if (data?.results?.length) break;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+  }
+  if (!data) throw new Error(`SolidTorrents ${lastErr || 'unreachable'}`);
+  const results: SearchResult[] = [];
+  for (const item of data.results || []) {
+    const title = item.title || '';
+    const hash = (item.infohash || '').toLowerCase();
+    if (!title || !hash) continue;
+    results.push({
+      title,
+      magnet: buildMagnet(hash, title),
+      size: item.size || 0,
+      seeders: item.seeders || 0,
+      leechers: item.leechers || 0,
+      source: 'solidtorrents',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** TorrentDownload.info public search RSS — hash + seeds in description. */
+async function searchTorrentDownload(query: string): Promise<SearchResult[]> {
+  const url = `https://www.torrentdownload.info/feed?q=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+    20000
+  );
+  if (!res.ok) throw new Error(`TorrentDownload HTTP ${res.status}`);
+  const xml = await res.text();
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    if (!title) continue;
+    const desc = rssTag(item, 'description');
+    const link = rssTag(item, 'link') || rssTag(item, 'guid');
+    const hashMatch =
+      desc.match(/Hash:\s*([a-fA-F0-9]{40})/i) ||
+      link.match(/\/([a-fA-F0-9]{40})\b/);
+    const hash = (hashMatch?.[1] || '').toLowerCase();
+    if (!hash) continue;
+    const sizeMatch = desc.match(/Size:\s*([\d.]+\s*[KMGT]?i?B)/i);
+    const seedMatch = desc.match(/Seeds?:\s*([\d,]+)/i);
+    const peerMatch = desc.match(/Peers?:\s*([\d,]+)/i);
+    results.push({
+      title,
+      magnet: buildMagnet(hash, title),
+      size: sizeMatch ? parseSizeToBytes(sizeMatch[1]) : 0,
+      seeders: seedMatch ? parseInt(seedMatch[1].replace(/,/g, ''), 10) || 0 : 0,
+      leechers: peerMatch ? parseInt(peerMatch[1].replace(/,/g, ''), 10) || 0 : 0,
+      source: 'torrentdownload',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** Pirate Bay HTML mirrors — magnets in search results (fallback when apibay is enough but more coverage). */
+async function searchTpbMirror(query: string): Promise<SearchResult[]> {
+  const paths = [
+    `https://pirateproxy.live/search/${encodeURIComponent(query)}/1/99/0`,
+    `https://thepiratebay10.info/search/${encodeURIComponent(query)}/1/99/0`,
+  ];
+  let html = '';
+  let lastErr = '';
+  for (const url of paths) {
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        { headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0' } },
+        15000
+      );
+      if (!res.ok) {
+        lastErr = `HTTP ${res.status}`;
+        continue;
+      }
+      html = await res.text();
+      if (/magnet:\?/i.test(html)) break;
+      html = '';
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+  }
+  if (!html) throw new Error(`TPB mirror ${lastErr || 'unreachable'}`);
+  const results: SearchResult[] = [];
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(html)) !== null) {
+    const row = m[1];
+    const magnetHref = row.match(/href=["'](magnet:\?[^"']+)["']/i);
+    if (!magnetHref) continue;
+    const magnet = decodeHtmlEntities(magnetHref[1]);
+    const hash = extractInfoHash(magnet).toLowerCase();
+    if (!hash) continue;
+    const titleMatch =
+      row.match(/title=["']Details for ([^"']+)["']/i) ||
+      row.match(/<a[^>]+>([^<]{3,})<\/a>/i);
+    const title = titleMatch ? decodeHtmlEntities(titleMatch[1]).trim() : '';
+    if (!title) continue;
+    const tds = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((x) =>
+      stripTags(x[1].replace(/&nbsp;/gi, ' '))
+    );
+    // Typical: cat, title, date, ?, size, seeds, leeches, uploader
+    let size = 0;
+    let seeders = 0;
+    let leechers = 0;
+    for (const td of tds) {
+      if (!size && /[\d.]+\s*[KMGT]i?B/i.test(td)) size = parseSizeToBytes(td);
+    }
+    const nums = tds.filter((td) => /^\d+$/.test(td));
+    if (nums.length >= 2) {
+      seeders = parseInt(nums[0], 10) || 0;
+      leechers = parseInt(nums[1], 10) || 0;
+    }
+    results.push({
+      title,
+      magnet: magnet.startsWith('magnet:') ? magnet : buildMagnet(hash, title),
+      size,
+      seeders,
+      leechers,
+      source: 'tpbmirror',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** Bangumi.moe anime JSON search — no key. */
+async function searchBangumi(query: string): Promise<SearchResult[]> {
+  const res = await fetchWithTimeout(
+    'https://bangumi.moe/api/v2/torrent/search',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query, limit: 50 }),
+    },
+    20000
+  );
+  if (!res.ok) throw new Error(`Bangumi HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    torrents?: Array<{
+      title?: string;
+      magnet?: string;
+      infoHash?: string;
+      size?: string | number;
+      seeders?: number;
+      leechers?: number;
+    }>;
+  };
+  const results: SearchResult[] = [];
+  for (const item of data.torrents || []) {
+    const title = item.title || '';
+    const hash = (item.infoHash || extractInfoHash(item.magnet || '')).toLowerCase();
+    if (!title || !hash) continue;
+    const magnet =
+      item.magnet && item.magnet.startsWith('magnet:')
+        ? item.magnet
+        : buildMagnet(hash, title);
+    const size =
+      typeof item.size === 'number'
+        ? item.size
+        : parseSizeToBytes(String(item.size || ''));
+    results.push({
+      title,
+      magnet,
+      size,
+      seeders: item.seeders || 0,
+      leechers: item.leechers || 0,
+      source: 'bangumi',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** Mikan Project anime RSS — infohash in enclosure URL. */
+async function searchMikan(query: string): Promise<SearchResult[]> {
+  const url = `https://mikanani.me/RSS/Search?searchstr=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+    20000
+  );
+  if (!res.ok) throw new Error(`Mikan HTTP ${res.status}`);
+  const xml = await res.text();
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    if (!title) continue;
+    const enclosure = rssAttr(item, 'enclosure', 'url');
+    const lengthAttr = rssAttr(item, 'enclosure', 'length');
+    const hashMatch = enclosure.match(/\/([a-fA-F0-9]{40})(?:\.torrent)?(?:\?|$)/i);
+    const hash = (hashMatch?.[1] || extractInfoHash(enclosure)).toLowerCase();
+    if (!hash) continue;
+    const size =
+      (lengthAttr && /^\d+$/.test(lengthAttr) ? parseInt(lengthAttr, 10) : 0) ||
+      parseSizeToBytes(rssTag(item, 'description'));
+    results.push({
+      title,
+      magnet: buildMagnet(hash, title),
+      size: size || 0,
+      seeders: 0,
+      leechers: 0,
+      source: 'mikan',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** DMHY (share.dmhy.org) anime RSS — magnet enclosures (often base32 infohash). */
+async function searchDmhy(query: string): Promise<SearchResult[]> {
+  const url = `https://share.dmhy.org/topics/rss/rss.xml?keyword=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+    20000
+  );
+  if (!res.ok) throw new Error(`DMHY HTTP ${res.status}`);
+  const xml = await res.text();
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    if (!title) continue;
+    let magnet = rssAttr(item, 'enclosure', 'url');
+    if (!magnet.startsWith('magnet:')) {
+      const m = item.match(/magnet:\?[^"'<\s]+/i);
+      if (m) magnet = decodeHtmlEntities(m[0]);
+    } else {
+      magnet = decodeHtmlEntities(magnet);
+    }
+    const hash = extractInfoHash(magnet).toLowerCase();
+    if (!hash) continue;
+    if (!magnet.startsWith('magnet:')) magnet = buildMagnet(hash, title);
+    results.push({
+      title,
+      magnet,
+      size: 0,
+      seeders: 0,
+      leechers: 0,
+      source: 'dmhy',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** ACGNX anime RSS — magnet enclosures. */
+async function searchAcgnx(query: string): Promise<SearchResult[]> {
+  const hosts = [
+    `https://www.acgnx.se/rss.xml?keyword=${encodeURIComponent(query)}`,
+    `https://share.acgnx.se/rss.xml?keyword=${encodeURIComponent(query)}`,
+  ];
+  let xml = '';
+  let lastErr = '';
+  for (const url of hosts) {
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+        15000
+      );
+      if (!res.ok) {
+        lastErr = `HTTP ${res.status}`;
+        continue;
+      }
+      xml = await res.text();
+      if (parseRssItems(xml).length) break;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+  }
+  if (!xml) throw new Error(`ACGNX ${lastErr || 'unreachable'}`);
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    if (!title) continue;
+    let magnet = rssAttr(item, 'enclosure', 'url');
+    if (magnet.startsWith('magnet:')) magnet = decodeHtmlEntities(magnet);
+    else {
+      const m = item.match(/magnet:\?[^"'<\s]+/i);
+      magnet = m ? decodeHtmlEntities(m[0]) : '';
+    }
+    const hash = extractInfoHash(magnet).toLowerCase();
+    if (!hash) continue;
+    if (!magnet.startsWith('magnet:')) magnet = buildMagnet(hash, title);
+    const desc = rssTag(item, 'description');
+    const sizeMatch = desc.match(/([\d.]+\s*[KMGT]?i?B)/i);
+    results.push({
+      title,
+      magnet,
+      size: sizeMatch ? parseSizeToBytes(sizeMatch[1]) : 0,
+      seeders: 0,
+      leechers: 0,
+      source: 'acgnx',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** SubsPlease anime JSON search — magnets per resolution. */
+async function searchSubsPlease(query: string): Promise<SearchResult[]> {
+  const url = `https://subsplease.org/api/?f=search&tz=UTC&s=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 20000);
+  if (!res.ok) throw new Error(`SubsPlease HTTP ${res.status}`);
+  const data = (await res.json()) as Record<
+    string,
+    {
+      show?: string;
+      episode?: string;
+      downloads?: Array<{ res?: string; magnet?: string }>;
+    }
+  >;
+  if (!data || typeof data !== 'object') return [];
+  const results: SearchResult[] = [];
+  for (const [key, entry] of Object.entries(data)) {
+    if (!entry || typeof entry !== 'object') continue;
+    for (const dl of entry.downloads || []) {
+      const magnet = dl.magnet || '';
+      if (!magnet.startsWith('magnet:')) continue;
+      const hash = extractInfoHash(magnet).toLowerCase();
+      if (!hash) continue;
+      const resLabel = dl.res ? `${dl.res}p` : '';
+      const title = `[SubsPlease] ${key}${resLabel ? ` (${resLabel})` : ''}`;
+      const xl = magnet.match(/[?&]xl=(\d+)/i);
+      results.push({
+        title,
+        magnet,
+        size: xl ? parseInt(xl[1], 10) || 0 : 0,
+        seeders: 0,
+        leechers: 0,
+        source: 'subsplease',
+        resolution: detectResolution(title) || detectResolution(resLabel),
+        infoHash: hash,
+      });
+    }
+  }
+  return results;
+}
+
+/** Sukebei (Nyaa NSFW) RSS — same schema as Nyaa; off by default. */
+async function searchSukebei(query: string): Promise<SearchResult[]> {
+  const url = `https://sukebei.nyaa.si/?page=rss&q=${encodeURIComponent(query)}&c=0_0&f=0`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+    20000
+  );
+  if (!res.ok) throw new Error(`Sukebei HTTP ${res.status}`);
+  const xml = await res.text();
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    if (!title) continue;
+    let magnet = '';
+    const magnetHref = item.match(/href=["'](magnet:\?[^"']+)["']/i);
+    if (magnetHref) magnet = decodeHtmlEntities(magnetHref[1]);
+    const infoHash =
+      rssTag(item, 'infoHash') ||
+      extractInfoHash(magnet) ||
+      extractInfoHash(rssAttr(item, 'enclosure', 'url'));
+    const hash = infoHash.toLowerCase();
+    if (!hash) continue;
+    if (!magnet.startsWith('magnet:')) magnet = buildMagnet(hash, title);
+    const sizeText = rssTag(item, 'size');
+    const seeders = parseInt(rssTag(item, 'seeders') || '0', 10) || 0;
+    const leechers = parseInt(rssTag(item, 'leechers') || '0', 10) || 0;
+    results.push({
+      title,
+      magnet,
+      size: parseSizeToBytes(sizeText),
+      seeders,
+      leechers,
+      source: 'sukebei',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
 async function searchJackett(settings: AppSettings, query: string, category = 5000): Promise<SearchResult[]> {
   if (!settings.jackettUrl || !settings.jackettApiKey) {
     throw new Error('Jackett URL and API key are required when Jackett is enabled.');
@@ -826,10 +1263,19 @@ export function enabledTorrentSources(settings: AppSettings): TorrentSourceId[] 
     'yts',
     'therarbg',
     'torrentdownloads',
+    'solidtorrents',
+    'torrentdownload',
+    'tpbmirror',
+    'limetorrents',
     'animetosho',
     'nyaa',
     'tokyotosho',
-    'limetorrents',
+    'bangumi',
+    'mikan',
+    'dmhy',
+    'acgnx',
+    'subsplease',
+    'sukebei',
     'jackett',
   ];
   const out = order.filter((id) => !!src[id]);
@@ -895,6 +1341,33 @@ export async function searchEpisodeTorrents(
   }
   if (sources.includes('limetorrents')) {
     runners.push(run('LimeTorrents', () => searchLimeTorrents(query)));
+  }
+  if (sources.includes('solidtorrents')) {
+    runners.push(run('SolidTorrents', () => searchSolidTorrents(query)));
+  }
+  if (sources.includes('torrentdownload')) {
+    runners.push(run('TorrentDownload', () => searchTorrentDownload(query)));
+  }
+  if (sources.includes('tpbmirror')) {
+    runners.push(run('TPB Mirror', () => searchTpbMirror(query)));
+  }
+  if (sources.includes('bangumi')) {
+    runners.push(run('Bangumi', () => searchBangumi(query)));
+  }
+  if (sources.includes('mikan')) {
+    runners.push(run('Mikan', () => searchMikan(query)));
+  }
+  if (sources.includes('dmhy')) {
+    runners.push(run('DMHY', () => searchDmhy(query)));
+  }
+  if (sources.includes('acgnx')) {
+    runners.push(run('ACGNX', () => searchAcgnx(query)));
+  }
+  if (sources.includes('subsplease')) {
+    runners.push(run('SubsPlease', () => searchSubsPlease(query)));
+  }
+  if (sources.includes('sukebei')) {
+    runners.push(run('Sukebei', () => searchSukebei(query)));
   }
   if (sources.includes('jackett')) {
     runners.push(run('Jackett', () => searchJackett(settings, query)));
@@ -968,6 +1441,33 @@ export async function searchMovieTorrents(
   }
   if (sources.includes('limetorrents')) {
     runners.push(run('LimeTorrents', () => searchLimeTorrents(query)));
+  }
+  if (sources.includes('solidtorrents')) {
+    runners.push(run('SolidTorrents', () => searchSolidTorrents(query)));
+  }
+  if (sources.includes('torrentdownload')) {
+    runners.push(run('TorrentDownload', () => searchTorrentDownload(query)));
+  }
+  if (sources.includes('tpbmirror')) {
+    runners.push(run('TPB Mirror', () => searchTpbMirror(query)));
+  }
+  if (sources.includes('bangumi')) {
+    runners.push(run('Bangumi', () => searchBangumi(query)));
+  }
+  if (sources.includes('mikan')) {
+    runners.push(run('Mikan', () => searchMikan(query)));
+  }
+  if (sources.includes('dmhy')) {
+    runners.push(run('DMHY', () => searchDmhy(query)));
+  }
+  if (sources.includes('acgnx')) {
+    runners.push(run('ACGNX', () => searchAcgnx(query)));
+  }
+  if (sources.includes('subsplease')) {
+    runners.push(run('SubsPlease', () => searchSubsPlease(query)));
+  }
+  if (sources.includes('sukebei')) {
+    runners.push(run('Sukebei', () => searchSukebei(query)));
   }
   // Jackett movies category 2000
   if (sources.includes('jackett')) {
