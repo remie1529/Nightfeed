@@ -117,9 +117,28 @@ export function getSettings(): AppSettings {
   ) {
     merged.minimumMovieResolution = '720p';
   }
-  if (typeof merged.minSizeMb720p !== 'number' || merged.minSizeMb720p < 0) merged.minSizeMb720p = 200;
-  if (typeof merged.minSizeMb1080p !== 'number' || merged.minSizeMb1080p < 0) merged.minSizeMb1080p = 500;
-  if (typeof merged.minSizeMb2160p !== 'number' || merged.minSizeMb2160p < 0) merged.minSizeMb2160p = 2000;
+  // Migrate legacy shared min sizes into TV + movie fields (copy old value into both).
+  const legacy720 = typeof merged.minSizeMb720p === 'number' && merged.minSizeMb720p >= 0 ? merged.minSizeMb720p : undefined;
+  const legacy1080 = typeof merged.minSizeMb1080p === 'number' && merged.minSizeMb1080p >= 0 ? merged.minSizeMb1080p : undefined;
+  const legacy2160 = typeof merged.minSizeMb2160p === 'number' && merged.minSizeMb2160p >= 0 ? merged.minSizeMb2160p : undefined;
+  if (typeof merged.minSizeMbTv720p !== 'number' || merged.minSizeMbTv720p < 0) {
+    merged.minSizeMbTv720p = legacy720 !== undefined ? legacy720 : 200;
+  }
+  if (typeof merged.minSizeMbTv1080p !== 'number' || merged.minSizeMbTv1080p < 0) {
+    merged.minSizeMbTv1080p = legacy1080 !== undefined ? legacy1080 : 500;
+  }
+  if (typeof merged.minSizeMbTv2160p !== 'number' || merged.minSizeMbTv2160p < 0) {
+    merged.minSizeMbTv2160p = legacy2160 !== undefined ? legacy2160 : 2000;
+  }
+  if (typeof merged.minSizeMbMovie720p !== 'number' || merged.minSizeMbMovie720p < 0) {
+    merged.minSizeMbMovie720p = legacy720 !== undefined ? legacy720 : 200;
+  }
+  if (typeof merged.minSizeMbMovie1080p !== 'number' || merged.minSizeMbMovie1080p < 0) {
+    merged.minSizeMbMovie1080p = legacy1080 !== undefined ? legacy1080 : 500;
+  }
+  if (typeof merged.minSizeMbMovie2160p !== 'number' || merged.minSizeMbMovie2160p < 0) {
+    merged.minSizeMbMovie2160p = legacy2160 !== undefined ? legacy2160 : 2000;
+  }
   if (merged.processFolder == null) merged.processFolder = '';
   if (typeof merged.ftpEnabled !== 'boolean') merged.ftpEnabled = false;
   if (merged.ftpHost == null) merged.ftpHost = '';

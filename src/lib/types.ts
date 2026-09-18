@@ -54,9 +54,18 @@ export interface AppSettings {
   defaultMovieResolution: Resolution;
   minimumResolution: Resolution;
   minimumMovieResolution: Resolution;
-  minSizeMb720p: number;
-  minSizeMb1080p: number;
-  minSizeMb2160p: number;
+  minSizeMbTv720p: number;
+  minSizeMbTv1080p: number;
+  minSizeMbTv2160p: number;
+  minSizeMbMovie720p: number;
+  minSizeMbMovie1080p: number;
+  minSizeMbMovie2160p: number;
+  /** @deprecated Migrated to minSizeMbTv* / minSizeMbMovie* */
+  minSizeMb720p?: number;
+  /** @deprecated */
+  minSizeMb1080p?: number;
+  /** @deprecated */
+  minSizeMb2160p?: number;
   processFolder: string;
   refreshIntervalMinutes: number;
   /** @deprecated Use torrentSources */
