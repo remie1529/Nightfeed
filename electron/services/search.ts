@@ -69,10 +69,15 @@ function sizeOkForAuto(
   return true;
 }
 
-export function rankResults(results: SearchResult[], preferred: Resolution): SearchResult[] {
+export function rankResults(
+  results: SearchResult[],
+  preferred: Resolution,
+  showName?: string
+): SearchResult[] {
   const score = (r: SearchResult): number => {
     const seeds = r.seeders || 0;
     let s = 0;
+    if (showName) s += showMatchScore(r.title || '', showName) * 50_000;
     if (r.resolution === preferred) s += 5_000_000;
     else if (r.resolution) s += 150_000;
     if (seeds <= 0) s -= 4_000_000;
@@ -243,6 +248,120 @@ function titleMatchesEpisode(title: string, season: number, episode: number): bo
     if (tag.s !== season || tag.e !== episode) return false;
   }
   return true;
+}
+
+/** Common words that should not drive anthology / franchise show matching. */
+const SHOW_STOPWORDS = new Set([
+  'the',
+  'a',
+  'an',
+  'of',
+  'and',
+  'or',
+  'to',
+  'in',
+  'on',
+  'at',
+  'for',
+  'with',
+  'from',
+  'story',
+  'stories',
+  'season',
+  'series',
+  'show',
+  'tv',
+  'part',
+  'vol',
+  'volume',
+  'episode',
+]);
+
+function normalizeShowText(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function significantShowTokens(showName: string): string[] {
+  return normalizeShowText(showName)
+    .split(' ')
+    .filter((t) => t.length > 0 && !SHOW_STOPWORDS.has(t));
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * After SxxExx match, require the torrent title to match the show name — not just one
+ * shared franchise word (e.g. reject "Monster The Ed Gein Story" when searching
+ * "Monster: The Lizzie Borden Story").
+ */
+export function titleMatchesShow(title: string, showName: string): boolean {
+  const name = (showName || '').trim();
+  if (!name) return true;
+
+  const titleNorm = normalizeShowText(title);
+  if (!titleNorm) return false;
+
+  const tokens = significantShowTokens(name);
+  if (tokens.length === 0) {
+    const fallback = normalizeShowText(name).split(' ').filter(Boolean);
+    return fallback.length > 0 && fallback.every((t) => titleNorm.includes(t));
+  }
+
+  // Full distinctive phrase (stopwords stripped) as substring → accept.
+  const compact = tokens.join(' ');
+  if (compact && titleNorm.includes(compact)) return true;
+
+  // Also accept original normalized show without the/story-style stopwords if contiguous.
+  const stripped = normalizeShowText(name)
+    .split(' ')
+    .filter((t) => t && !SHOW_STOPWORDS.has(t))
+    .join(' ');
+  if (stripped && titleNorm.includes(stripped)) return true;
+
+  // Short / sparse show names: do not over-filter (Lost, 24, Qi, …).
+  if (tokens.length === 1) {
+    const t = tokens[0];
+    if (t.length <= 3) {
+      return new RegExp(`(?:^|\\s)${escapeRegExp(t)}(?:\\s|$)`).test(titleNorm);
+    }
+    return titleNorm.includes(t);
+  }
+
+  const longTokens = tokens.filter((t) => t.length > 3);
+  if (longTokens.length >= 2) {
+    // Require all long distinctive tokens (lizzie + borden + monster, etc.).
+    return longTokens.every((t) => titleNorm.includes(t));
+  }
+
+  // Few long tokens: require every significant token (e.g. "Ed Gein" → ed + gein).
+  return tokens.every((t) => titleNorm.includes(t));
+}
+
+/** Higher = closer show-name match; used to soft-rank exact-ish titles first. */
+export function showMatchScore(title: string, showName: string): number {
+  const name = (showName || '').trim();
+  if (!name) return 0;
+  const titleNorm = normalizeShowText(title);
+  const tokens = significantShowTokens(name);
+  if (!tokens.length || !titleNorm) return 0;
+
+  const compact = tokens.join(' ');
+  if (titleNorm.includes(compact)) return 100;
+
+  const hits = tokens.filter((t) => titleNorm.includes(t)).length;
+  const ratio = hits / tokens.length;
+  // Bonus when the longest distinctive tokens all hit.
+  const byLen = [...tokens].sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const top = byLen.slice(0, Math.min(3, byLen.length));
+  const topHits = top.filter((t) => titleNorm.includes(t)).length;
+  return Math.round(ratio * 70 + (topHits / top.length) * 25);
 }
 
 /** Normalize IMDb id to digits-only for EZTV (strips leading "tt"). */
@@ -1385,10 +1504,13 @@ export async function searchEpisodeTorrents(
 
   const merged = mergeByInfoHash(groups);
   const episodeOnly = merged.filter(
-    (r) => titleMatchesEpisode(r.title || '', season, episode) && !isMultiEpisodePack(r.title || '')
+    (r) =>
+      titleMatchesEpisode(r.title || '', season, episode) &&
+      titleMatchesShow(r.title || '', showName) &&
+      !isMultiEpisodePack(r.title || '')
   );
   // Never fall back to unfiltered merge — wrong episodes must not appear in Find / auto-download.
-  const ranked = rankResults(episodeOnly, preferred);
+  const ranked = rankResults(episodeOnly, preferred, showName);
   const parts: string[] = [];
   if (errors.length > 0) parts.push(errors.join(' | '));
   if (!episodeOnly.length) {

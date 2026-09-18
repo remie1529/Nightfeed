@@ -2,6 +2,11 @@
 
 See [GitHub Releases](https://github.com/remie1529/Nightfeed/releases) for **2.0.0+** notes and installers.
 
+## 2.0.3
+
+- Episode Find / auto-download require torrent titles to match the show name (not just a shared franchise word + SxxExx)
+- Soft-rank closer show-name matches first (fixes Monster anthology cross-hits)
+
 ## 2.0.2
 
 - Remove leftover GitHub token field from Settings (Updates) — sorry it was still there after going public
