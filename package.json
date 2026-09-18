@@ -1,7 +1,7 @@
 {
   "name": "tv-show-manager",
   "productName": "Nightfeed",
-  "version": "1.9.9",
+  "version": "2.0.0",
   "description": "Desktop TV show and movie manager",
   "main": "dist-electron/main.js",
   "author": "Remco Groothoff",
@@ -64,8 +64,12 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     },
+    "afterPack": "scripts/after-pack-icon.cjs",
     "linux": {
       "target": [
         "AppImage"
@@ -96,6 +100,10 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ]
   },

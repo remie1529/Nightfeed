@@ -333,7 +333,7 @@ export default function SettingsView() {
     const ok = window.confirm(
       'Replace ALL Nightfeed data with this backup?\n\n' +
         'This overwrites settings, TV shows, movies, episode overrides, and download queue state.\n' +
-        'The backup file may contain secrets (GitHub token, Telegram token, FTP password).\n\n' +
+        'The backup file may contain secrets (optional GitHub token, Telegram token, FTP password).\n\n' +
         'This cannot be undone unless you export a backup first.'
     );
     if (!ok) return;
@@ -1503,27 +1503,22 @@ export default function SettingsView() {
         )}
         <div className="hint">
           Packaged builds check GitHub Releases for remie1529/Nightfeed on startup and every 6 hours.
-          A banner appears when an update is ready. The repo is private, so a GitHub token is required.
+          A banner appears when an update is ready.
         </div>
       </div>
 
       <div className="field">
-        <label>GitHub personal access token</label>
+        <label>GitHub token (optional)</label>
         <input
           type="password"
           autoComplete="off"
           value={settings.githubToken || ''}
           onChange={(e) => setLocal({ ...settings, githubToken: e.target.value })}
-          placeholder="ghp_… or github_pat_…"
+          placeholder="ghp_… or github_pat_… (optional)"
         />
         <div className="hint">
-          Needed because the update repo is private. Create a classic PAT with the{' '}
-          <code>repo</code> scope at{' '}
-          <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">
-            github.com/settings/tokens
-          </a>
-          , or a fine-grained token with Contents: Read on remie1529/Nightfeed.
-          Stored locally in electron-store. Never logged. Save, then Check for updates.
+          Optional advanced setting for private release feeds or higher API rate limits.
+          Stored locally in electron-store — never logged. Leave blank for normal public updates.
         </div>
       </div>
 
@@ -1542,7 +1537,7 @@ export default function SettingsView() {
         </div>
         <div className="hint">
           Exports a JSON file with settings, TV shows, movies, episode overrides, and download queue.
-          The file includes secrets (GitHub PAT, Telegram bot token, FTP password) so you can restore
+          The file includes secrets (optional GitHub token, Telegram bot token, FTP password) so you can restore
           everything — store it privately. Import replaces current data after confirmation.
         </div>
         {backupMsg && <div className="hint" style={{ color: 'var(--ok, #6c6)' }}>{backupMsg}</div>}
@@ -1550,14 +1545,24 @@ export default function SettingsView() {
         </SettingsSection>
 
         <SettingsSection title="About Nightfeed" defaultOpen>
-        <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem' }}>
-          Desktop TV & movie manager with embedded downloads. TV via free TVMaze; movies via IMDb.com scrape (no API key).
-          Torrent search and library zoekfunctie (TVMaze / IMDb) run on <code>worker_threads</code>.
-          WebTorrent prefers an Electron <code>utilityProcess</code>. Progress IPC is throttled; download
-          persistence is debounced so search stays responsive during active downloads.
-          {' '}
+        <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem', lineHeight: 1.55 }}>
+          <p style={{ margin: '0 0 10px' }}>
+            <strong style={{ color: 'var(--gold, #c9a227)' }}>Nightfeed</strong> is your desktop media
+            library for TV shows and movies — charcoal chrome, gold accents, built for a self-hosted living room.
+          </p>
+          <ul style={{ margin: '0 0 10px', paddingLeft: '1.2rem' }}>
+            <li>TV library via TVMaze and movies via IMDb scrape — no API keys required</li>
+            <li>Embedded WebTorrent downloads with multi-source public torrent search</li>
+            <li>Requests from the web portal or Telegram; approve or deny in-app</li>
+            <li>OpenVPN torrent-only split tunnel so Plex and browsing keep your ISP IP</li>
+            <li>Live TV / EPG for Plex, calendar week view, backup &amp; restore, folder scan import</li>
+            <li>Multi-root libraries (UNC supported), FTP upload, quality gates, and auto-download</li>
+          </ul>
+          <p style={{ margin: '0 0 8px' }}>
+            <strong>Made in cooperation with Grok AI.</strong>
+          </p>
           {threadInfo && (
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 8, opacity: 0.85, fontSize: '0.85rem' }}>
               Runtime: torrent search workers{' '}
               {threadInfo.searchUsingWorkers
                 ? `on (${threadInfo.searchWorkers}/${threadInfo.cpus} CPUs)`

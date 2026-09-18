@@ -2,7 +2,9 @@
 
 Dark chrome, gold accents — a desktop TV & movie manager with embedded torrents, requests, VPN split tunnel, and a local web portal.
 
-**v1.9.9** · Electron · React · WebTorrent · TVMaze · IMDb
+**v2.0.0** · Electron · React · WebTorrent · TVMaze · IMDb
+
+**Made in cooperation with Grok AI.**
 
 [← Back to README](README.md)
 
@@ -164,4 +166,4 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 ## More
 
-Full release notes: [CHANGELOG.md](CHANGELOG.md) · Installers: [Releases](https://github.com/remie1529/Nightfeed/releases)
+Installers and release notes: [GitHub Releases](https://github.com/remie1529/Nightfeed/releases)

@@ -156,9 +156,10 @@ const updateState: UpdateStatus = {
 
 function resolveAppIcon(): string | undefined {
   const candidates = [
-    path.join(__dirname, '../build/icon.png'),
+    path.join(process.resourcesPath || '', 'icon.ico'),
     path.join(process.resourcesPath || '', 'icon.png'),
     path.join(__dirname, '../build/icon.ico'),
+    path.join(__dirname, '../build/icon.png'),
   ];
   for (const c of candidates) {
     try {
@@ -1212,31 +1213,36 @@ const UPDATE_FEED = {
   repo: 'Nightfeed',
 };
 
-/** Configure electron-updater for private GitHub when a PAT is set. Never log the token. */
+/** Configure electron-updater for public GitHub Releases; optional token for advanced use. Never log the token. */
 function configureUpdaterFeed(): void {
   const token = (getSettings().githubToken || '').trim();
-  if (!token) return;
+  if (token) {
+    try {
+      process.env.GH_TOKEN = token;
+    } catch {
+      // ignore
+    }
+    autoUpdater.setFeedURL({
+      ...UPDATE_FEED,
+      private: true,
+      token,
+    });
+    autoUpdater.requestHeaders = { Authorization: `token ${token}` };
+    return;
+  }
   try {
-    process.env.GH_TOKEN = token;
+    delete process.env.GH_TOKEN;
   } catch {
     // ignore
   }
-  autoUpdater.setFeedURL({
-    ...UPDATE_FEED,
-    private: true,
-    token,
-  });
-  autoUpdater.requestHeaders = { Authorization: `token ${token}` };
+  autoUpdater.setFeedURL({ ...UPDATE_FEED });
+  autoUpdater.requestHeaders = undefined as any;
 }
 
 function formatUpdateError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  const hasToken = !!(getSettings().githubToken || '').trim();
-  if (
-    !hasToken &&
-    /\b(404|401)\b|Not Found|Unauthorized|Unable to find latest version|HttpError/i.test(msg)
-  ) {
-    return 'Private repo — add a GitHub token in Settings';
+  if (/\b401\b|Unauthorized/i.test(msg)) {
+    return 'Update check returned 401. If your release feed is private, add an optional GitHub token in Settings.';
   }
   return msg;
 }
@@ -1245,7 +1251,7 @@ function setupAutoUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
-  // Private GitHub often hangs forever on the .blockmap delta download.
+  // Prefer full installer download; differential .blockmap can hang on some feeds.
   (autoUpdater as any).disableDifferentialDownload = true;
   autoUpdater.logger = {
     info: (m: unknown) => console.log('[updater]', m),
