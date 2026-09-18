@@ -317,7 +317,7 @@ export interface DownloadItem {
   telegramRequestId?: string;
 }
 
-export type TelegramRequestStatus = 'pending' | 'approved' | 'denied';
+export type TelegramRequestStatus = 'pending' | 'approved' | 'denied' | 'downloaded';
 export type TelegramRequestMediaType = 'show' | 'movie';
 
 export interface TelegramRequest {
@@ -331,6 +331,8 @@ export interface TelegramRequest {
   posterUrl?: string | null;
   requesterChatId: number;
   requesterName?: string;
+  /** Anonymous web portal client id (localStorage). */
+  requesterClientId?: string;
   status: TelegramRequestStatus;
   createdAt: string;
   resolvedAt?: string;

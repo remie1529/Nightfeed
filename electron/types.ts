@@ -387,7 +387,7 @@ export interface DownloadItem {
   telegramRequestId?: string;
 }
 
-export type TelegramRequestStatus = 'pending' | 'approved' | 'denied';
+export type TelegramRequestStatus = 'pending' | 'approved' | 'denied' | 'downloaded';
 
 export type TelegramRequestMediaType = 'show' | 'movie';
 
@@ -404,6 +404,11 @@ export interface TelegramRequest {
   /** Telegram chat id; 0 for web-only requesters (no Telegram notify). */
   requesterChatId: number;
   requesterName?: string;
+  /**
+   * Stable anonymous id for web portal requesters (cookie/localStorage).
+   * Lets the public request site list that browser's history without login.
+   */
+  requesterClientId?: string;
   status: TelegramRequestStatus;
   createdAt: string;
   resolvedAt?: string;
