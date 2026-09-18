@@ -5,17 +5,26 @@ import { DEFAULT_TORRENT_SOURCES } from '../lib/types';
 
 const defaultSources: TorrentSources = { ...DEFAULT_TORRENT_SOURCES };
 
-const SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: string }> = [
+const GENERAL_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: string }> = [
   { id: 'apibay', label: 'Apibay', hint: 'Pirate Bay JSON API' },
   { id: 'knaben', label: 'Knaben', hint: 'Meta-search JSON API' },
   { id: 'yourbittorrent', label: 'YourBittorrent', hint: 'Public search JSON' },
   { id: 'torrentscsv', label: 'Torrents.csv', hint: 'Open dump search API' },
   { id: 'eztv', label: 'EZTV', hint: 'TV via IMDb id' },
-  { id: 'animetosho', label: 'AnimeTosho', hint: 'Anime JSON feed' },
-  { id: 'nyaa', label: 'Nyaa', hint: 'Anime/raw RSS' },
+  { id: 'yts', label: 'YTS', hint: 'YIFY movie API' },
+  { id: 'therarbg', label: 'TheRarBG', hint: 'Public JSON search' },
+  { id: 'torrentdownloads', label: 'TorrentDownloads', hint: 'Public search RSS' },
   { id: 'limetorrents', label: 'LimeTorrents', hint: 'Public RSS + magnets' },
   { id: 'jackett', label: 'Jackett', hint: 'Self-hosted (optional)' },
 ];
+
+const ANIME_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: string }> = [
+  { id: 'nyaa', label: 'Nyaa', hint: 'Anime/raw RSS' },
+  { id: 'tokyotosho', label: 'Tokyo Toshokan', hint: 'Anime RSS + magnets' },
+  { id: 'animetosho', label: 'AnimeTosho', hint: 'Anime JSON feed (off by default)' },
+];
+
+const SOURCE_OPTIONS = [...GENERAL_SOURCE_OPTIONS, ...ANIME_SOURCE_OPTIONS];
 
 function LibraryRootsEditor({
   roots,
@@ -1051,7 +1060,7 @@ export default function SettingsView() {
             start a torrent with under 8 seeders or a different resolution. Partial failures keep other sources’ hits.
           </div>
           <div className="source-grid">
-            {SOURCE_OPTIONS.map((opt) => (
+            {GENERAL_SOURCE_OPTIONS.map((opt) => (
               <label key={opt.id} className="source-card toggle-row">
                 <input
                   type="checkbox"
@@ -1066,7 +1075,7 @@ export default function SettingsView() {
             ))}
           </div>
           <div className="hint" style={{ marginTop: 10 }}>
-            Defaults: all free public APIs on; Jackett off (needs your own server).
+            Defaults: free public APIs on (YTS movies-only); Jackett and AnimeTosho off.
           </div>
         </div>
 
@@ -1089,6 +1098,33 @@ export default function SettingsView() {
             </div>
           </>
         )}
+
+        </SettingsSection>
+
+        <SettingsSection title="Anime">
+
+        <div className="field">
+          <label>Anime torrent sources</label>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Optional anime-focused indexers. Searched in parallel with general torrent sources when enabled.
+            <strong> AnimeTosho is off by default</strong>; turn it on if you want its feed.
+          </div>
+          <div className="source-grid">
+            {ANIME_SOURCE_OPTIONS.map((opt) => (
+              <label key={opt.id} className="source-card toggle-row">
+                <input
+                  type="checkbox"
+                  checked={!!settings.torrentSources?.[opt.id]}
+                  onChange={(e) => setSource(opt.id, e.target.checked)}
+                />
+                <span className="source-card-text">
+                  <span className="source-card-title">{opt.label}</span>
+                  <span className="source-card-hint">{opt.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
 
         </SettingsSection>
 

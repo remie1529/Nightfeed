@@ -4,6 +4,7 @@ import path from 'path';
 import {
   AppSettings,
   DEFAULT_SETTINGS,
+  DEFAULT_TORRENT_SOURCES,
   DownloadItem,
   EpisodeOverrideStatus,
   LiveTvChannel,
@@ -55,20 +56,14 @@ export function episodeKey(showId: number, season: number, episode: number): str
 }
 
 function migrateTorrentSources(raw: Partial<AppSettings>): AppSettings['torrentSources'] {
-  const base = { ...DEFAULT_SETTINGS.torrentSources };
+  const base = { ...DEFAULT_TORRENT_SOURCES };
   if (raw.torrentSources && typeof raw.torrentSources === 'object') {
     const src = raw.torrentSources as Record<string, unknown>;
-    return {
-      apibay: src.apibay !== false,
-      knaben: src.knaben !== false,
-      yourbittorrent: src.yourbittorrent !== false,
-      torrentscsv: src.torrentscsv !== false,
-      eztv: src.eztv !== false,
-      animetosho: src.animetosho !== false,
-      nyaa: src.nyaa !== false,
-      limetorrents: src.limetorrents !== false,
-      jackett: !!src.jackett,
-    };
+    const out = { ...base };
+    for (const key of Object.keys(base) as Array<keyof typeof base>) {
+      if (typeof src[key] === 'boolean') out[key] = src[key] as boolean;
+    }
+    return out;
   }
   // Legacy single-provider dropdown → multi-source defaults
   if (raw.searchProvider === 'jackett') {

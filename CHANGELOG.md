@@ -2,6 +2,12 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.8
+
+- AnimeTosho **off by default**; moved to its own Settings **Anime** section with Nyaa and Tokyo Toshokan
+- New free torrent sources: **YTS** (movies), **TheRarBG**, **TorrentDownloads**, **Tokyo Toshokan** (anime)
+- Existing installs keep stored source toggles; missing keys merge from new defaults
+
 ## 1.9.7
 
 - Web request portal: **Your requests** history for this browser (anonymous client id, no login)

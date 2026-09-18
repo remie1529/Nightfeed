@@ -21,8 +21,12 @@ export type TorrentSourceId =
   | 'yourbittorrent'
   | 'torrentscsv'
   | 'eztv'
+  | 'yts'
+  | 'therarbg'
+  | 'torrentdownloads'
   | 'animetosho'
   | 'nyaa'
+  | 'tokyotosho'
   | 'limetorrents'
   | 'jackett';
 
@@ -32,8 +36,12 @@ export interface TorrentSources {
   yourbittorrent: boolean;
   torrentscsv: boolean;
   eztv: boolean;
+  yts: boolean;
+  therarbg: boolean;
+  torrentdownloads: boolean;
   animetosho: boolean;
   nyaa: boolean;
+  tokyotosho: boolean;
   limetorrents: boolean;
   jackett: boolean;
 }
@@ -447,8 +455,12 @@ export const DEFAULT_TORRENT_SOURCES: TorrentSources = {
   yourbittorrent: true,
   torrentscsv: true,
   eztv: true,
-  animetosho: true,
+  yts: true,
+  therarbg: true,
+  torrentdownloads: true,
+  animetosho: false,
   nyaa: true,
+  tokyotosho: true,
   limetorrents: true,
   jackett: false,
 };
