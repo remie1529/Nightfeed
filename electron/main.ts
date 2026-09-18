@@ -1213,23 +1213,8 @@ const UPDATE_FEED = {
   repo: 'Nightfeed',
 };
 
-/** Configure electron-updater for public GitHub Releases; optional token for advanced use. Never log the token. */
+/** Configure electron-updater for public remie1529/Nightfeed Releases (no token). */
 function configureUpdaterFeed(): void {
-  const token = (getSettings().githubToken || '').trim();
-  if (token) {
-    try {
-      process.env.GH_TOKEN = token;
-    } catch {
-      // ignore
-    }
-    autoUpdater.setFeedURL({
-      ...UPDATE_FEED,
-      private: true,
-      token,
-    });
-    autoUpdater.requestHeaders = { Authorization: `token ${token}` };
-    return;
-  }
   try {
     delete process.env.GH_TOKEN;
   } catch {
@@ -1242,7 +1227,7 @@ function configureUpdaterFeed(): void {
 function formatUpdateError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (/\b401\b|Unauthorized/i.test(msg)) {
-    return 'Update check returned 401. If your release feed is private, add an optional GitHub token in Settings.';
+    return 'Update check returned 401. Releases are public — try again later or check GitHub status.';
   }
   return msg;
 }

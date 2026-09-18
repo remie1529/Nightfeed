@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v2.0.1 — Strict episode matching in Find (no wrong-episode fallback).
+**Current:** v2.0.2 — Remove GitHub token UI from Settings (public releases).
+
+# Status v2.0.2
+
+## Fixed
+- Settings Updates no longer shows a GitHub token field (left over after going public)
+- Auto-updater always uses public remie1529/Nightfeed Releases with no token
 
 # Status v2.0.1
 

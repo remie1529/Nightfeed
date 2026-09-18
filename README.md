@@ -10,14 +10,14 @@ Desktop TV show & movie manager with embedded torrent downloads.
 
 **Made in cooperation with Grok AI.**
 
-**v2.0.1** — episode Find fix + public release baseline: TV + movies library, embedded downloads, multi-source torrents, Requests (web/Telegram), OpenVPN split tunnel, Live TV/calendar, backup, folder import, and more.
+**v2.0.2** — episode Find fix + public release baseline: TV + movies library, embedded downloads, multi-source torrents, Requests (web/Telegram), OpenVPN split tunnel, Live TV/calendar, backup, folder import, and more.
 
 ---
 
 ## Install
 
 1. Open [Releases](https://github.com/remie1529/Nightfeed/releases)
-2. Download `Nightfeed-Setup-2.0.1.exe` (Windows x64)
+2. Download `Nightfeed-Setup-2.0.2.exe` (Windows x64)
 3. Run the installer and launch **Nightfeed**
 
 In-app updates check GitHub Releases on startup and every few hours.

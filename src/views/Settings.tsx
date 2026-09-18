@@ -294,6 +294,8 @@ export default function SettingsView() {
       }
       // Never send session secret edits from UI; main owns it.
       delete payload.webPortalSessionSecret;
+      // Public releases: clear unused githubToken leftover on save (no UI).
+      payload.githubToken = '';
       const next = (await window.torrentAPI.setSettings(payload)) as AppSettings;
       setLocal({ ...empty, ...next });
       setWebPortalPassword('');
@@ -333,7 +335,7 @@ export default function SettingsView() {
     const ok = window.confirm(
       'Replace ALL Nightfeed data with this backup?\n\n' +
         'This overwrites settings, TV shows, movies, episode overrides, and download queue state.\n' +
-        'The backup file may contain secrets (optional GitHub token, Telegram token, FTP password).\n\n' +
+        'The backup file may contain secrets (Telegram token, FTP password).\n\n' +
         'This cannot be undone unless you export a backup first.'
     );
     if (!ok) return;
@@ -1507,21 +1509,6 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="field">
-        <label>GitHub token (optional)</label>
-        <input
-          type="password"
-          autoComplete="off"
-          value={settings.githubToken || ''}
-          onChange={(e) => setLocal({ ...settings, githubToken: e.target.value })}
-          placeholder="ghp_… or github_pat_… (optional)"
-        />
-        <div className="hint">
-          Optional advanced setting for private release feeds or higher API rate limits.
-          Stored locally in electron-store — never logged. Leave blank for normal public updates.
-        </div>
-      </div>
-
         </SettingsSection>
 
         <SettingsSection title="Backup" defaultOpen>
@@ -1537,7 +1524,7 @@ export default function SettingsView() {
         </div>
         <div className="hint">
           Exports a JSON file with settings, TV shows, movies, episode overrides, and download queue.
-          The file includes secrets (optional GitHub token, Telegram bot token, FTP password) so you can restore
+          The file includes secrets (Telegram bot token, FTP password) so you can restore
           everything — store it privately. Import replaces current data after confirmation.
         </div>
         {backupMsg && <div className="hint" style={{ color: 'var(--ok, #6c6)' }}>{backupMsg}</div>}
