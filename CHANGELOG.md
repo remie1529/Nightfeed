@@ -2,6 +2,13 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.9
+
+- Large torrent source expansion (+9): **SolidTorrents/BitSearch**, **TorrentDownload.info**, **TPB HTML mirrors**, **Bangumi.moe**, **Mikan**, **DMHY**, **ACGNX**, **SubsPlease**, **Sukebei** (NSFW, off by default)
+- Anime niche sources default off; new general sources default on
+- TheRarBG now falls back across therarbg.com / torrentgalaxy.info / therarbg.to
+- CSP `connect-src` updated for new hosts
+
 ## 1.9.8
 
 - AnimeTosho **off by default**; moved to its own Settings **Anime** section with Nyaa and Tokyo Toshokan

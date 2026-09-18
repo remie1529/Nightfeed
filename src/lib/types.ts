@@ -23,10 +23,19 @@ export type TorrentSourceId =
   | 'yts'
   | 'therarbg'
   | 'torrentdownloads'
+  | 'solidtorrents'
+  | 'torrentdownload'
+  | 'tpbmirror'
+  | 'limetorrents'
   | 'animetosho'
   | 'nyaa'
   | 'tokyotosho'
-  | 'limetorrents'
+  | 'bangumi'
+  | 'mikan'
+  | 'dmhy'
+  | 'acgnx'
+  | 'subsplease'
+  | 'sukebei'
   | 'jackett';
 
 export interface TorrentSources {
@@ -38,10 +47,19 @@ export interface TorrentSources {
   yts: boolean;
   therarbg: boolean;
   torrentdownloads: boolean;
+  solidtorrents: boolean;
+  torrentdownload: boolean;
+  tpbmirror: boolean;
+  limetorrents: boolean;
   animetosho: boolean;
   nyaa: boolean;
   tokyotosho: boolean;
-  limetorrents: boolean;
+  bangumi: boolean;
+  mikan: boolean;
+  dmhy: boolean;
+  acgnx: boolean;
+  subsplease: boolean;
+  sukebei: boolean;
   jackett: boolean;
 }
 
@@ -408,9 +426,18 @@ export const DEFAULT_TORRENT_SOURCES: TorrentSources = {
   yts: true,
   therarbg: true,
   torrentdownloads: true,
+  solidtorrents: true,
+  torrentdownload: true,
+  tpbmirror: true,
+  limetorrents: true,
   animetosho: false,
   nyaa: true,
   tokyotosho: true,
-  limetorrents: true,
+  bangumi: false,
+  mikan: false,
+  dmhy: false,
+  acgnx: false,
+  subsplease: false,
+  sukebei: false,
   jackett: false,
 };

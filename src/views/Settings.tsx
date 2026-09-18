@@ -12,8 +12,11 @@ const GENERAL_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; h
   { id: 'torrentscsv', label: 'Torrents.csv', hint: 'Open dump search API' },
   { id: 'eztv', label: 'EZTV', hint: 'TV via IMDb id' },
   { id: 'yts', label: 'YTS', hint: 'YIFY movie API' },
-  { id: 'therarbg', label: 'TheRarBG', hint: 'Public JSON search' },
+  { id: 'therarbg', label: 'TheRarBG', hint: 'Public JSON (+ TGX mirrors)' },
   { id: 'torrentdownloads', label: 'TorrentDownloads', hint: 'Public search RSS' },
+  { id: 'solidtorrents', label: 'SolidTorrents', hint: 'BitSearch JSON API' },
+  { id: 'torrentdownload', label: 'TorrentDownload.info', hint: 'Public search RSS' },
+  { id: 'tpbmirror', label: 'TPB Mirror', hint: 'Pirate Bay HTML mirrors' },
   { id: 'limetorrents', label: 'LimeTorrents', hint: 'Public RSS + magnets' },
   { id: 'jackett', label: 'Jackett', hint: 'Self-hosted (optional)' },
 ];
@@ -22,6 +25,12 @@ const ANIME_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hin
   { id: 'nyaa', label: 'Nyaa', hint: 'Anime/raw RSS' },
   { id: 'tokyotosho', label: 'Tokyo Toshokan', hint: 'Anime RSS + magnets' },
   { id: 'animetosho', label: 'AnimeTosho', hint: 'Anime JSON feed (off by default)' },
+  { id: 'bangumi', label: 'Bangumi.moe', hint: 'Anime JSON (off by default)' },
+  { id: 'mikan', label: 'Mikan', hint: 'Anime RSS (off by default)' },
+  { id: 'dmhy', label: 'DMHY', hint: 'Anime RSS (off by default)' },
+  { id: 'acgnx', label: 'ACGNX', hint: 'Anime RSS (off by default)' },
+  { id: 'subsplease', label: 'SubsPlease', hint: 'Anime JSON (off by default)' },
+  { id: 'sukebei', label: 'Sukebei', hint: 'Nyaa NSFW (off by default)' },
 ];
 
 const SOURCE_OPTIONS = [...GENERAL_SOURCE_OPTIONS, ...ANIME_SOURCE_OPTIONS];

@@ -1,8 +1,8 @@
 ## Nightfeed status
 
-**Current:** v1.9.8 — Web portal request history, already-available message, poster fix.
+**Current:** v1.9.9 — Large torrent source expansion (+9 indexers); TheRarBG multi-host fallback.
 
-# Status v1.9.8
+# Status v1.9.9
 
 ## New
 - Settings: minimum file size for TV shows and for movies (per 720p / 1080p / 2160p); legacy shared mins migrate into both
