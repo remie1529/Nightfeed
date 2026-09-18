@@ -16,7 +16,7 @@ Desktop TV show & movie manager with embedded torrent downloads.
 2. Download `Nightfeed-Setup-x.y.z.exe` (Windows x64)
 3. Run the installer and launch **Nightfeed**
 
-In-app updates use GitHub Releases. Because this repo is **private**, add a GitHub personal access token under **Settings → Updates** (classic PAT with `repo`, or fine-grained with Contents: Read on this repo).
+In-app updates check GitHub Releases on startup and every few hours.
 
 ---
 
@@ -24,13 +24,14 @@ In-app updates use GitHub Releases. Because this repo is **private**, add a GitH
 
 Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and detail.
 
-- **TV library** — search & track shows via [TVMaze](https://www.tvmaze.com/) (no API key); filter to shows with missing episodes
+- **TV library** — search & track shows via [TVMaze](https://www.tvmaze.com/) (no API key); filter to shows with missing episodes; full-width grid when maximized
 - **Calendar** — week view of episode air dates
 - **Movies** — search & metadata via IMDb.com scrape (no API key); separate movie library folder
 - **Requests** — in-app Requests tab + web/Telegram request workflow with posters and approve/deny
 - **Embedded downloads** — WebTorrent in an Electron `utilityProcess` when available
 - **Multi-thread search** — torrent index fetch/merge/rank on `worker_threads`; library zoekfunctie (TVMaze / IMDb) on its own worker so search stays responsive during downloads
 - **Multi-source torrents** — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, AnimeTosho, Nyaa, LimeTorrents; optional Jackett
+- **Quality gates** — preferred + minimum resolution; separate TV vs movie minimum file size per resolution
 - **Auto-download** — missing episodes on a schedule; skip ignored
 - **FTP upload** — optional upload when a download finishes
 - **Telegram bot** — admin commands + request-only chats (`/request-show` / `/request-movie`, approve/deny)
@@ -41,6 +42,7 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 - **Multiple library roots** — several TV/movie folders, drag to reorder; top is default for new titles
 - **OpenVPN** — Nightfeed starts Community `openvpn.exe` (not the GUI), auto-connect, torrent-only split tunnel, kill switch
 - **Live TV** — optional HDHomeRun tuner + XMLTV for Plex (M3U, Xtream Codes, or a direct stream)
+- **Reliability** — startup loading screen until backend ready; optional crash-restart via Task Scheduler; collapsible full-width Settings
 
 ---
 
@@ -51,13 +53,11 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 | TV / movie library roots | One or more folders; drag to set default |
 | Torrent sources | Enable any combination |
 | Max connections / speed caps | WebTorrent limits |
-| GitHub PAT | Private-repo update checks |
+| Min size (TV / movies) | Separate per-resolution minimums |
 | Backup | Export or replace-all import |
 | VPN (OpenVPN) | Import `.ovpn`, auto-connect, torrent-only split tunnel, kill switch; own CLI session (not OpenVPN GUI) |
 | Telegram Admin / Requests chat IDs | Admins get full control + approvals; Requests can only `/request` |
 | Unknown Telegram chats | Bot replies only with `Your chat ID: …` |
-
----
 
 ---
 
@@ -68,7 +68,6 @@ Copyright © 2026 **HoffSoftware**. All rights reserved.
 Nightfeed is free for **private, personal use** only. Business use, resale, and commercial redistribution are not allowed without written permission from HoffSoftware.
 
 Full terms: [LICENSE](LICENSE)
-
 
 ---
 
@@ -97,78 +96,10 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
-**1.9.6** — Separate minimum file size for TV shows vs movies (per resolution); legacy shared values migrate into both.
-**1.9.5** — Crash-restart Task Scheduler works without admin (current-user, limited); Settings fills maximized width.
+**1.9.6** — Separate minimum file size for TV shows vs movies (per resolution).
+**1.9.5** — Crash-restart Task Scheduler without admin; Settings fills maximized width.
 **1.9.4** — Collapsible Settings sections; library grid fills the window when maximized.
-
-**1.9.3** — Loading screen stays until the backend is ready, then the UI is shown.
-
+**1.9.3** — Loading screen stays until the backend is ready.
 **1.9.2** — Startup loading screen; optional Task Scheduler restart after a crash.
-
-**1.9.1** — Live TV icons actually show in Nightfeed and are served as PNGs for Plex.
-
-**1.9.0** — Live TV: custom channel icons, EPG mapping, and fake guide for channels with no XMLTV.
-
-**1.8.9** — Live TV: HLS playlists remuxed to MPEG-TS so Plex actually gets a stream.
-
-**1.8.8** — Live TV tuner + guide for Plex (M3U / Xtream / direct); download freeze/speed fix while torrents run.
-
-**1.8.7** — Calendar week view of air dates; Library filter for shows with missing episodes.
-
-**1.8.6** — Bind torrents to the real TAP host IP, not the `.0` subnet address from the OpenVPN log.
-
-**1.8.5** — Split tunnel torrents actually leave through OpenVPN TAP (Windows IP_UNICAST_IF); Plex keeps ISP IP.
-
-**1.8.4** — Split tunnel: torrents can reach seeders on the VPN while Plex keeps the ISP IP.
-
-**1.8.3** — Get / Get other window: long torrent names wrap; Res, Size, Seeds, Download stay visible.
-
-**1.8.2** — OpenVPN split tunnel: ISP IP stays for Plex/port-forward/browser; only torrent sockets use the VPN.
-
-**1.8.1** — Fix in-app updater stuck on “downloading…” (full installer download, progress, Retry/Install).
-
-**1.8.0** — Process folder (download → verify resolution/size → rename → move); preferred + minimum resolution and min file size per resolution; redesigned request/admin website.
-
-**1.7.9** — Update banner (startup + every 6h); optional Telegram daily download briefing; OpenVPN pulls routes so torrents work; poster disk cache; Get other; multiple library roots (drag to reorder).
-
-**1.7.8** — Movies tab cache; Telegram posters; `/search` `/add-movie` `/vpn` `/pause` `/resume` `/missing`; app-styled scrollbar.
-
-**1.7.7** — Auto-download only preferred resolution with ≥8 seeders; skip 0–5 seed and season packs.
-
-**1.7.6** — OpenVPN auto-connect on launch; torrent kill switch; Telegram + in-app banner on drop.
-
-**1.7.5** — Max 3 active torrents (rest queued); progress no longer re-renders the whole UI.
-
-**1.7.4** — Disable uTP (Windows ENOBUFS crash); pause torrents before update install.
-
-**1.7.3** — OpenVPN 2.7 handshake; ignore startup notes; management password.
-
-**1.7.2** — OpenVPN Interactive Service / UAC; copy cert/key sidecars; real TAP errors.
-
-**1.7.1** — In-app Requests tab; posters on admin/app requests; public request page no longer asks for a name.
-
-**1.7.0** — Local web request/admin portal; hyphenated Telegram request commands.
-
-**1.6.1** — Harden Telegram chat-ID matching (Requests/Admin lists).
-
-**1.6.0** — Fast Library list + season bulk status.
-
-**1.5.9** — Fix Scan folders radio layout.
-
-**1.5.8** — Manual mass-import from library folders.
-
-**1.5.7** — Telegram Admin vs Requests chat IDs; request workflow with approve/deny.
-
-**1.5.6** — App icon + OpenVPN torrent-only split tunnel.
-
-**1.5.5** — Search stays responsive during downloads; backup export/import.
-
-**1.5.4** — Rename app and repo to Nightfeed.
-
-**1.5.3** — worker_threads search + utilityProcess WebTorrent; IMDb movie scrape.
-
-**1.5.2** — Throttle progress, reject .exe torrents, FTP + UNC paths.
-
-**1.5.1** — Movie metadata without TMDB API key.
-
-**1.5.0** — Movie support with movie library.
+**1.9.1** – **1.9.0** — Live TV icons, EPG mapping, fake guide for channels with no XMLTV.
+**1.8.x** — Live TV for Plex, calendar, OpenVPN split tunnel, process-folder quality gates, web portal restyle, and more (see CHANGELOG).

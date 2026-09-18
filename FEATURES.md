@@ -2,7 +2,7 @@
 
 Dark chrome, gold accents — a desktop TV & movie manager with embedded torrents, requests, VPN split tunnel, and a local web portal.
 
-**v1.9.0** · Electron · React · WebTorrent · TVMaze · IMDb
+**v1.9.6** · Electron · React · WebTorrent · TVMaze · IMDb
 
 [← Back to README](README.md)
 
@@ -14,13 +14,13 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 | Area | What you get |
 |------|----------------|
-| **Library** | Track shows via TVMaze (no API key), missing-episodes filter, season bulk status, folder scan import |
+| **Library** | Track shows via TVMaze (no API key), missing-episodes filter, season bulk status, folder scan import, full-width grid |
 | **Calendar** | Week view of episode air dates; click through to the show |
 | **Movies** | Separate movie library, IMDb metadata scrape (no API key) |
 | **Downloads** | Embedded WebTorrent (`utilityProcess`), queue of 3 active, pause/resume/cancel |
 | **Requests** | In-app approve/deny + Telegram + web portal |
-| **Settings** | Multi-root libraries, UNC, FTP, OpenVPN split tunnel/kill switch, backup, updater |
-| **Live TV** | Optional HDHomeRun tuner + XMLTV for Plex (M3U, Xtream, direct stream) |
+| **Settings** | Multi-root libraries, UNC, FTP, OpenVPN split tunnel/kill switch, backup, collapsible full-width sections |
+| **Live TV** | Optional HDHomeRun tuner + XMLTV for Plex (M3U, Xtream, direct stream; custom icons & EPG) |
 
 ---
 
@@ -31,6 +31,11 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 - Search & track shows through [TVMaze](https://www.tvmaze.com/) — **no API key**
 - Filter the grid to **shows with missing episodes**
 - Fast library list with **season bulk status**
+- **Check new episodes** on demand or on a schedule
+- **Scan folders & import…** — preview matches, confirm; never auto-imports on startup
+- Episode files rename to `Show - SxxExx - Title`
+- Poster cache on disk for snappy browsing
+- Library grid uses the **full window width** when maximized
 
 ---
 
@@ -40,10 +45,6 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 - Previous / This week / Next
 - Each day lists show, `SxxExx`, episode title, and status
 - Click an episode to open that show
-- **Check new episodes** on demand or on a schedule
-- **Scan folders & import…** — preview matches, confirm; never auto-imports on startup
-- Episode files rename to `Show - SxxExx - Title`
-- Poster cache on disk for snappy browsing
 
 ---
 
@@ -70,7 +71,7 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 - Library/show search (TVMaze / IMDb) also runs on its own worker so typing stays responsive during downloads
 - Rank by preferred resolution, then seeders; skip junk (CAM/TS) and low-seed results
 - Optional **process folder**: download → `ffprobe` resolution & min size → rename → move into the library
-- Preferred + minimum resolution (720p / 1080p / 2160p) and per-resolution minimum file size for TV and for movies
+- Preferred + minimum resolution (720p / 1080p / 2160p) and **separate TV vs movie** minimum file size per resolution
 - Reject non-video / `.exe` payloads
 - Optional **FTP upload** when a download finishes
 
@@ -103,11 +104,12 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 - **Multiple TV and movie library roots** — drag to reorder; top is default for new titles; existing season/movie folders are reused
 - **UNC paths** supported for Windows network shares
-- Process folder, preferred/minimum resolution, min size per quality (TV vs movies)
+- Process folder, preferred/minimum resolution, separate TV/movie min size per quality
 - WebTorrent connection & speed caps
 - **Backup** — export/import settings + TV + movie libraries (JSON; includes secrets — keep private)
-- Launch on Windows startup
-- GitHub PAT for private-repo **in-app updates** (check on startup + every 6h; progress, Retry, Install)
+- Launch on Windows startup; optional **crash-restart** via Task Scheduler (current-user, no admin when possible)
+- **Collapsible sections** (Updates, Backup, and About stay open); Settings fills **maximized width**
+- Startup loading screen until torrent engine, VPN detect, and settings are ready
 
 ---
 
@@ -136,8 +138,17 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 - Schedule missing episodes; skip ignored
 - Prefer configured resolution with enough seeders; never keep a file below the minimum
+- Separate minimum file size for **TV** and **movies** (per resolution)
 - TV results filtered to the matching `SxxExx` (not season packs)
 - Get / **Get other** for already-downloaded episodes or movies
+
+---
+
+## Live TV (optional)
+
+- HDHomeRun-style tuner + XMLTV guide for Plex (M3U, Xtream Codes, or a direct stream)
+- Custom channel icons (URL or file), EPG id mapping, and fake guide blocks when a channel has no XMLTV
+- HLS remuxed to MPEG-TS for Plex; IPTV stays off the torrent VPN
 
 ---
 
@@ -147,6 +158,7 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 - Progress IPC throttled; download store writes debounced so Library doesn’t thrash
 - Cap concurrent peers; disable uTP on Windows to avoid `ENOBUFS`
 - Pause torrents (and VPN) before Restart to install an update
+- Crash-restart task registers for the current user when possible
 
 ---
 
