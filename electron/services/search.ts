@@ -587,6 +587,167 @@ async function searchLimeTorrents(query: string): Promise<SearchResult[]> {
   return results;
 }
 
+/** YTS / YIFY movie API — movies only (JSON, no key). */
+async function searchYts(query: string): Promise<SearchResult[]> {
+  const url =
+    `https://movies-api.accel.li/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}` +
+    `&limit=50&sort_by=seeds&order_by=desc`;
+  let res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 20000);
+  if (!res.ok) {
+    // fallback mirror
+    res = await fetchWithTimeout(
+      `https://yts.gg/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}&limit=50&sort_by=seeds&order_by=desc`,
+      { headers: { Accept: 'application/json' } },
+      20000
+    );
+  }
+  if (!res.ok) throw new Error(`YTS HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    data?: {
+      movies?: Array<{
+        title_long?: string;
+        title?: string;
+        year?: number;
+        torrents?: Array<{
+          hash?: string;
+          quality?: string;
+          type?: string;
+          size_bytes?: number;
+          seeds?: number;
+          peers?: number;
+        }>;
+      }>;
+    };
+  };
+  const results: SearchResult[] = [];
+  for (const movie of data.data?.movies || []) {
+    const base = movie.title_long || movie.title || query;
+    for (const t of movie.torrents || []) {
+      const hash = (t.hash || '').toLowerCase();
+      if (!hash) continue;
+      const quality = t.quality || '';
+      const kind = t.type || '';
+      const title = `${base} ${quality}${kind ? ` ${kind}` : ''}`.trim();
+      results.push({
+        title,
+        magnet: buildMagnet(hash, title),
+        size: t.size_bytes || 0,
+        seeders: t.seeds || 0,
+        leechers: t.peers || 0,
+        source: 'yts',
+        resolution: detectResolution(title) || detectResolution(quality),
+        infoHash: hash,
+      });
+    }
+  }
+  return results;
+}
+
+/** TheRarBG public JSON search — no API key. */
+async function searchTheRarBg(query: string): Promise<SearchResult[]> {
+  const url = `https://therarbg.com/get-posts/keywords:${encodeURIComponent(query)}/?format=json`;
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 20000);
+  if (!res.ok) throw new Error(`TheRarBG HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    results?: Array<{
+      n?: string;
+      s?: number;
+      se?: number;
+      le?: number;
+      h?: string;
+    }>;
+  };
+  const results: SearchResult[] = [];
+  for (const item of data.results || []) {
+    const title = item.n || '';
+    const hash = (item.h || '').toLowerCase();
+    if (!title || !hash) continue;
+    results.push({
+      title,
+      magnet: buildMagnet(hash, title),
+      size: item.s || 0,
+      seeders: item.se || 0,
+      leechers: item.le || 0,
+      source: 'therarbg',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** TorrentDownloads.pro public search RSS — info_hash in feed. */
+async function searchTorrentDownloads(query: string): Promise<SearchResult[]> {
+  const url = `https://www.torrentdownloads.pro/rss.xml?type=search&search=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+    20000
+  );
+  if (!res.ok) throw new Error(`TorrentDownloads HTTP ${res.status}`);
+  const xml = await res.text();
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    if (!title) continue;
+    const hash = (rssTag(item, 'info_hash') || '').toLowerCase();
+    if (!hash || !/^[a-f0-9]{40}$/.test(hash)) continue;
+    const sizeRaw = rssTag(item, 'size');
+    const size = /^\d+$/.test(sizeRaw) ? parseInt(sizeRaw, 10) : parseSizeToBytes(sizeRaw);
+    const seeders = parseInt(rssTag(item, 'seeders') || '0', 10) || 0;
+    const leechers = parseInt(rssTag(item, 'leechers') || '0', 10) || 0;
+    results.push({
+      title,
+      magnet: buildMagnet(hash, title),
+      size: size || 0,
+      seeders,
+      leechers,
+      source: 'torrentdownloads',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
+/** Tokyo Toshokan anime RSS — magnets in description. */
+async function searchTokyoTosho(query: string): Promise<SearchResult[]> {
+  const url = `https://www.tokyotosho.info/rss.php?terms=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+    20000
+  );
+  if (!res.ok) throw new Error(`TokyoTosho HTTP ${res.status}`);
+  const xml = await res.text();
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    if (!title) continue;
+    const desc = item.match(/<description\b[^>]*>([\s\S]*?)<\/description>/i)?.[1] || '';
+    const decoded = decodeHtmlEntities(desc.replace(/<!\[CDATA\[|\]\]>/g, ''));
+    let magnet = '';
+    const magnetHref = decoded.match(/href=["'](magnet:\?[^"']+)["']/i);
+    if (magnetHref) magnet = decodeHtmlEntities(magnetHref[1]);
+    const hash = extractInfoHash(magnet).toLowerCase();
+    if (!hash) continue;
+    if (!magnet.startsWith('magnet:')) magnet = buildMagnet(hash, title);
+    const sizeMatch = decoded.match(/Size:\s*([\d.]+\s*[KMGT]?i?B)/i);
+    const size = sizeMatch ? parseSizeToBytes(sizeMatch[1]) : 0;
+    results.push({
+      title,
+      magnet,
+      size,
+      seeders: 0,
+      leechers: 0,
+      source: 'tokyotosho',
+      resolution: detectResolution(title),
+      infoHash: hash,
+    });
+  }
+  return results;
+}
+
 async function searchJackett(settings: AppSettings, query: string, category = 5000): Promise<SearchResult[]> {
   if (!settings.jackettUrl || !settings.jackettApiKey) {
     throw new Error('Jackett URL and API key are required when Jackett is enabled.');
@@ -662,15 +823,19 @@ export function enabledTorrentSources(settings: AppSettings): TorrentSourceId[] 
     'yourbittorrent',
     'torrentscsv',
     'eztv',
+    'yts',
+    'therarbg',
+    'torrentdownloads',
     'animetosho',
     'nyaa',
+    'tokyotosho',
     'limetorrents',
     'jackett',
   ];
   const out = order.filter((id) => !!src[id]);
-  // Safety: never search nothing
+  // Safety: never search nothing — fall back to on-by-default sources
   if (out.length === 0) {
-    return order.filter((id) => id !== 'jackett');
+    return order.filter((id) => DEFAULT_TORRENT_SOURCES[id]);
   }
   return out;
 }
@@ -689,7 +854,7 @@ export async function searchEpisodeTorrents(
   opts: SearchEpisodeOpts = {}
 ): Promise<{ results: SearchResult[]; query: string; error?: string }> {
   const query = buildQuery(showName, season, episode);
-  const sources = enabledTorrentSources(settings);
+  const sources = enabledTorrentSources(settings).filter((id) => id !== 'yts');
   const errors: string[] = [];
   const groups: SearchResult[][] = [];
 
@@ -715,10 +880,19 @@ export async function searchEpisodeTorrents(
   if (sources.includes('eztv')) {
     runners.push(run('EZTV', () => searchEztv(opts.imdbId, season, episode)));
   }
+  if (sources.includes('therarbg')) {
+    runners.push(run('TheRarBG', () => searchTheRarBg(query)));
+  }
+  if (sources.includes('torrentdownloads')) {
+    runners.push(run('TorrentDownloads', () => searchTorrentDownloads(query)));
+  }
   if (sources.includes('animetosho')) {
     runners.push(run('AnimeTosho', () => searchAnimeTosho(query)));
   }
   if (sources.includes('nyaa')) runners.push(run('Nyaa', () => searchNyaa(query)));
+  if (sources.includes('tokyotosho')) {
+    runners.push(run('TokyoTosho', () => searchTokyoTosho(query)));
+  }
   if (sources.includes('limetorrents')) {
     runners.push(run('LimeTorrents', () => searchLimeTorrents(query)));
   }
@@ -776,10 +950,22 @@ export async function searchMovieTorrents(
   if (sources.includes('torrentscsv')) {
     runners.push(run('TorrentsCSV', () => searchTorrentsCsv(query)));
   }
+  if (sources.includes('yts')) {
+    runners.push(run('YTS', () => searchYts(query)));
+  }
+  if (sources.includes('therarbg')) {
+    runners.push(run('TheRarBG', () => searchTheRarBg(query)));
+  }
+  if (sources.includes('torrentdownloads')) {
+    runners.push(run('TorrentDownloads', () => searchTorrentDownloads(query)));
+  }
   if (sources.includes('animetosho')) {
     runners.push(run('AnimeTosho', () => searchAnimeTosho(query)));
   }
   if (sources.includes('nyaa')) runners.push(run('Nyaa', () => searchNyaa(query)));
+  if (sources.includes('tokyotosho')) {
+    runners.push(run('TokyoTosho', () => searchTokyoTosho(query)));
+  }
   if (sources.includes('limetorrents')) {
     runners.push(run('LimeTorrents', () => searchLimeTorrents(query)));
   }

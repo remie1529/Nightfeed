@@ -30,7 +30,7 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 - **Requests** — in-app Requests tab + web/Telegram request workflow with posters and approve/deny
 - **Embedded downloads** — WebTorrent in an Electron `utilityProcess` when available
 - **Multi-thread search** — torrent index fetch/merge/rank on `worker_threads`; library zoekfunctie (TVMaze / IMDb) on its own worker so search stays responsive during downloads
-- **Multi-source torrents** — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, AnimeTosho, Nyaa, LimeTorrents; optional Jackett
+- **Multi-source torrents** — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, YTS, TheRarBG, TorrentDownloads, LimeTorrents; Anime section (Nyaa, Tokyo Toshokan, AnimeTosho off by default); optional Jackett
 - **Quality gates** — preferred + minimum resolution; separate TV vs movie minimum file size per resolution
 - **Auto-download** — missing episodes on a schedule; skip ignored
 - **FTP upload** — optional upload when a download finishes
@@ -96,6 +96,7 @@ Requires Node 20+ recommended. Product name: **Nightfeed**. Package name remains
 
 Full notes: [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/remie1529/Nightfeed/releases)
 
+**1.9.8** — AnimeTosho off by default in Settings Anime section; added YTS, TheRarBG, TorrentDownloads, Tokyo Toshokan.
 **1.9.7** — Web request portal: Your requests history, clearer already-available message, poster fix.
 **1.9.6** — Separate minimum file size for TV shows vs movies (per resolution).
 **1.9.5** — Crash-restart Task Scheduler without admin; Settings fills maximized width.
