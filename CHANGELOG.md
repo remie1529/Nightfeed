@@ -2,6 +2,10 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.6
+
+- Split **Minimum file size** into separate TV and movie settings (per resolution); existing values are copied into both on upgrade
+
 ## 1.9.5
 
 - Crash-restart Task Scheduler: register as the current logged-on user (InteractiveToken, limited rights) without admin when possible; clearer Access denied guidance; no half-registered task left behind

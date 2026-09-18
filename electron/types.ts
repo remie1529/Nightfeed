@@ -73,10 +73,22 @@ export interface AppSettings {
   minimumResolution: Resolution;
   /** Never auto-accept movies below this. */
   minimumMovieResolution: Resolution;
-  /** Minimum finished file size in MB per resolution (0 = no extra floor). */
-  minSizeMb720p: number;
-  minSizeMb1080p: number;
-  minSizeMb2160p: number;
+  /** Minimum finished TV file size in MB per resolution (0 = no extra floor). */
+  minSizeMbTv720p: number;
+  minSizeMbTv1080p: number;
+  minSizeMbTv2160p: number;
+  /** Minimum finished movie file size in MB per resolution (0 = no extra floor). */
+  minSizeMbMovie720p: number;
+  minSizeMbMovie1080p: number;
+  minSizeMbMovie2160p: number;
+  /**
+   * @deprecated Migrated to minSizeMbTv* / minSizeMbMovie* on load.
+   */
+  minSizeMb720p?: number;
+  /** @deprecated */
+  minSizeMb1080p?: number;
+  /** @deprecated */
+  minSizeMb2160p?: number;
   /** Optional staging folder: download, verify, rename, then move into the library. */
   processFolder: string;
   refreshIntervalMinutes: number;
@@ -446,9 +458,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultMovieResolution: '1080p',
   minimumResolution: '720p',
   minimumMovieResolution: '720p',
-  minSizeMb720p: 200,
-  minSizeMb1080p: 500,
-  minSizeMb2160p: 2000,
+  minSizeMbTv720p: 200,
+  minSizeMbTv1080p: 500,
+  minSizeMbTv2160p: 2000,
+  minSizeMbMovie720p: 200,
+  minSizeMbMovie1080p: 500,
+  minSizeMbMovie2160p: 2000,
   processFolder: '',
   refreshIntervalMinutes: 60,
   torrentSources: { ...DEFAULT_TORRENT_SOURCES },

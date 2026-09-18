@@ -110,9 +110,12 @@ const empty: AppSettings = {
   defaultMovieResolution: '1080p',
   minimumResolution: '720p',
   minimumMovieResolution: '720p',
-  minSizeMb720p: 200,
-  minSizeMb1080p: 500,
-  minSizeMb2160p: 2000,
+  minSizeMbTv720p: 200,
+  minSizeMbTv1080p: 500,
+  minSizeMbTv2160p: 2000,
+  minSizeMbMovie720p: 200,
+  minSizeMbMovie1080p: 500,
+  minSizeMbMovie2160p: 2000,
   processFolder: '',
   refreshIntervalMinutes: 60,
   torrentSources: { ...defaultSources },
@@ -607,11 +610,15 @@ export default function SettingsView() {
         </div>
 
         <div className="field">
-          <label>Minimum file size (MB)</label>
+          <label>Minimum file size for TV shows (MB)</label>
           <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
             {(['720p', '1080p', '2160p'] as const).map((key) => {
               const field =
-                key === '720p' ? 'minSizeMb720p' : key === '1080p' ? 'minSizeMb1080p' : 'minSizeMb2160p';
+                key === '720p'
+                  ? 'minSizeMbTv720p'
+                  : key === '1080p'
+                    ? 'minSizeMbTv1080p'
+                    : 'minSizeMbTv2160p';
               return (
                 <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span className="hint" style={{ margin: 0 }}>{key}</span>
@@ -628,7 +635,36 @@ export default function SettingsView() {
               );
             })}
           </div>
-          <div className="hint">0 = no extra size floor. Applied to search picks and after download.</div>
+          <div className="hint">0 = no extra size floor. Applied to TV search picks and after download.</div>
+        </div>
+
+        <div className="field">
+          <label>Minimum file size for movies (MB)</label>
+          <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+            {(['720p', '1080p', '2160p'] as const).map((key) => {
+              const field =
+                key === '720p'
+                  ? 'minSizeMbMovie720p'
+                  : key === '1080p'
+                    ? 'minSizeMbMovie1080p'
+                    : 'minSizeMbMovie2160p';
+              return (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="hint" style={{ margin: 0 }}>{key}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    style={{ width: 90 }}
+                    value={settings[field] ?? 0}
+                    onChange={(e) =>
+                      setLocal({ ...settings, [field]: Math.max(0, parseInt(e.target.value || '0', 10)) })
+                    }
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <div className="hint">0 = no extra size floor. Applied to movie search picks and after download.</div>
         </div>
 
         </SettingsSection>

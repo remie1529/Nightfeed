@@ -70,7 +70,7 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 - Library/show search (TVMaze / IMDb) also runs on its own worker so typing stays responsive during downloads
 - Rank by preferred resolution, then seeders; skip junk (CAM/TS) and low-seed results
 - Optional **process folder**: download → `ffprobe` resolution & min size → rename → move into the library
-- Preferred + minimum resolution (720p / 1080p / 2160p) and per-resolution minimum file size
+- Preferred + minimum resolution (720p / 1080p / 2160p) and per-resolution minimum file size for TV and for movies
 - Reject non-video / `.exe` payloads
 - Optional **FTP upload** when a download finishes
 
@@ -103,7 +103,7 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 - **Multiple TV and movie library roots** — drag to reorder; top is default for new titles; existing season/movie folders are reused
 - **UNC paths** supported for Windows network shares
-- Process folder, preferred/minimum resolution, min size per quality
+- Process folder, preferred/minimum resolution, min size per quality (TV vs movies)
 - WebTorrent connection & speed caps
 - **Backup** — export/import settings + TV + movie libraries (JSON; includes secrets — keep private)
 - Launch on Windows startup

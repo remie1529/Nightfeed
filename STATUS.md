@@ -1,6 +1,11 @@
 ## Nightfeed status
 
-**Current:** v1.9.5 — Crash-restart without admin; Settings full-width.
+**Current:** v1.9.6 — Separate min file size for TV vs movies.
+
+# Status v1.9.6
+
+## New
+- Settings: minimum file size for TV shows and for movies (per 720p / 1080p / 2160p); legacy shared mins migrate into both
 
 # Status v1.9.5
 

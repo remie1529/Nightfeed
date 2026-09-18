@@ -451,9 +451,9 @@ function qualityRules(kind: 'episode' | 'movie', preferredOverride?: Resolution 
     preferred,
     minimum: minimum as Resolution,
     minSizeMb: {
-      '720p': s.minSizeMb720p || 0,
-      '1080p': s.minSizeMb1080p || 0,
-      '2160p': s.minSizeMb2160p || 0,
+      '720p': (kind === 'movie' ? s.minSizeMbMovie720p : s.minSizeMbTv720p) || 0,
+      '1080p': (kind === 'movie' ? s.minSizeMbMovie1080p : s.minSizeMbTv1080p) || 0,
+      '2160p': (kind === 'movie' ? s.minSizeMbMovie2160p : s.minSizeMbTv2160p) || 0,
     },
   };
 }
