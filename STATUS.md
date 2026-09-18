@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v1.9.4 — Collapsible Settings; library uses full window width.
+**Current:** v1.9.5 — Crash-restart without admin; Settings full-width.
+
+# Status v1.9.5
+
+## Fixed
+- Crash-restart task registers for the current user without elevation when possible
+- Settings fills maximized window width like Library
 
 # Status v1.9.4
 

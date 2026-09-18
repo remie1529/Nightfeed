@@ -201,7 +201,9 @@ a { color: var(--accent); }
 }
 
 .page.page-settings {
-  max-width: 880px;
+  /* Same full-window shell as Library/Movies (no side gutters when maximized) */
+  max-width: none;
+  width: 100%;
 }
 
 .page.page-wide {
@@ -595,6 +597,7 @@ table.dense tr:hover td {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+  width: 100%;
 }
 
 .settings-fold {
