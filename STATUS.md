@@ -1,6 +1,12 @@
 ## Nightfeed status
 
-**Current:** v2.0.0 — Large torrent source expansion (+9 indexers); TheRarBG multi-host fallback.
+**Current:** v2.0.1 — Strict episode matching in Find (no wrong-episode fallback).
+
+# Status v2.0.1
+
+## Fixed
+- Find episode search no longer falls back to unfiltered torrent results when no title matches SxxExx
+- Episode title matching rejects other SxxExx / NxNN tags; still rejects multi-episode / season packs
 
 # Status v2.0.0
 
