@@ -228,13 +228,21 @@ function episodeTag(season: number, episode: number): string {
 }
 
 function titleMatchesEpisode(title: string, season: number, episode: number): boolean {
-  const t = title.toLowerCase();
-  const tag = episodeTag(season, episode).toLowerCase();
-  if (t.includes(tag)) return true;
-  // also accept 1x01 style
-  const alt = `${season}x${pad2(episode)}`.toLowerCase();
-  if (t.includes(alt)) return true;
-  return false;
+  // Normalize separators so "S01.E07" / "1x07" still match as whole episode tags.
+  const t = (title || '').toLowerCase().replace(/[._]/g, ' ');
+  const epTags: Array<{ s: number; e: number }> = [];
+  for (const m of t.matchAll(/\bs(\d{1,2})e(\d{1,3})\b/g)) {
+    epTags.push({ s: parseInt(m[1], 10), e: parseInt(m[2], 10) });
+  }
+  for (const m of t.matchAll(/\b(\d{1,2})x(\d{1,3})\b/g)) {
+    epTags.push({ s: parseInt(m[1], 10), e: parseInt(m[2], 10) });
+  }
+  if (epTags.length === 0) return false;
+  // Reject titles that name any other episode (even if the target tag also appears).
+  for (const tag of epTags) {
+    if (tag.s !== season || tag.e !== episode) return false;
+  }
+  return true;
 }
 
 /** Normalize IMDb id to digits-only for EZTV (strips leading "tt"). */
@@ -1379,8 +1387,14 @@ export async function searchEpisodeTorrents(
   const episodeOnly = merged.filter(
     (r) => titleMatchesEpisode(r.title || '', season, episode) && !isMultiEpisodePack(r.title || '')
   );
-  const ranked = rankResults(episodeOnly.length ? episodeOnly : merged, preferred);
-  const error = errors.length > 0 ? errors.join(' | ') : undefined;
+  // Never fall back to unfiltered merge — wrong episodes must not appear in Find / auto-download.
+  const ranked = rankResults(episodeOnly, preferred);
+  const parts: string[] = [];
+  if (errors.length > 0) parts.push(errors.join(' | '));
+  if (!episodeOnly.length) {
+    parts.push(`No torrents matching ${episodeTag(season, episode)}`);
+  }
+  const error = parts.length > 0 ? parts.join(' | ') : undefined;
 
   return { results: ranked, query, error };
 }
