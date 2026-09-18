@@ -985,9 +985,9 @@ export default function SettingsView() {
             <span>Restart Nightfeed if it crashes</span>
           </label>
           <div className="hint">
-            Registers a Windows Task Scheduler task (<code>NightfeedCrashRestart</code>) that checks every minute.
-            If Nightfeed closed unexpectedly it is started again. Quitting the app normally does not restart it.
-            Save to apply.
+            Registers a Windows Task Scheduler task (<code>NightfeedCrashRestart</code>) for your user
+            (logged on, limited rights — no admin/SYSTEM). It checks every minute; if Nightfeed closed
+            unexpectedly it is started again. Quitting normally does not restart it. Save to apply.
           </div>
         </div>
 

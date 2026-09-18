@@ -2,6 +2,11 @@
 
 All notable Nightfeed releases. Also listed on the [GitHub repo page](README.md#version-log) and under [Releases](https://github.com/remie1529/Nightfeed/releases).
 
+## 1.9.5
+
+- Crash-restart Task Scheduler: register as the current logged-on user (InteractiveToken, limited rights) without admin when possible; clearer Access denied guidance; no half-registered task left behind
+- Settings page uses the full window width when maximized (same as Library/Movies)
+
 ## 1.9.4
 
 - Settings sections are collapsible (collapsed by default); Updates, Backup, and About stay open
