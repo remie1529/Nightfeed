@@ -1,8 +1,8 @@
 ## Nightfeed status
 
-**Current:** v1.9.6 — Separate min file size for TV vs movies.
+**Current:** v1.9.7 — Web portal request history, already-available message, poster fix.
 
-# Status v1.9.6
+# Status v1.9.7
 
 ## New
 - Settings: minimum file size for TV shows and for movies (per 720p / 1080p / 2160p); legacy shared mins migrate into both

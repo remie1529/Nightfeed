@@ -1828,8 +1828,9 @@ async function submitPendingMediaRequest(input: {
   posterUrl?: string | null;
   requesterChatId: number;
   requesterName?: string;
+  requesterClientId?: string;
   source: 'telegram' | 'web';
-}): Promise<{ ok: boolean; message: string; request?: TelegramRequest }> {
+}): Promise<{ ok: boolean; message: string; request?: TelegramRequest; alreadyAvailable?: boolean }> {
   const existingShow =
     input.mediaType === 'show'
       ? getShows().find((s) => s.tmdbId === input.mediaId)
@@ -1839,19 +1840,30 @@ async function submitPendingMediaRequest(input: {
       ? getMovies().find((m) => m.tmdbId === input.mediaId)
       : undefined;
   if (existingShow) {
-    return { ok: false, message: `Already in library: ${existingShow.name}` };
+    return {
+      ok: false,
+      alreadyAvailable: true,
+      message: `Already available in the library: ${existingShow.name}`,
+    };
   }
   if (existingMovie) {
-    return { ok: false, message: `Already in library: ${existingMovie.title}` };
+    return {
+      ok: false,
+      alreadyAvailable: true,
+      message: `Already available in the library: ${existingMovie.title}`,
+    };
   }
 
-  const pendingDup = getTelegramRequests().find(
-    (r) =>
-      r.status === 'pending' &&
-      r.mediaType === input.mediaType &&
-      r.mediaId === input.mediaId &&
-      r.requesterChatId === input.requesterChatId
-  );
+  const pendingDup = getTelegramRequests().find((r) => {
+    if (r.status !== 'pending' || r.mediaType !== input.mediaType || r.mediaId !== input.mediaId) {
+      return false;
+    }
+    if (input.source === 'web') {
+      if (!input.requesterClientId) return false;
+      return r.requesterClientId === input.requesterClientId;
+    }
+    return r.requesterChatId === input.requesterChatId;
+  });
   if (pendingDup) {
     return {
       ok: false,
@@ -1869,6 +1881,7 @@ async function submitPendingMediaRequest(input: {
     posterUrl: input.posterUrl || null,
     requesterChatId: input.requesterChatId,
     requesterName: input.source === 'web' ? undefined : input.requesterName,
+    requesterClientId: input.source === 'web' ? input.requesterClientId : undefined,
     status: 'pending',
     createdAt: new Date().toISOString(),
     source: input.source,
@@ -1879,7 +1892,7 @@ async function submitPendingMediaRequest(input: {
   const typeLabel = input.mediaType === 'movie' ? 'Movie' : 'TV show';
   const who =
     input.source === 'web'
-      ? 'Web'
+      ? `Web${input.requesterClientId ? ` · ${input.requesterClientId.slice(0, 8)}` : ''}`
       : `${input.requesterName || '—'} (${input.requesterChatId})`;
   const adminText = [
     `<b>New ${input.source === 'web' ? 'web' : 'Telegram'} request</b>`,
@@ -2709,6 +2722,17 @@ app.whenReady().then(async () => {
           kind: item.kind === 'movie' ? 'movie' : 'episode',
           posterUrl: poster || null,
         });
+      }
+    }
+    if (item?.telegramRequestId) {
+      const linked = getTelegramRequest(item.telegramRequestId);
+      if (linked && (linked.status === 'approved' || linked.status === 'pending')) {
+        upsertTelegramRequest({
+          ...linked,
+          status: 'downloaded',
+          resolvedAt: linked.resolvedAt || new Date().toISOString(),
+        });
+        emitRequestsChanged();
       }
     }
     if (item?.notifyChatId) {

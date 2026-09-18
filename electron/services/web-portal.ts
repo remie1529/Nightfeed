@@ -27,6 +27,8 @@ export type WebPortalSubmitInput = {
   overview?: string;
   posterUrl?: string | null;
   requesterName?: string;
+  /** Anonymous browser id from localStorage (no login). */
+  requesterClientId?: string;
 };
 
 export type WebPortalDeps = {
@@ -223,6 +225,21 @@ button.ok { border-color: var(--ok); color: #c8e0c8; }
 .badge.pending { border-color: var(--accent-dim); color: var(--accent); background: var(--accent-soft); }
 .badge.approved { border-color: var(--ok); color: #c8e0c8; background: #1a241a; }
 .badge.denied { border-color: var(--danger); color: #f0c0c0; background: #241a1a; }
+.badge.downloaded { border-color: var(--ok); color: #c8e0c8; background: #1a241a; }
+.history-list { display: flex; flex-direction: column; gap: 0.65rem; }
+.history-item {
+  display: flex; gap: 0.85rem; align-items: center;
+  padding: 0.65rem 0.75rem; border: 1px solid var(--border); border-radius: 10px;
+  background: #161616;
+}
+.history-item .poster, .history-item .req-poster {
+  width: 56px; height: 84px; object-fit: cover; border-radius: 6px;
+  background: #0a0a0a; flex-shrink: 0; display: block;
+}
+.history-body { flex: 1; min-width: 0; }
+.history-title { font-weight: 650; }
+.result.in-lib { opacity: 0.85; border-color: var(--ok); }
+.result .lib-note { color: #c8e0c8; font-size: 0.82rem; margin-top: 0.35rem; }
 .stats { display: flex; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .stat {
   flex: 1; min-width: 120px; background: var(--bg-elevated); border: 1px solid var(--border);
@@ -280,7 +297,7 @@ function requestPageHtml(): string {
   const body = `
 <div class="hero">
   <h2>Request a title</h2>
-  <p>Search TV or movies and send a request. No account needed.</p>
+  <p>Search TV or movies and send a request. No account needed — this browser keeps your request history.</p>
 </div>
 <div class="card">
   <div class="field">
@@ -301,40 +318,79 @@ function requestPageHtml(): string {
   </div>
   <div id="msg"></div>
 </div>
-<div id="statusBox" class="card" style="display:none"></div>
+<div id="historyBox" class="card" style="display:none"></div>
 <div id="results" class="results" style="display:none"></div>
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
+  const CLIENT_KEY = 'nf_client_id';
+  const LEGACY_KEY = 'nf_last_request_id';
+
+  function escape(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function clientId() {
+    try {
+      let id = localStorage.getItem(CLIENT_KEY);
+      if (!id || id.length < 8) {
+        if (window.crypto && crypto.randomUUID) id = crypto.randomUUID();
+        else id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem(CLIENT_KEY, id);
+      }
+      return id;
+    } catch (_) {
+      return 'anon';
+    }
+  }
+
   const msg = (text, kind) => {
     const el = $('msg');
     el.innerHTML = text ? '<div class="msg ' + (kind || 'info') + '">' + text + '</div>' : '';
   };
-  const trackId = localStorage.getItem('nf_last_request_id');
-  if (trackId) pollStatus(trackId);
 
-  async function pollStatus(id) {
+  function posterHtml(url, cls) {
+    const u = (url || '').trim();
+    const c = cls || 'poster';
+    if (u) {
+      return '<img class="' + c + '" src="' + escape(u) + '" alt="" loading="lazy" referrerpolicy="no-referrer" />';
+    }
+    return '<div class="' + c + ' ph" aria-hidden="true"></div>';
+  }
+
+  function renderHistory(requests) {
+    const box = $('historyBox');
+    if (!requests || !requests.length) {
+      box.style.display = 'none';
+      box.innerHTML = '';
+      return;
+    }
+    box.style.display = 'block';
+    const rows = requests.map((r) => {
+      const year = r.year ? ' (' + escape(String(r.year)) + ')' : '';
+      const type = r.mediaType === 'movie' ? 'Movie' : 'TV';
+      return '<div class="history-item">' + posterHtml(r.posterUrl, 'req-poster') +
+        '<div class="history-body"><div class="history-title">' + escape(r.title) + year +
+        '</div><div class="hint">' + escape(type) + ' · <span class="badge ' + escape(r.status) + '">' +
+        escape(r.status) + '</span></div></div></div>';
+    }).join('');
+    box.innerHTML = '<div style="font-weight:650;margin-bottom:0.65rem">Your requests</div>' +
+      '<div class="history-list">' + rows + '</div>' +
+      '<div class="hint" style="margin-top:0.65rem">Saved in this browser only (no login).</div>';
+  }
+
+  async function loadHistory() {
     try {
-      const res = await fetch('/api/request/' + encodeURIComponent(id));
+      const res = await fetch('/api/my-requests?clientId=' + encodeURIComponent(clientId()));
       const data = await res.json();
-      if (!data || !data.ok || !data.request) return;
-      const r = data.request;
-      const box = $('statusBox');
-      box.style.display = 'block';
-      const poster = r.posterUrl
-        ? '<img class="poster" src="' + escape(r.posterUrl) + '" alt="" />'
-        : '<div class="poster"></div>';
-      box.innerHTML = '<div class="status-card">' + poster + '<div>' +
-        '<div style="font-weight:650;margin-bottom:0.3rem">Your request</div>' +
-        '<div>' + escape(r.title) + (r.year ? ' (' + r.year + ')' : '') +
-        ' · <span class="badge ' + r.status + '">' + r.status + '</span></div>' +
-        '<div class="hint">Id: ' + escape(r.id) + '</div></div></div>';
+      if (!data || !data.ok) return;
+      renderHistory(data.requests || []);
     } catch (_) {}
   }
 
-  function escape(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+  // Migrate: if we only have a single last-request id, history API still works once client id is set on new submits.
+  void loadHistory();
 
   $('searchBtn').onclick = async () => {
     const query = $('query').value.trim();
@@ -361,17 +417,22 @@ function requestPageHtml(): string {
           ? (it.releaseYear || '')
           : (it.firstAirDate ? String(it.firstAirDate).slice(0, 4) : '');
         const poster = it.posterUrl || '';
-        return '<div class="result">' +
-          (poster ? '<img class="poster" src="' + escape(poster) + '" alt="" />' : '<div class="poster"></div>') +
+        const inLib = !!it.inLibrary;
+        const btn = inLib
+          ? '<button type="button" class="submit-btn" disabled>Already available</button>'
+          : '<button type="button" class="primary submit-btn" data-id="' + it.id +
+            '" data-title="' + escape(title) + '" data-year="' + escape(String(year || '')) +
+            '" data-overview="' + escape(it.overview || '') + '" data-poster="' + escape(poster) +
+            '">Request</button>';
+        return '<div class="result' + (inLib ? ' in-lib' : '') + '">' +
+          posterHtml(poster) +
           '<div class="result-body"><div class="result-title">' + escape(title) +
           (year ? ' <span class="result-meta">(' + escape(String(year)) + ')</span>' : '') +
           '</div><div class="result-meta">' + escape((it.overview || '').slice(0, 160)) +
-          '</div><div style="margin-top:0.45rem"><button type="button" class="primary submit-btn" data-id="' +
-          it.id + '" data-title="' + escape(title) + '" data-year="' + escape(String(year || '')) +
-          '" data-overview="' + escape(it.overview || '') + '" data-poster="' + escape(poster) +
-          '">Request</button></div></div></div>';
+          '</div>' + (inLib ? '<div class="lib-note">Already available in the library</div>' : '') +
+          '<div style="margin-top:0.45rem">' + btn + '</div></div></div>';
       }).join('');
-      box.querySelectorAll('.submit-btn').forEach((btn) => {
+      box.querySelectorAll('.submit-btn:not(:disabled)').forEach((btn) => {
         btn.addEventListener('click', () => submitOne(btn));
       });
     } catch (e) {
@@ -387,7 +448,8 @@ function requestPageHtml(): string {
       title: btn.getAttribute('data-title') || '',
       year: btn.getAttribute('data-year') ? Number(btn.getAttribute('data-year')) : null,
       overview: btn.getAttribute('data-overview') || '',
-      posterUrl: btn.getAttribute('data-poster') || undefined
+      posterUrl: btn.getAttribute('data-poster') || undefined,
+      requesterClientId: clientId()
     };
     btn.disabled = true;
     msg('Submitting…');
@@ -399,15 +461,16 @@ function requestPageHtml(): string {
       });
       const data = await res.json();
       if (!data.ok) {
-        msg(data.message || 'Request failed', 'err');
+        const kind = data.alreadyAvailable ? 'info' : 'err';
+        msg(data.message || 'Request failed', kind);
         btn.disabled = false;
         return;
       }
       msg(data.message || 'Submitted', 'ok');
       if (data.request && data.request.id) {
-        localStorage.setItem('nf_last_request_id', data.request.id);
-        pollStatus(data.request.id);
+        try { localStorage.setItem(LEGACY_KEY, data.request.id); } catch (_) {}
       }
+      void loadHistory();
     } catch (e) {
       msg('Submit error: ' + (e && e.message ? e.message : e), 'err');
       btn.disabled = false;
@@ -453,14 +516,20 @@ function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): s
   const posterHtml = (r: TelegramRequest) => {
     const url = (r.posterUrl || '').trim();
     if (url) {
-      return `<img class="req-poster" src="${escapeHtml(url)}" alt="" loading="lazy" />`;
+      return `<img class="req-poster" src="${escapeHtml(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
     }
     return `<div class="req-poster ph">No art</div>`;
   };
   const row = (r: TelegramRequest, actions: boolean) => {
     const type = r.mediaType === 'movie' ? 'Movie' : 'TV';
     const year = r.year ? ` (${r.year})` : '';
-    const who = r.requesterName || (r.requesterChatId ? `tg:${r.requesterChatId}` : 'Web');
+    const who =
+      r.requesterName ||
+      (r.requesterChatId
+        ? `tg:${r.requesterChatId}`
+        : r.requesterClientId
+          ? `Web · ${r.requesterClientId.slice(0, 8)}`
+          : 'Web');
     const src = r.source === 'web' ? 'web' : 'telegram';
     return `<tr>
       <td><code>${escapeHtml(r.id)}</code></td>
@@ -780,10 +849,18 @@ export class WebPortalServer {
         }
         if (mediaType === 'show') {
           const results = await this.deps.searchShows(query);
-          this.sendJson(res, 200, { ok: true, results: results.slice(0, 12) });
+          const annotated = results.slice(0, 12).map((r) => ({
+            ...r,
+            inLibrary: this.deps!.isInLibrary('show', r.id),
+          }));
+          this.sendJson(res, 200, { ok: true, results: annotated });
         } else {
           const results = await this.deps.searchMovies(query);
-          this.sendJson(res, 200, { ok: true, results: results.slice(0, 12) });
+          const annotated = results.slice(0, 12).map((r) => ({
+            ...r,
+            inLibrary: this.deps!.isInLibrary('movie', r.id),
+          }));
+          this.sendJson(res, 200, { ok: true, results: annotated });
         }
         return;
       }
@@ -792,6 +869,11 @@ export class WebPortalServer {
         const body = (await readJson(req)) as WebPortalSubmitInput;
         const mediaType = body.mediaType === 'movie' ? 'movie' : 'show';
         const mediaId = Number(body.mediaId);
+        const posterUrl = typeof body.posterUrl === 'string' ? body.posterUrl.trim() || null : null;
+        const requesterClientId =
+          typeof body.requesterClientId === 'string'
+            ? body.requesterClientId.trim().slice(0, 80)
+            : undefined;
         if (!mediaId || !body.title) {
           this.sendJson(res, 400, { ok: false, message: 'mediaId and title required' });
           return;
@@ -799,7 +881,8 @@ export class WebPortalServer {
         if (this.deps.isInLibrary(mediaType, mediaId)) {
           this.sendJson(res, 200, {
             ok: false,
-            message: `Already in library: ${body.title}`,
+            alreadyAvailable: true,
+            message: `Already available in the library: ${body.title}`,
           });
           return;
         }
@@ -809,19 +892,69 @@ export class WebPortalServer {
           title: String(body.title),
           year: body.year ?? null,
           overview: body.overview,
-          posterUrl: body.posterUrl || null,
+          posterUrl,
           requesterName: body.requesterName,
+          requesterClientId,
         });
-        this.sendJson(res, result.ok ? 200 : 400, result);
+        const already =
+          !result.ok &&
+          /already available|already in library/i.test(result.message || '');
+        this.sendJson(res, result.ok || already ? 200 : 400, {
+          ...result,
+          ...(already ? { alreadyAvailable: true } : {}),
+        });
+        return;
+      }
+
+      if (method === 'GET' && path === '/api/my-requests') {
+        const clientId = (url.searchParams.get('clientId') || '').trim().slice(0, 80);
+        if (!clientId || clientId.length < 8) {
+          this.sendJson(res, 400, { ok: false, message: 'clientId required' });
+          return;
+        }
+        let mine = this.deps
+          .listRequests()
+          .filter((r) => r.source === 'web' && r.requesterClientId === clientId)
+          .slice()
+          .reverse()
+          .slice(0, 50);
+        if (this.deps.enrichRequests && mine.some((r) => !(r.posterUrl || '').trim())) {
+          try {
+            mine = await this.deps.enrichRequests(mine);
+          } catch {
+            // keep unenriched
+          }
+        }
+        this.sendJson(res, 200, {
+          ok: true,
+          requests: mine.map((r) => ({
+            id: r.id,
+            title: r.title,
+            year: r.year,
+            status: r.status,
+            mediaType: r.mediaType,
+            posterUrl: r.posterUrl || null,
+            createdAt: r.createdAt,
+            resolvedAt: r.resolvedAt,
+          })),
+        });
         return;
       }
 
       if (method === 'GET' && path.startsWith('/api/request/')) {
         const id = decodeURIComponent(path.slice('/api/request/'.length));
-        const reqItem = this.deps.listRequests().find((r) => r.id === id);
+        let reqItem = this.deps.listRequests().find((r) => r.id === id);
         if (!reqItem) {
           this.sendJson(res, 404, { ok: false, message: 'Not found' });
           return;
+        }
+        if (!(reqItem.posterUrl || '').trim() && this.deps.enrichRequests) {
+          try {
+            const [enriched] = await this.deps.enrichRequests([reqItem]);
+            if (enriched) reqItem = enriched;
+          } catch {
+            // keep
+          }
         }
         this.sendJson(res, 200, {
           ok: true,
@@ -831,6 +964,9 @@ export class WebPortalServer {
             year: reqItem.year,
             status: reqItem.status,
             mediaType: reqItem.mediaType,
+            posterUrl: reqItem.posterUrl || null,
+            createdAt: reqItem.createdAt,
+            resolvedAt: reqItem.resolvedAt,
           },
         });
         return;
