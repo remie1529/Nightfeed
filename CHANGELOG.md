@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0
+
+- **Per-show / per-movie monitoring**: on Show and Movie detail, toggle **Monitor for new episodes** / **Monitor for download**. When off (Paused), Nightfeed skips auto-download, upgrade hunting, and refresh snatch for that title only; global auto-download stays on for everything else. Manual Find / Get still works. Telegram approvals can still force a grab.
+- **Library & Movies multi-select**: checkboxes on posters, select-all visible, clear selection, and a sticky bulk bar for pause/resume monitoring, status changes (TV: ignore/want missing episodes; Movies: missing/downloaded), and remove from library.
+
+
 ## 2.1.3
 
 - VPN: fix false **handshake timed out** when OpenVPN was already up (Interactive Service)

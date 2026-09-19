@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Poster from '../components/Poster';
-import type { Movie, TmdbMovieSearchItem } from '../lib/types';
+import type { Movie, MovieStatus, TmdbMovieSearchItem } from '../lib/types';
 import FolderScanImport from '../components/FolderScanImport';
 
 let moviesCache: Movie[] = [];
@@ -21,6 +21,8 @@ export default function Movies({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [loading, setLoading] = useState(!moviesCache.length);
   const loadGen = useRef(0);
 
@@ -58,6 +60,40 @@ export default function Movies({
     if (!q) return movies;
     return movies.filter((m) => m.title.toLowerCase().includes(q));
   }, [movies, filter]);
+
+  const selectedIds = useMemo(() => [...selected], [selected]);
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((m) => selected.has(m.tmdbId));
+
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelected(new Set(filtered.map((m) => m.tmdbId)));
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const runBulk = async (fn: () => Promise<void>) => {
+    setBulkBusy(true);
+    setError(null);
+    try {
+      await fn();
+      clearSelection();
+      await load({ soft: true });
+      onRefreshDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const doSearch = async () => {
     setError(null);
@@ -170,6 +206,83 @@ export default function Movies({
         </div>
       )}
 
+      {selected.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-bar-count">
+            {selected.size} selected
+            {filtered.length ? ` · ${filtered.length} visible` : ''}
+          </span>
+          <button type="button" disabled={bulkBusy || allVisibleSelected} onClick={selectAllVisible}>
+            Select all visible
+          </button>
+          <button type="button" disabled={bulkBusy} onClick={clearSelection}>
+            Clear
+          </button>
+          <div className="bulk-bar-sep" />
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() =>
+              runBulk(async () => {
+                await window.torrentAPI.bulkUpdateMovies(selectedIds, { monitored: false });
+              })
+            }
+          >
+            Pause monitoring
+          </button>
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() =>
+              runBulk(async () => {
+                await window.torrentAPI.bulkUpdateMovies(selectedIds, { monitored: true });
+              })
+            }
+          >
+            Resume monitoring
+          </button>
+          <select
+            disabled={bulkBusy}
+            defaultValue=""
+            key={`bulk-movie-status-${selected.size}`}
+            onChange={(e) => {
+              const v = e.target.value as MovieStatus | '';
+              e.target.value = '';
+              if (v !== 'missing' && v !== 'downloaded') return;
+              void runBulk(async () => {
+                await window.torrentAPI.bulkUpdateMovies(selectedIds, { status: v });
+              });
+            }}
+            title="Set status on selected movies"
+          >
+            <option value="" disabled>
+              Change status…
+            </option>
+            <option value="missing">Missing</option>
+            <option value="downloaded">Downloaded</option>
+          </select>
+          <button
+            type="button"
+            className="danger"
+            disabled={bulkBusy}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `Remove ${selected.size} movie(s) from the library? Files on disk are not deleted.`
+                )
+              ) {
+                return;
+              }
+              void runBulk(async () => {
+                await window.torrentAPI.bulkRemoveMovies(selectedIds);
+              });
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      )}
+
       {loading && movies.length === 0 ? (
         <div className="poster-grid" aria-busy="true" aria-label="Loading movies">
           {Array.from({ length: 12 }).map((_, i) => (
@@ -189,22 +302,42 @@ export default function Movies({
         </div>
       ) : (
         <div className="poster-grid">
-          {filtered.map((movie) => (
-            <button
-              key={movie.tmdbId}
-              className="poster-card"
-              onClick={() => onOpenMovie(movie)}
-            >
-              <Poster path={movie.posterPath} alt={movie.title} width={140} height={210} />
-              <div>
-                <div style={{ fontWeight: 650, lineHeight: 1.25 }}>{movie.title}</div>
-                <div style={{ color: 'var(--text-faint)', fontSize: '0.75rem', marginTop: 4 }}>
-                  {movie.releaseYear || '—'}
-                  {movie.status ? ` · ${movie.status}` : ''}
-                </div>
+          {filtered.map((movie) => {
+            const isSelected = selected.has(movie.tmdbId);
+            const paused = movie.monitored === false;
+            return (
+              <div
+                key={movie.tmdbId}
+                className={`poster-card${isSelected ? ' selected' : ''}${paused ? ' paused' : ''}`}
+              >
+                <label className="poster-select" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(movie.tmdbId)}
+                    aria-label={`Select ${movie.title}`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="poster-card-hit"
+                  onClick={() => {
+                    if (selected.size > 0) toggleSelect(movie.tmdbId);
+                    else onOpenMovie(movie);
+                  }}
+                >
+                  <Poster path={movie.posterPath} alt={movie.title} width={140} height={210} />
+                  <div>
+                    <div style={{ fontWeight: 650, lineHeight: 1.25 }}>{movie.title}</div>
+                    <div style={{ color: 'var(--text-faint)', fontSize: '0.75rem', marginTop: 4 }}>
+                      {movie.releaseYear || '—'}
+                      {paused ? ' · Paused' : movie.status ? ` · ${movie.status}` : ''}
+                    </div>
+                  </div>
+                </button>
               </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

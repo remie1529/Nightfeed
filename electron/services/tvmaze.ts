@@ -113,6 +113,7 @@ function emptyShowShell(
     minSizeMb720p: existing?.minSizeMb720p,
     minSizeMb1080p: existing?.minSizeMb1080p,
     minSizeMb2160p: existing?.minSizeMb2160p,
+    monitored: existing?.monitored,
   };
 }
 

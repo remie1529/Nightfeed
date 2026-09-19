@@ -1070,3 +1070,84 @@ button.ok-btn {
 .badge.health-fair { color: #d4c48a; border-color: #5a4d2a; background: #241f14; }
 .badge.health-poor { color: #d4a88a; border-color: #5a4530; background: #241c14; }
 .badge.health-dead { color: #d4a0a0; border-color: #5a3d3d; background: #241a1a; }
+
+
+/* Multi-select bulk actions (Library / Movies) */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.65rem;
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.bulk-bar-count {
+  font-weight: 600;
+  margin-right: 0.25rem;
+  color: var(--text);
+}
+
+.bulk-bar-sep {
+  width: 1px;
+  height: 1.35rem;
+  background: var(--border);
+  margin: 0 0.15rem;
+}
+
+.poster-card {
+  position: relative;
+}
+
+.poster-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.poster-card.paused {
+  opacity: 0.78;
+}
+
+.poster-select {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.45rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.poster-select input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.poster-card-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}

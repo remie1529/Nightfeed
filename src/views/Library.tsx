@@ -22,6 +22,8 @@ export default function Library({
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('');
   const [missingOnly, setMissingOnly] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [pendingAdd, setPendingAdd] = useState<MazeSearchItem | null>(null);
   const loadGen = useRef(0);
   const hasShowsRef = useRef(false);
@@ -74,6 +76,40 @@ export default function Library({
     if (q) list = list.filter((s) => s.name.toLowerCase().includes(q));
     return list;
   }, [shows, filter, missingOnly]);
+
+  const selectedIds = useMemo(() => [...selected], [selected]);
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((s) => selected.has(s.tmdbId));
+
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelected(new Set(filtered.map((s) => s.tmdbId)));
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const runBulk = async (fn: () => Promise<void>) => {
+    setBulkBusy(true);
+    setError(null);
+    try {
+      await fn();
+      clearSelection();
+      await load({ soft: true });
+      onRefreshDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const doSearch = async () => {
     setError(null);
@@ -229,6 +265,92 @@ export default function Library({
         </div>
       )}
 
+      {selected.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-bar-count">
+            {selected.size} selected
+            {filtered.length ? ` · ${filtered.length} visible` : ''}
+          </span>
+          <button type="button" disabled={bulkBusy || allVisibleSelected} onClick={selectAllVisible}>
+            Select all visible
+          </button>
+          <button type="button" disabled={bulkBusy} onClick={clearSelection}>
+            Clear
+          </button>
+          <div className="bulk-bar-sep" />
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() =>
+              runBulk(async () => {
+                await window.torrentAPI.bulkUpdateShows(selectedIds, { monitored: false });
+              })
+            }
+          >
+            Pause monitoring
+          </button>
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() =>
+              runBulk(async () => {
+                await window.torrentAPI.bulkUpdateShows(selectedIds, { monitored: true });
+              })
+            }
+          >
+            Resume monitoring
+          </button>
+          <select
+            disabled={bulkBusy}
+            defaultValue=""
+            key={`bulk-status-${selected.size}`}
+            onChange={(e) => {
+              const v = e.target.value as 'ignored' | 'missing' | '';
+              e.target.value = '';
+              if (!v) return;
+              if (
+                !window.confirm(
+                  v === 'ignored'
+                    ? `Mark missing episodes as ignored on ${selected.size} show(s)? Auto-download will skip them.`
+                    : `Mark ignored episodes as missing (wanted) on ${selected.size} show(s)?`
+                )
+              ) {
+                return;
+              }
+              void runBulk(async () => {
+                await window.torrentAPI.bulkSetShowMissingStatus(selectedIds, v);
+              });
+            }}
+            title="Change missing-episode status on selected shows"
+          >
+            <option value="" disabled>
+              Change status…
+            </option>
+            <option value="ignored">Ignore missing episodes</option>
+            <option value="missing">Want ignored episodes</option>
+          </select>
+          <button
+            type="button"
+            className="danger"
+            disabled={bulkBusy}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `Remove ${selected.size} show(s) from the library? Files on disk are not deleted.`
+                )
+              ) {
+                return;
+              }
+              void runBulk(async () => {
+                await window.torrentAPI.bulkRemoveShows(selectedIds);
+              });
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      )}
+
       {showSkeleton ? (
         <div className="poster-grid" aria-busy="true" aria-label="Loading library">
           {Array.from({ length: 12 }).map((_, i) => (
@@ -260,21 +382,39 @@ export default function Library({
         <div className="poster-grid">
           {filtered.map((show) => {
             const missing = show.missingCount || 0;
+            const isSelected = selected.has(show.tmdbId);
+            const paused = show.monitored === false;
             return (
-              <button
+              <div
                 key={show.tmdbId}
-                className="poster-card"
-                onClick={() => onOpenShow(show.tmdbId)}
+                className={`poster-card${isSelected ? ' selected' : ''}${paused ? ' paused' : ''}`}
               >
-                <Poster path={show.posterPath} alt={show.name} width={140} height={210} />
-                <div>
-                  <div style={{ fontWeight: 650, lineHeight: 1.25 }}>{show.name}</div>
-                  <div style={{ color: 'var(--text-faint)', fontSize: '0.75rem', marginTop: 4 }}>
-                    {show.status}
-                    {missing ? ` · ${missing} missing` : ''}
+                <label className="poster-select" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(show.tmdbId)}
+                    aria-label={`Select ${show.name}`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="poster-card-hit"
+                  onClick={() => {
+                    if (selected.size > 0) toggleSelect(show.tmdbId);
+                    else onOpenShow(show.tmdbId);
+                  }}
+                >
+                  <Poster path={show.posterPath} alt={show.name} width={140} height={210} />
+                  <div>
+                    <div style={{ fontWeight: 650, lineHeight: 1.25 }}>{show.name}</div>
+                    <div style={{ color: 'var(--text-faint)', fontSize: '0.75rem', marginTop: 4 }}>
+                      {paused ? 'Paused' : show.status}
+                      {missing ? ` · ${missing} missing` : ''}
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              </div>
             );
           })}
         </div>

@@ -135,6 +135,7 @@ export async function fetchMovieDetail(
     preferredResolution: existing?.preferredResolution,
     libraryPath: existing?.libraryPath,
     localPath: existing?.localPath,
+    monitored: existing?.monitored,
     addedAt: existing?.addedAt || new Date().toISOString(),
     lastRefreshedAt: new Date().toISOString(),
   };

@@ -9,6 +9,11 @@ const api = {
   addShow: (mazeId: number, policy?: 'all' | 'future' | 'manual') =>
     ipcRenderer.invoke('library:add', mazeId, policy),
   removeShow: (mazeId: number) => ipcRenderer.invoke('library:remove', mazeId),
+  bulkUpdateShows: (mazeIds: number[], partial: Record<string, unknown>) =>
+    ipcRenderer.invoke('library:bulkUpdate', mazeIds, partial),
+  bulkRemoveShows: (mazeIds: number[]) => ipcRenderer.invoke('library:bulkRemove', mazeIds),
+  bulkSetShowMissingStatus: (mazeIds: number[], status: 'missing' | 'ignored') =>
+    ipcRenderer.invoke('library:bulkSetMissingStatus', mazeIds, status),
   getShows: () => ipcRenderer.invoke('library:list'),
   getCalendar: (from: string, to: string) => ipcRenderer.invoke('library:calendar', from, to),
   getShow: (mazeId: number) => ipcRenderer.invoke('library:get', mazeId),
@@ -58,6 +63,9 @@ const api = {
   getMovie: (tmdbId: number) => ipcRenderer.invoke('movies:get', tmdbId),
   addMovie: (tmdbId: number) => ipcRenderer.invoke('movies:add', tmdbId),
   removeMovie: (tmdbId: number) => ipcRenderer.invoke('movies:remove', tmdbId),
+  bulkUpdateMovies: (tmdbIds: number[], partial: Record<string, unknown>) =>
+    ipcRenderer.invoke('movies:bulkUpdate', tmdbIds, partial),
+  bulkRemoveMovies: (tmdbIds: number[]) => ipcRenderer.invoke('movies:bulkRemove', tmdbIds),
   updateMovie: (tmdbId: number, partial: Record<string, unknown>) =>
     ipcRenderer.invoke('movies:update', tmdbId, partial),
   refreshMovie: (tmdbId: number) => ipcRenderer.invoke('movies:refresh', tmdbId),

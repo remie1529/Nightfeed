@@ -219,6 +219,25 @@ export default function ShowDetail({
           <p style={{ color: 'var(--text-dim)', maxWidth: 680 }}>{show.overview}</p>
 
           <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 560 }}>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={show.monitored !== false}
+                  onChange={(e) => updateShow({ monitored: e.target.checked })}
+                />
+                Monitor for new episodes
+              </label>
+              {show.monitored === false ? (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Paused — Nightfeed won&apos;t search or auto-download for this show (manual Get still works).
+                </div>
+              ) : (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Auto-download and upgrade hunting stay on for this title when global auto-download is enabled.
+                </div>
+              )}
+            </div>
             <div className="field">
               <label>Preferred TV resolution</label>
               <select

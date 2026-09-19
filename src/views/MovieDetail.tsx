@@ -175,6 +175,25 @@ export default function MovieDetail({
           )}
 
           <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 520 }}>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={movie.monitored !== false}
+                  onChange={(e) => updateMovie({ monitored: e.target.checked })}
+                />
+                Monitor for download
+              </label>
+              {movie.monitored === false ? (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Paused — won&apos;t search or auto-download / upgrade this movie (manual Get still works).
+                </div>
+              ) : (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Auto-download and upgrade hunting stay on for this title when global auto-download is enabled.
+                </div>
+              )}
+            </div>
             <div className="field">
               <label>Preferred resolution</label>
               <select
@@ -189,6 +208,22 @@ export default function MovieDetail({
                 <option value="720p">720p</option>
                 <option value="1080p">1080p</option>
                 <option value="2160p">2160p</option>
+              </select>
+            </div>
+            <div className="field">
+              <label>Status</label>
+              <select
+                value={movie.status === 'downloading' ? 'downloading' : movie.status || 'missing'}
+                disabled={movie.status === 'downloading'}
+                onChange={(e) =>
+                  updateMovie({ status: e.target.value as MovieStatus })
+                }
+              >
+                <option value="missing">Missing</option>
+                <option value="downloaded">Downloaded</option>
+                {movie.status === 'downloading' ? (
+                  <option value="downloading">Downloading</option>
+                ) : null}
               </select>
             </div>
           </div>

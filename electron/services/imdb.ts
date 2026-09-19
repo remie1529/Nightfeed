@@ -407,6 +407,7 @@ export async function fetchMovieDetail(
     libraryPath: existing?.libraryPath,
     localPath: existing?.localPath,
     downloadedResolution: existing?.downloadedResolution,
+    monitored: existing?.monitored,
     addedAt: existing?.addedAt || new Date().toISOString(),
     lastRefreshedAt: new Date().toISOString(),
     imdbId,
