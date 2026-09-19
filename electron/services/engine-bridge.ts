@@ -149,8 +149,28 @@ class UtilityEngineProxy extends EventEmitter {
     });
   }
 
+
+  private upsertCachedItem(item: DownloadItem): void {
+    const idx = this.cachedItems.findIndex((i) => i.id === item.id);
+    if (idx < 0) {
+      this.cachedItems.push(item);
+      return;
+    }
+    const prev = this.cachedItems[idx];
+    // Never let a stale RPC reply downgrade an in-flight download back to queued.
+    if (prev.status === 'downloading' && item.status === 'queued') {
+      this.cachedItems[idx] = { ...item, status: 'downloading', progress: Math.max(prev.progress || 0, item.progress || 0) };
+      return;
+    }
+    this.cachedItems[idx] = item;
+  }
+
   applySettings(settings: EngineSettings): void {
     void this.call('applySettings', { settings }).catch(() => undefined);
+  }
+
+  async applySettingsAsync(settings: EngineSettings): Promise<void> {
+    await this.call('applySettings', { settings });
   }
 
   list(): DownloadItem[] {
@@ -216,32 +236,28 @@ class UtilityEngineProxy extends EventEmitter {
 
   async start(opts: StartEpisodeOpts): Promise<DownloadItem> {
     const res = await this.call('start', { opts });
-    if (res.item) {
-      const idx = this.cachedItems.findIndex((i) => i.id === res.item.id);
-      if (idx >= 0) this.cachedItems[idx] = res.item;
-      else this.cachedItems.push(res.item);
-    }
+    if (res.item) this.upsertCachedItem(res.item);
     return res.item as DownloadItem;
   }
 
   async startMovie(opts: StartMovieOpts): Promise<DownloadItem> {
     const res = await this.call('startMovie', { opts });
-    if (res.item) {
-      const idx = this.cachedItems.findIndex((i) => i.id === res.item.id);
-      if (idx >= 0) this.cachedItems[idx] = res.item;
-      else this.cachedItems.push(res.item);
-    }
+    if (res.item) this.upsertCachedItem(res.item);
     return res.item as DownloadItem;
   }
 
   async restore(item: DownloadItem, opts: StartEpisodeOpts | StartMovieOpts): Promise<DownloadItem> {
     const res = await this.call('restore', { item, opts });
-    if (res.item) {
-      const idx = this.cachedItems.findIndex((i) => i.id === res.item.id);
-      if (idx >= 0) this.cachedItems[idx] = res.item;
-      else this.cachedItems.push(res.item);
-    }
+    if (res.item) this.upsertCachedItem(res.item);
     return res.item as DownloadItem;
+  }
+
+  kickQueue(): void {
+    void this.call('kickQueue')
+      .then((res) => {
+        if (Array.isArray(res?.items)) this.cachedItems = res.items;
+      })
+      .catch(() => undefined);
   }
 
   pause(id: string): void {
@@ -356,6 +372,27 @@ class EngineFacade extends EventEmitter {
       return;
     }
     this.backend.applySettings(settings);
+  }
+
+  async applySettingsAsync(settings: EngineSettings): Promise<void> {
+    await this.ensureReady();
+    const backend = this.syncBackend();
+    if (backend instanceof UtilityEngineProxy) {
+      await backend.applySettingsAsync(settings);
+      return;
+    }
+    backend.applySettings(settings);
+  }
+
+  kickQueue(): void {
+    const backend = this.syncBackend();
+    if (backend instanceof UtilityEngineProxy) {
+      backend.kickQueue();
+      return;
+    }
+    if ('kickQueue' in backend && typeof (backend as DownloadEngine).kickQueue === 'function') {
+      (backend as DownloadEngine).kickQueue();
+    }
   }
 
   list(): DownloadItem[] {

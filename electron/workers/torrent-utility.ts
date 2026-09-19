@@ -55,6 +55,7 @@ type InMsg =
   | { type: 'getDownloadingKeys'; requestId: number }
   | { type: 'getDownloadingMovieIds'; requestId: number }
   | { type: 'restore'; requestId: number; item: DownloadItem; opts: any }
+  | { type: 'kickQueue'; requestId: number }
   | { type: 'destroy'; requestId: number };
 
 process.on('uncaughtException', (err) => {
@@ -130,6 +131,10 @@ port.on('message', (event) => {
           reply(msg.requestId, { ok: true, item });
           break;
         }
+        case 'kickQueue':
+          engine.kickQueue();
+          reply(msg.requestId, { ok: true, items: engine.list() });
+          break;
         case 'pause':
           engine.pause(msg.id);
           reply(msg.requestId, { ok: true });
