@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.1
+
+- Fix Downloads stuck on **Queued**: up to 3 torrents now start (**Downloading**) as soon as a slot is taken; the rest stay queued and promote when a slot frees
+- Resume-after-restart applies engine settings and kicks the queue before/after restore so persisted items actually start
+- Peer/seeder counts refresh while active (Health updates even at 0 B/s); waiting-in-queue no longer shows Health Dead
+
+
 ## 2.1.0
 
 - **Minimum seeders** setting (default 8) for auto-download / best-torrent pick; picks below the threshold are skipped

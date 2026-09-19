@@ -324,6 +324,7 @@ function applyTorrentBindFromVpn(): void {
     vpnHold: torrentVpnHold(),
     processFolder: getSettings().processFolder || '',
   });
+  downloadEngine.kickQueue();
 }
 
 /** When VPN is required for torrents, block starts until connected. */
@@ -2841,14 +2842,29 @@ app.whenReady().then(async () => {
     }
   });
   await ensureTorrentEngine();
+  // Wire progress listeners BEFORE restore so the first promotions are not dropped.
+  downloadEngine.on('update', () => pushDownloads({ persist: 'debounce' }));
+  // Apply bind/VPN/processFolder before re-queuing persisted downloads.
+  {
+    const settings = getSettings();
+    await downloadEngine.applySettingsAsync({
+      maxConnections: settings.maxConnections,
+      maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
+      maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
+      bindAddress: vpnManager.getBindAddress(),
+      bindIfIndex: vpnManager.getBindIfIndex(),
+      vpnHold: torrentVpnHold(),
+      processFolder: settings.processFolder || '',
+    });
+  }
   await restorePersistedDownloads();
+  downloadEngine.kickQueue();
   if (getTorrentEngineInfo().mode === 'in-process') {
     notify(
       'WebTorrent utilityProcess failed — downloads run on the UI process. Library search still uses a worker.',
       'warn'
     );
   }
-  downloadEngine.on('update', () => pushDownloads({ persist: 'debounce' }));
   downloadEngine.on('reject-exe', (item: DownloadItem) => {
     void tryNextAfterExeReject(item);
   });
@@ -2938,7 +2954,7 @@ app.whenReady().then(async () => {
     void maybeFtpUpload(item?.savePath, item?.name || path.basename(item?.savePath || 'file'));
   });
   const settings = getSettings();
-  downloadEngine.applySettings({
+  await downloadEngine.applySettingsAsync({
     maxConnections: settings.maxConnections,
     maxDownloadSpeedKBps: settings.maxDownloadSpeedKBps,
     maxUploadSpeedKBps: settings.maxUploadSpeedKBps,
@@ -2947,6 +2963,7 @@ app.whenReady().then(async () => {
     vpnHold: torrentVpnHold(),
     processFolder: settings.processFolder || '',
   });
+  downloadEngine.kickQueue();
   applyLoginItem(!!settings.launchOnStartup);
   applyCrashRestartTask(!!settings.restartOnCrash);
   scheduleRefresh();

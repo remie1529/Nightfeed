@@ -22,6 +22,8 @@ const PROGRESS_THROTTLE_MS = 2500;
 const MAX_PEER_CONNS = 48;
 /** Only this many torrents in WebTorrent at once; the rest stay queued. */
 const MAX_ACTIVE_DOWNLOADS = 3;
+/** Refresh peer/seeder counts while a torrent is active (even with 0 B/s). */
+const PEER_STATS_MS = 3000;
 
 type EpisodeStartOpts = {
   magnet: string;
@@ -200,6 +202,7 @@ export class DownloadEngine extends EventEmitter {
   private netBindPatched = false;
   private lastProgressEmit = 0;
   private progressEmitTimer: NodeJS.Timeout | null = null;
+  private peerStatsTimer: NodeJS.Timeout | null = null;
 
   /** Apply connection / speed / VPN bind settings. Safe to call before or after client exists. */
   applySettings(settings: EngineSettings): void {
@@ -284,13 +287,16 @@ export class DownloadEngine extends EventEmitter {
         this.dropTorrent(id);
         const item = this.items.get(id);
         if (!item) continue;
-        if (item.status === 'downloading') {
+        // Active slots often still report status "queued" until metadata arrives —
+        // always put them back so pumpQueue can restart after bind changes.
+        if (item.status === 'downloading' || item.status === 'queued') {
           item.status = this.vpnHold ? 'paused' : 'queued';
           item.downloadSpeed = 0;
           item.uploadSpeed = 0;
           item.numPeers = 0;
-      item.numSeeders = 0;
+          item.numSeeders = 0;
           if (this.vpnHold) item.error = VPN_KILL_SWITCH_ERROR;
+          else item.error = undefined;
         }
       }
       this.client.destroy(() => undefined);
@@ -298,6 +304,7 @@ export class DownloadEngine extends EventEmitter {
       // ignore
     }
     this.client = null;
+    this.stopPeerStatsTimer();
     this.emit('update', this.list());
     if (!this.vpnHold) this.pumpQueue();
   }
@@ -387,15 +394,77 @@ export class DownloadEngine extends EventEmitter {
 
   private pumpQueue(): void {
     if (this.vpnHold) return;
-    if (this.torrents.size >= MAX_ACTIVE_DOWNLOADS) return;
+    if (this.torrents.size >= MAX_ACTIVE_DOWNLOADS) {
+      this.ensurePeerStatsTimer();
+      return;
+    }
     for (const [id, item] of this.items) {
       if (item.status !== 'queued' || this.torrents.has(id)) continue;
       const job = this.jobs.get(id);
       if (!job) continue;
       if (job.kind === 'episode') this.beginEpisode(id, item, job.opts);
       else this.beginMovie(id, item, job.opts);
-      if (this.torrents.size >= MAX_ACTIVE_DOWNLOADS) return;
+      if (this.torrents.size >= MAX_ACTIVE_DOWNLOADS) break;
     }
+    this.ensurePeerStatsTimer();
+  }
+
+  /** Re-run queue promotion (e.g. after settings / VPN hold clears / resume-from-disk). */
+  kickQueue(): void {
+    this.pumpQueue();
+  }
+
+  private stopPeerStatsTimer(): void {
+    if (this.peerStatsTimer) {
+      clearInterval(this.peerStatsTimer);
+      this.peerStatsTimer = null;
+    }
+  }
+
+  private ensurePeerStatsTimer(): void {
+    if (this.torrents.size === 0) {
+      this.stopPeerStatsTimer();
+      return;
+    }
+    if (this.peerStatsTimer) return;
+    this.peerStatsTimer = setInterval(() => this.refreshPeerStats(), PEER_STATS_MS);
+    // Unref so the timer alone cannot keep a utility process alive forever.
+    if (typeof this.peerStatsTimer.unref === 'function') this.peerStatsTimer.unref();
+  }
+
+  private refreshPeerStats(): void {
+    if (this.torrents.size === 0) {
+      this.stopPeerStatsTimer();
+      return;
+    }
+    let changed = false;
+    for (const [id, torrent] of this.torrents) {
+      const item = this.items.get(id);
+      if (!item || (item.status !== 'downloading' && item.status !== 'queued')) continue;
+      const peers = torrent.numPeers || 0;
+      const seeders = countSeeders(torrent);
+      const speed = torrent.downloadSpeed || 0;
+      const up = torrent.uploadSpeed || 0;
+      const progress = typeof torrent.progress === 'number' ? torrent.progress : item.progress;
+      if (
+        item.numPeers !== peers ||
+        item.numSeeders !== seeders ||
+        item.downloadSpeed !== speed ||
+        item.uploadSpeed !== up ||
+        item.progress !== progress ||
+        item.status !== 'downloading'
+      ) {
+        item.numPeers = peers;
+        item.numSeeders = seeders;
+        item.downloadSpeed = speed;
+        item.uploadSpeed = up;
+        item.progress = progress;
+        // Slot taken ⇒ downloading (metadata may still be pending).
+        item.status = 'downloading';
+        changed = true;
+      }
+    }
+    if (changed) this.emitProgressThrottled();
   }
 
   private dropTorrent(id: string, destroyStore = false): void {
@@ -700,6 +769,12 @@ export class DownloadEngine extends EventEmitter {
   }
 
   private beginEpisode(id: string, item: DownloadItem, opts: EpisodeStartOpts): void {
+    if (!opts?.magnet) {
+      item.status = 'error';
+      item.error = 'Missing magnet URI';
+      this.emitUpdateNow();
+      return;
+    }
     const client = this.getClient();
     try {
       const torrent = client.add(opts.magnet, { path: item.savePath, announce: DEFAULT_ANNOUNCE }, (t: any) => {
@@ -709,6 +784,11 @@ export class DownloadEngine extends EventEmitter {
         this.emitUpdateNow();
       });
       this.torrents.set(id, torrent);
+      // Slot is active — show Downloading immediately (don't wait for metadata).
+      item.status = 'downloading';
+      item.error = undefined;
+      this.emitUpdateNow();
+      this.ensurePeerStatsTimer();
       torrent.on('ready', () => {
         const mapped = (torrent.files || []).map((f: any) => ({
           name: f.name,
@@ -821,6 +901,12 @@ export class DownloadEngine extends EventEmitter {
   }
 
   private beginMovie(id: string, item: DownloadItem, opts: MovieStartOpts): void {
+    if (!opts?.magnet) {
+      item.status = 'error';
+      item.error = 'Missing magnet URI';
+      this.emitUpdateNow();
+      return;
+    }
     const client = this.getClient();
     try {
       const torrent = client.add(opts.magnet, { path: item.savePath, announce: DEFAULT_ANNOUNCE }, (t: any) => {
@@ -830,6 +916,10 @@ export class DownloadEngine extends EventEmitter {
         this.emitUpdateNow();
       });
       this.torrents.set(id, torrent);
+      item.status = 'downloading';
+      item.error = undefined;
+      this.emitUpdateNow();
+      this.ensurePeerStatsTimer();
       torrent.on('ready', () => {
         const mapped = (torrent.files || []).map((f: any) => ({
           name: f.name,
@@ -881,24 +971,46 @@ export class DownloadEngine extends EventEmitter {
    * Reuses the same savePath so WebTorrent resumes from existing files.
    */
   async restore(item: DownloadItem, opts: EpisodeStartOpts | MovieStartOpts): Promise<DownloadItem> {
-    if (this.items.has(item.id)) return this.items.get(item.id)!;
+    if (this.items.has(item.id)) {
+      // Ensure job exists (e.g. after utilityProcess restart) and promote if possible.
+      const existing = this.items.get(item.id)!;
+      if (!this.jobs.has(item.id)) {
+        if (existing.kind === 'movie' || (opts as MovieStartOpts).movie) {
+          this.jobs.set(item.id, { kind: 'movie', opts: opts as MovieStartOpts });
+        } else {
+          this.jobs.set(item.id, { kind: 'episode', opts: opts as EpisodeStartOpts });
+        }
+      }
+      if (existing.status !== 'paused' && !this.vpnHold) this.pumpQueue();
+      return existing;
+    }
+    const isMovie = item.kind === 'movie' || !!(opts as MovieStartOpts).movie;
     const restored: DownloadItem = {
       ...item,
       downloadSpeed: 0,
       uploadSpeed: 0,
-      numPeers: item.numPeers || 0,
-      numSeeders: item.numSeeders || 0,
+      numPeers: 0,
+      numSeeders: 0,
       status: item.status === 'paused' ? 'paused' : 'queued',
-      error: undefined,
+      error: item.status === 'paused' && item.error === VPN_KILL_SWITCH_ERROR ? item.error : undefined,
+      magnet: item.magnet || (opts as EpisodeStartOpts).magnet || '',
     };
+    if (!restored.magnet) {
+      restored.status = 'error';
+      restored.error = 'Missing magnet URI';
+      this.items.set(restored.id, restored);
+      this.emitUpdateNow();
+      return restored;
+    }
     this.items.set(restored.id, restored);
-    if (restored.kind === 'movie') {
+    if (isMovie) {
+      restored.kind = 'movie';
       this.jobs.set(restored.id, { kind: 'movie', opts: opts as MovieStartOpts });
     } else {
       this.jobs.set(restored.id, { kind: 'episode', opts: opts as EpisodeStartOpts });
     }
     this.emitUpdateNow();
-    if (restored.status !== 'paused') this.pumpQueue();
+    if (restored.status !== 'paused' && !this.vpnHold) this.pumpQueue();
     return restored;
   }
 
@@ -906,17 +1018,16 @@ export class DownloadEngine extends EventEmitter {
   pause(id: string): void {
     const item = this.items.get(id);
     if (!item) return;
-    if (item.status === 'queued') {
-      item.status = 'paused';
-      item.downloadSpeed = 0;
-      this.emitUpdateNow();
-      return;
-    }
+    const hadTorrent = this.torrents.has(id);
     this.dropTorrent(id);
     item.status = 'paused';
     item.downloadSpeed = 0;
+    item.uploadSpeed = 0;
+    item.numPeers = 0;
+    item.numSeeders = 0;
     this.emitUpdateNow();
-    this.pumpQueue();
+    if (hadTorrent) this.pumpQueue();
+    this.ensurePeerStatsTimer();
   }
 
   resume(id: string): void {
@@ -953,6 +1064,7 @@ export class DownloadEngine extends EventEmitter {
       clearTimeout(this.progressEmitTimer);
       this.progressEmitTimer = null;
     }
+    this.stopPeerStatsTimer();
     if (this.client) {
       this.client.destroy();
       this.client = null;

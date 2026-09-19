@@ -11,6 +11,8 @@ function torrentHealth(item: DownloadItem): HealthLabel {
   const speed = item.downloadSpeed || 0;
   if (item.status === 'done') return 'Excellent';
   if (item.status === 'error') return 'Dead';
+  // Waiting for a free download slot — not dead.
+  if (item.status === 'queued') return 'Fair';
   if (item.status === 'paused') {
     if (seeders >= 20) return 'Good';
     if (seeders >= 8) return 'Fair';
