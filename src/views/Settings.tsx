@@ -1004,6 +1004,17 @@ export default function SettingsView() {
                   {vpnStatus.lastError}
                 </div>
               )}
+              {vpnStatus?.state === 'connecting' && vpnStatus.recentLog && (
+                <div className="hint" style={{ marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>
+                  OpenVPN log: {vpnStatus.recentLog}
+                </div>
+              )}
+              {(vpnStatus?.state === 'connecting' || vpnStatus?.state === 'error') && vpnStatus.logPath && (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Full OpenVPN log: <code>{vpnStatus.logPath}</code>
+                  {vpnStatus.state === 'error' ? ' — fix the issue above, then Connect to retry.' : ' — still waiting for handshake (times out after ~75s).'}
+                </div>
+              )}
               {!vpnStatus?.bindAddress && vpnStatus?.state === 'connected' && (
                 <div className="hint" style={{ color: 'var(--danger)' }}>
                   Connected but TUN/TAP IP not detected yet — torrent bind pending. Peer TCP binds when the

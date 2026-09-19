@@ -317,13 +317,26 @@ function torrentVpnHold(): boolean {
   return !!(s.vpnEnabled && s.vpnRequireForTorrents && !vpnManager.isConnected());
 }
 
+/** Dedup key so handshake status spam does not re-apply / kick. */
+let lastTorrentBindKey = '';
+
 function applyTorrentBindFromVpn(): void {
+  const bindAddress = vpnManager.getBindAddress();
+  const bindIfIndex = vpnManager.getBindIfIndex();
+  const vpnHold = torrentVpnHold();
+  const processFolder = getSettings().processFolder || '';
+  const key = `${bindAddress ?? ''}|${bindIfIndex ?? ''}|${vpnHold ? 1 : 0}|${processFolder}`;
+  // Status-only updates while connecting (same bind/hold) are a no-op.
+  if (key === lastTorrentBindKey) return;
+  lastTorrentBindKey = key;
   downloadEngine.applySettings({
-    bindAddress: vpnManager.getBindAddress(),
-    bindIfIndex: vpnManager.getBindIfIndex(),
-    vpnHold: torrentVpnHold(),
-    processFolder: getSettings().processFolder || '',
+    bindAddress,
+    bindIfIndex,
+    vpnHold,
+    processFolder,
   });
+  // Mid-handshake: do not kick the torrent queue — wait until connected/disconnected.
+  if (vpnManager.isConnecting()) return;
   downloadEngine.kickQueue();
 }
 

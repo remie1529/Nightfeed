@@ -38,6 +38,10 @@ export interface VpnStatus {
   launchMethod: VpnLaunchMethod;
   /** True when torrents are blocked because VPN is required and not connected. */
   killSwitch: boolean;
+  /** Last useful OpenVPN log lines (auth/TLS/TAP/handshake), for stuck-connecting UX. */
+  recentLog: string | null;
+  /** Absolute path to Nightfeed's OpenVPN log file. */
+  logPath: string;
 }
 
 const COMMON_OPENVPN_PATHS = [
@@ -329,6 +333,17 @@ export function summarizeOpenVpnLog(log: string): string | null {
     return `OpenVPN could not open TAP/DCO (needs Administrator / Interactive Service, and OpenVPN Community with TAP or DCO). ${blob}`;
   }
   return blob;
+}
+
+/** Last non-benign OpenVPN log lines for UI (handshake progress / stuck connecting). */
+export function tailUsefulOpenVpnLog(log: string, maxLines = 6): string | null {
+  if (!log.trim()) return null;
+  const lines = log
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*/i, '').trim())
+    .filter((l) => l && !BENIGN_OPENVPN_LINE.test(l));
+  if (!lines.length) return null;
+  return lines.slice(-Math.max(1, maxLines)).join(' · ').slice(0, 900);
 }
 
 function isProcessElevated(): boolean {
@@ -799,6 +814,7 @@ export class VpnManager extends EventEmitter {
   private logTimer: NodeJS.Timeout | null = null;
   private pidTimer: NodeJS.Timeout | null = null;
   private connectTimer: NodeJS.Timeout | null = null;
+  private hardConnectTimer: NodeJS.Timeout | null = null;
   private splitFixTimers: NodeJS.Timeout[] = [];
   private mgmtPort: number | null = null;
   private mgmtPassword: string | null = null;
@@ -839,11 +855,21 @@ export class VpnManager extends EventEmitter {
       lastError: this.lastError,
       launchMethod: this.launchMethod,
       killSwitch: !!(settings.vpnEnabled && settings.vpnRequireForTorrents && this.state !== 'connected'),
+      recentLog: tailUsefulOpenVpnLog(this.logBuffer, 6),
+      logPath: logFilePath(),
     };
+  }
+
+  getState(): VpnConnectionState {
+    return this.state;
   }
 
   isConnected(): boolean {
     return this.state === 'connected';
+  }
+
+  isConnecting(): boolean {
+    return this.state === 'connecting';
   }
 
   getBindAddress(): string | null {
@@ -1026,6 +1052,19 @@ export class VpnManager extends EventEmitter {
       clearTimeout(this.connectTimer);
       this.connectTimer = null;
     }
+    if (this.hardConnectTimer) {
+      clearTimeout(this.hardConnectTimer);
+      this.hardConnectTimer = null;
+    }
+  }
+
+  /** Stop OpenVPN and surface a stuck-handshake error (user can Connect again). */
+  private async failHandshake(detail: string): Promise<void> {
+    this.lastError = detail;
+    await this.disconnect(false);
+    this.lastError = detail;
+    this.setState('error', detail);
+    this.emit('bind', null);
   }
 
   private clearSplitFixTimers(): void {
@@ -1382,11 +1421,30 @@ export class VpnManager extends EventEmitter {
         this.setState('connecting', detail);
         return;
       }
+      const recent = tailUsefulOpenVpnLog(this.logBuffer, 4);
       this.setState(
         'connecting',
-        'Waiting for VPN handshake… OpenVPN is running (compression/management notes are not errors).'
+        recent
+          ? `Waiting for VPN handshake… OpenVPN is running. Recent log: ${recent}`
+          : 'Waiting for VPN handshake… OpenVPN is running (compression/management notes are not errors).'
       );
     }, 25000);
+
+    // Soft "waiting" can linger forever if OpenVPN stays up without completing TLS.
+    // Hard-fail so the UI leaves connecting and Connect can retry.
+    this.hardConnectTimer = setTimeout(() => {
+      if (this.state !== 'connecting') return;
+      const summary = summarizeOpenVpnLog(this.logBuffer);
+      const recent = tailUsefulOpenVpnLog(this.logBuffer, 6);
+      const pathHint = logFilePath();
+      const detail = [
+        'VPN handshake timed out — OpenVPN never reported connected.',
+        summary || (recent ? `Last log: ${recent}` : 'No useful OpenVPN log lines yet.'),
+        `Check username/password, OpenVPN Community + TAP/DCO, and Interactive Service. Full log: ${pathHint}`,
+        'Click Connect to retry.',
+      ].join(' ');
+      void this.failHandshake(detail);
+    }, 75000);
 
     try {
       if (process.platform === 'win32' && !isProcessElevated()) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.2
+
+- VPN: no code regression from 2.1.1 bind/kick — torrent `kickQueue` during OpenVPN handshake is now skipped / deduped so status spam cannot interfere
+- VPN UX: stuck **Waiting for VPN handshake…** shows recent OpenVPN log lines + log path; hard-timeout (~75s) becomes an actionable **error** with Connect-to-retry
+- Keep 2.1.1 queue/resume fixes
+
+
 ## 2.1.1
 
 - Fix Downloads stuck on **Queued**: up to 3 torrents now start (**Downloading**) as soon as a slot is taken; the rest stay queued and promote when a slot frees
