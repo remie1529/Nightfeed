@@ -207,6 +207,16 @@ function parseIpFromLog(chunk: string): string | null {
   return null;
 }
 
+/** True when OpenVPN log/mgmt text shows a completed handshake (not mgmt client churn). */
+function logIndicatesHandshakeSuccess(chunk: string): boolean {
+  if (!chunk) return false;
+  // MANAGEMENT: Client disconnected = Nightfeed's mgmt TCP client closed — not a VPN failure.
+  if (/Initialization Sequence Completed/i.test(chunk)) return true;
+  if (/>STATE:[^,]*,CONNECTED,SUCCESS/i.test(chunk)) return true;
+  if (/CONNECTED,SUCCESS,\d{1,3}(?:\.\d{1,3}){3}/i.test(chunk)) return true;
+  return false;
+}
+
 function guessVpnInterfaceIp(before: Set<string>): string | null {
   const ifaces = os.networkInterfaces();
   const candidates: string[] = [];
@@ -1102,21 +1112,104 @@ export class VpnManager extends EventEmitter {
     }
   }
 
+  private openvpnAlive(): boolean {
+    const pid = this.ownedPid || this.child?.pid || null;
+    return !!(pid && pidAlive(pid));
+  }
+
+  /** Pull any unread bytes from ovpn.log into logBuffer (timeout / late-attach safety). */
+  private ingestLogFileOnce(): void {
+    try {
+      const st = fs.statSync(logFilePath());
+      if (st.size < this.logOffset) this.logOffset = 0;
+      if (st.size <= this.logOffset) return;
+      const len = st.size - this.logOffset;
+      const buf = Buffer.alloc(len);
+      const fd = fs.openSync(logFilePath(), 'r');
+      fs.readSync(fd, buf, 0, len, this.logOffset);
+      fs.closeSync(fd);
+      this.logOffset = st.size;
+      // Append only — caller may promote; avoid double markConnected side-effects from onLogChunk.
+      const text = buf.toString('utf8');
+      this.logBuffer = (this.logBuffer + text).slice(-20000);
+      const ip = parseIpFromLog(text) || parseIpFromLog(this.logBuffer);
+      if (ip) {
+        if (ip !== this.bindAddress && isUsableVpnHostIp(ip)) {
+          this.bindAddress = ip;
+          this.bindIfIndex = null;
+          this.resolveBindIfIndex();
+          this.emit('bind', ip);
+        }
+      }
+    } catch {
+      // log not ready
+    }
+  }
+
+  /**
+   * If log/mgmt already shows ISC / CONNECTED,SUCCESS (or we adopted a bind IP while
+   * OpenVPN is still alive), promote connecting → connected. Used as a safety net for
+   * soft/hard timeouts and late management attach.
+   */
+  private promoteIfHandshakeComplete(reason?: string): boolean {
+    if (this.state === 'connected') return true;
+    if (this.state !== 'connecting') return false;
+    this.ingestLogFileOnce();
+    const blob = `${this.logBuffer}\n${this.mgmtBuf}`;
+    const success = logIndicatesHandshakeSuccess(blob);
+    const ip =
+      parseIpFromLog(blob) ||
+      (this.bindAddress && isUsableVpnHostIp(this.bindAddress) ? this.bindAddress : null) ||
+      guessVpnInterfaceIp(this.ipsBeforeConnect);
+    if (success) {
+      this.markConnected(ip);
+      return this.state === 'connected';
+    }
+    // Bind IP adopted during connecting while tunnel process still alive → treat as connected.
+    if (ip && isUsableVpnHostIp(ip) && this.openvpnAlive()) {
+      this.markConnected(ip);
+      return this.state === 'connected';
+    }
+    void reason;
+    return false;
+  }
+
   private adoptBindIp(ip: string | null): void {
     if (!ip || !isUsableVpnHostIp(ip)) return;
-    if (ip === this.bindAddress) return;
-    this.bindAddress = ip;
-    this.bindIfIndex = null;
-    this.resolveBindIfIndex();
-    this.emit('bind', ip);
+    const changed = ip !== this.bindAddress;
+    if (changed) {
+      this.bindAddress = ip;
+      this.bindIfIndex = null;
+      this.resolveBindIfIndex();
+      this.emit('bind', ip);
+    }
+    // onLogChunk can parse CONNECTED,SUCCESS → adopt IP without ISC path marking connected.
+    if (this.state === 'connecting' && this.openvpnAlive()) {
+      this.markConnected(ip);
+    }
   }
 
   private markConnected(ip?: string | null): void {
     if (this.state === 'disconnected' || this.state === 'error') return;
-    this.adoptBindIp(ip || null);
+    if (this.state === 'connected' && ip && isUsableVpnHostIp(ip) && ip === this.bindAddress) {
+      this.clearConnectTimeout();
+      return;
+    }
+    // Set bind without re-entering adoptBindIp→markConnected recursion.
+    if (ip && isUsableVpnHostIp(ip) && ip !== this.bindAddress) {
+      this.bindAddress = ip;
+      this.bindIfIndex = null;
+      this.resolveBindIfIndex();
+      this.emit('bind', ip);
+    }
     if (!this.bindAddress || !isUsableVpnHostIp(this.bindAddress)) {
       const guessed = guessVpnInterfaceIp(this.ipsBeforeConnect);
-      this.adoptBindIp(guessed);
+      if (guessed && isUsableVpnHostIp(guessed) && guessed !== this.bindAddress) {
+        this.bindAddress = guessed;
+        this.bindIfIndex = null;
+        this.resolveBindIfIndex();
+        this.emit('bind', guessed);
+      }
     }
     this.resolveBindIfIndex();
     this.lastError = null;
@@ -1134,6 +1227,18 @@ export class VpnManager extends EventEmitter {
     else this.emit('bind', this.bindAddress);
   }
 
+  private enableMgmtStateRealtime(): void {
+    if (!this.mgmtSocket) return;
+    // Subscribe to future transitions AND query current state (state on alone can miss
+    // CONNECTED if we attached after OpenVPN already finished the handshake).
+    try {
+      this.mgmtSocket.write('state on\r\n');
+      this.mgmtSocket.write('state\r\n');
+    } catch {
+      // ignore
+    }
+  }
+
   private parseMgmt(chunk: string): void {
     this.mgmtBuf = (this.mgmtBuf + chunk).slice(-20000);
     if (/ENTER PASSWORD:/i.test(this.mgmtBuf) && this.mgmtPassword && this.mgmtSocket && !this.mgmtPasswordSent) {
@@ -1143,14 +1248,14 @@ export class VpnManager extends EventEmitter {
     }
     if (/>INFO:/i.test(this.mgmtBuf) && this.mgmtSocket && !this.mgmtAuthed) {
       this.mgmtAuthed = true;
-      this.mgmtSocket.write('state on\r\n');
+      this.enableMgmtStateRealtime();
     }
     const state = this.mgmtBuf.match(/>STATE:[^,]*,CONNECTED,SUCCESS,(\d{1,3}(?:\.\d{1,3}){3})/i);
     if (state?.[1]) {
       this.markConnected(state[1]);
       return;
     }
-    if (/>STATE:[^,]*,CONNECTED,/i.test(this.mgmtBuf)) {
+    if (/>STATE:[^,]*,CONNECTED,/i.test(this.mgmtBuf) || logIndicatesHandshakeSuccess(this.mgmtBuf)) {
       this.markConnected(parseIpFromLog(this.mgmtBuf));
     }
   }
@@ -1163,6 +1268,7 @@ export class VpnManager extends EventEmitter {
     const tryConnect = () => {
       if (gen !== this.generation) return;
       if (this.mgmtSocket) return;
+      // Keep (re)connecting mgmt while tunnel is up — disconnect here must NOT flip VPN state.
       if (this.state !== 'connecting' && this.state !== 'connected') return;
       const sock = net.connect({ host: '127.0.0.1', port });
       sock.setEncoding('utf8');
@@ -1173,9 +1279,12 @@ export class VpnManager extends EventEmitter {
           return;
         }
         this.mgmtSocket = sock;
+        this.mgmtBuf = '';
+        this.mgmtAuthed = false;
+        this.mgmtPasswordSent = false;
         if (!this.mgmtPassword) {
           this.mgmtAuthed = true;
-          sock.write('state on\r\n');
+          this.enableMgmtStateRealtime();
         }
       });
       sock.on('data', (chunk: string) => {
@@ -1189,6 +1298,8 @@ export class VpnManager extends EventEmitter {
         if (this.mgmtSocket === sock) {
           this.mgmtSocket = null;
           this.mgmtAuthed = false;
+          this.mgmtPasswordSent = false;
+          // Do not change this.state — MANAGEMENT: Client disconnected is only the TCP client.
         }
       });
     };
@@ -1199,9 +1310,11 @@ export class VpnManager extends EventEmitter {
   private onLogChunk(text: string): void {
     this.logBuffer = (this.logBuffer + text).slice(-20000);
     const ip = parseIpFromLog(text) || parseIpFromLog(this.logBuffer);
-    this.adoptBindIp(ip);
-    if (/Initialization Sequence Completed/i.test(text) || /Initialization Sequence Completed/i.test(this.logBuffer)) {
+    if (logIndicatesHandshakeSuccess(text) || logIndicatesHandshakeSuccess(this.logBuffer)) {
       this.markConnected(ip);
+    } else if (ip) {
+      // May promote connecting→connected when OpenVPN is alive (see adoptBindIp).
+      this.adoptBindIp(ip);
     }
     if (/AUTH_FAILED|auth.?fail/i.test(text)) {
       this.lastError = 'Authentication failed (check username/password)';
@@ -1415,6 +1528,7 @@ export class VpnManager extends EventEmitter {
 
     this.connectTimer = setTimeout(() => {
       if (this.state !== 'connecting') return;
+      if (this.promoteIfHandshakeComplete('soft-wait')) return;
       const detail = summarizeOpenVpnLog(this.logBuffer);
       if (detail) {
         this.lastError = detail;
@@ -1431,9 +1545,11 @@ export class VpnManager extends EventEmitter {
     }, 25000);
 
     // Soft "waiting" can linger forever if OpenVPN stays up without completing TLS.
-    // Hard-fail so the UI leaves connecting and Connect can retry.
+    // Hard-fail so the UI leaves connecting and Connect can retry — but never kill a
+    // tunnel that already reported CONNECTED,SUCCESS / ISC (re-scan log first).
     this.hardConnectTimer = setTimeout(() => {
       if (this.state !== 'connecting') return;
+      if (this.promoteIfHandshakeComplete('hard-timeout')) return;
       const summary = summarizeOpenVpnLog(this.logBuffer);
       const recent = tailUsefulOpenVpnLog(this.logBuffer, 6);
       const pathHint = logFilePath();
