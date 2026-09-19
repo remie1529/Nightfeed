@@ -49,7 +49,11 @@ export default function ShowDetail({
     const s = (await window.torrentAPI.getShow(tmdbId)) as Show | null;
     setShow(s);
     if (s && s.seasons.length) {
-      setSeason((prev) => prev ?? s.seasons[0].seasonNumber);
+      const latest = s.seasons.reduce(
+        (best, cur) => (cur.seasonNumber > best.seasonNumber ? cur : best),
+        s.seasons[0]
+      );
+      setSeason((prev) => prev ?? latest.seasonNumber);
     }
   };
 
@@ -214,9 +218,9 @@ export default function ShowDetail({
           </div>
           <p style={{ color: 'var(--text-dim)', maxWidth: 680 }}>{show.overview}</p>
 
-          <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 520 }}>
+          <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 560 }}>
             <div className="field">
-              <label>Preferred resolution</label>
+              <label>Preferred TV resolution</label>
               <select
                 value={show.preferredResolution || ''}
                 onChange={(e) =>
@@ -225,13 +229,66 @@ export default function ShowDetail({
                   })
                 }
               >
-                <option value="">Use global default</option>
+                <option value="">Use global</option>
                 <option value="720p">720p</option>
                 <option value="1080p">1080p</option>
                 <option value="2160p">2160p</option>
               </select>
             </div>
             <div className="field">
+              <label>Minimum TV resolution</label>
+              <select
+                value={show.minimumResolution || ''}
+                onChange={(e) =>
+                  updateShow({
+                    minimumResolution: (e.target.value || undefined) as Resolution | undefined,
+                  })
+                }
+              >
+                <option value="">Use global</option>
+                <option value="720p">720p</option>
+                <option value="1080p">1080p</option>
+                <option value="2160p">2160p</option>
+              </select>
+            </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label>Minimum file size for this show (MB)</label>
+              <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+                {([
+                  ['720p', 'minSizeMb720p'],
+                  ['1080p', 'minSizeMb1080p'],
+                  ['2160p', 'minSizeMb2160p'],
+                ] as const).map(([label, field]) => (
+                  <label key={field} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="hint" style={{ margin: 0 }}>{label}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      style={{ width: 90 }}
+                      placeholder="Global"
+                      value={show[field] ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        const next =
+                          raw === ''
+                            ? undefined
+                            : Math.max(0, parseInt(raw, 10) || 0);
+                        setShow({ ...show, [field]: next });
+                      }}
+                      onBlur={() =>
+                        updateShow({
+                          minSizeMb720p: show.minSizeMb720p,
+                          minSizeMb1080p: show.minSizeMb1080p,
+                          minSizeMb2160p: show.minSizeMb2160p,
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="hint">Leave blank to use global TV mins from Settings. These override the TV size floors for this show only.</div>
+            </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label>Library path override</label>
               <div className="row">
                 <input

@@ -17,8 +17,10 @@ import {
   appendDownloadHistory,
   getDownloadHistory,
   getLastDailyBriefingDate,
+  getDownloads,
   saveDownloads,
   setEpisodeOverride,
+  setEpisodeResolution,
   setLastDailyBriefingDate,
   setEpisodeOverridesBulk,
   setSettings,
@@ -36,8 +38,12 @@ import {
 import {
   extractInfoHash,
   filterQualityResults,
+  filterUpgradeResults,
   MIN_AUTO_SEEDERS,
+  detectResolution,
   pickAutoDownload,
+  pickUpgradeDownload,
+  resolutionRank,
   type QualityRules,
 } from './services/search';
 import { searchEpisodeTorrents, searchMovieTorrents, destroySearchPool, getSearchPoolInfo } from './services/search-pool';
@@ -442,21 +448,51 @@ function showForDownload(show: Show, seasonNumber: number): Show {
   };
 }
 
-function qualityRules(kind: 'episode' | 'movie', preferredOverride?: Resolution | null): QualityRules {
+function qualityRules(
+  kind: 'episode' | 'movie',
+  preferredOverride?: Resolution | null,
+  show?: Show | null
+): QualityRules {
   const s = getSettings();
   const preferred =
     (preferredOverride ||
       (kind === 'movie' ? s.defaultMovieResolution || s.defaultResolution : s.defaultResolution)) as Resolution;
-  const minimum = (kind === 'movie' ? s.minimumMovieResolution || s.minimumResolution : s.minimumResolution) || '720p';
+  const minimum =
+    (kind === 'episode' && show?.minimumResolution
+      ? show.minimumResolution
+      : kind === 'movie'
+        ? s.minimumMovieResolution || s.minimumResolution
+        : s.minimumResolution) || '720p';
+  const tv720 = show?.minSizeMb720p != null ? show.minSizeMb720p : s.minSizeMbTv720p;
+  const tv1080 = show?.minSizeMb1080p != null ? show.minSizeMb1080p : s.minSizeMbTv1080p;
+  const tv2160 = show?.minSizeMb2160p != null ? show.minSizeMb2160p : s.minSizeMbTv2160p;
   return {
     preferred,
     minimum: minimum as Resolution,
     minSizeMb: {
-      '720p': (kind === 'movie' ? s.minSizeMbMovie720p : s.minSizeMbTv720p) || 0,
-      '1080p': (kind === 'movie' ? s.minSizeMbMovie1080p : s.minSizeMbTv1080p) || 0,
-      '2160p': (kind === 'movie' ? s.minSizeMbMovie2160p : s.minSizeMbTv2160p) || 0,
+      '720p': (kind === 'movie' ? s.minSizeMbMovie720p : tv720) || 0,
+      '1080p': (kind === 'movie' ? s.minSizeMbMovie1080p : tv1080) || 0,
+      '2160p': (kind === 'movie' ? s.minSizeMbMovie2160p : tv2160) || 0,
     },
+    minSeeders: typeof s.minSeeders === 'number' ? s.minSeeders : 8,
   };
+}
+
+function currentLibraryResolution(
+  localPath: string | undefined,
+  stored?: Resolution | null
+): Resolution | null {
+  if (stored) return stored;
+  if (!localPath) return null;
+  return detectResolution(path.basename(localPath));
+}
+
+function needsPreferredUpgrade(
+  current: Resolution | null | undefined,
+  preferred: Resolution
+): boolean {
+  if (!current) return false;
+  return resolutionRank(current) < resolutionRank(preferred);
 }
 
 function movieForDownload(movie: Movie): Movie {
@@ -518,9 +554,15 @@ function toHealthyPreferredCandidates(
     size?: number;
   }>,
   preferred: Resolution,
-  kind: 'episode' | 'movie'
+  kind: 'episode' | 'movie',
+  show?: Show | null,
+  upgradeOnly = false
 ): TorrentCandidate[] {
-  return toCandidates(filterQualityResults(results as any, preferred, kind, qualityRules(kind, preferred)));
+  const rules = qualityRules(kind, preferred, show);
+  const filtered = upgradeOnly
+    ? filterUpgradeResults(results as any, preferred, kind, rules)
+    : filterQualityResults(results as any, preferred, kind, rules);
+  return toCandidates(filtered);
 }
 
 function pickNextCandidate(
@@ -626,7 +668,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
         episodeTitle: item.episodeTitle,
         candidates,
         triedInfoHashes: triedList,
-        quality: qualityRules('episode', show.preferredResolution || settings.defaultResolution),
+        quality: qualityRules('episode', show.preferredResolution || settings.defaultResolution, show),
       });
       emitLibraryChanged();
     }
@@ -776,19 +818,29 @@ async function autoDownloadForShows(
     const delayMs = Math.max(0, (settings.autoDownloadDelayMinutes || 0) * 60 * 1000);
     for (const show of shows) {
       const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
-      const candidates: Episode[] = [];
+      const rules = qualityRules('episode', preferred, show);
+      type EpJob = { ep: Episode; upgrade: boolean };
+      const jobs: EpJob[] = [];
       for (const season of show.seasons || []) {
         for (const ep of season.episodes || []) {
-          // Never auto-download ignored episodes
           if (ep.status === 'ignored') continue;
-          if (ep.status !== 'missing' && ep.status !== 'aired') continue;
           if (downloadEngine.hasEpisodeActivity(show.tmdbId, ep.seasonNumber, ep.episodeNumber)) {
             continue;
           }
-          candidates.push(ep);
+          if (ep.status === 'missing' || ep.status === 'aired') {
+            jobs.push({ ep, upgrade: false });
+            continue;
+          }
+          // Keep hunting preferred when library copy is below preferred (e.g. grabbed at minimum).
+          if (ep.status === 'downloaded') {
+            const current = currentLibraryResolution(ep.localPath, ep.downloadedResolution);
+            if (needsPreferredUpgrade(current, preferred)) {
+              jobs.push({ ep, upgrade: true });
+            }
+          }
         }
       }
-      for (const ep of candidates) {
+      for (const { ep, upgrade } of jobs) {
         if (downloadEngine.hasEpisodeActivity(show.tmdbId, ep.seasonNumber, ep.episodeNumber)) {
           continue;
         }
@@ -801,10 +853,17 @@ async function autoDownloadForShows(
             preferred,
             { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
-          const rules = qualityRules('episode', preferred);
-          const best = pickAutoDownload(results, preferred, 'episode', rules);
+          const best = upgrade
+            ? pickUpgradeDownload(results, preferred, 'episode', rules)
+            : pickAutoDownload(results, preferred, 'episode', rules);
           if (!best?.magnet) continue;
-          const candidates = toHealthyPreferredCandidates(results, preferred, 'episode');
+          const candidates = toHealthyPreferredCandidates(
+            results,
+            preferred,
+            'episode',
+            show,
+            upgrade
+          );
           await downloadEngine.start({
             magnet: best.magnet,
             show: showForDownload(show, ep.seasonNumber),
@@ -821,7 +880,7 @@ async function autoDownloadForShows(
           started += 1;
           pushDownloads({ persist: 'now' });
           notify(
-            `Auto-download: ${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`,
+            `${upgrade ? 'Upgrade' : 'Auto-download'}: ${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`,
             'ok'
           );
           if (delayMs > 0) await sleep(delayMs);
@@ -860,7 +919,8 @@ async function addMovieById(tmdbId: number): Promise<Movie> {
 
 async function autoDownloadMovie(
   movie: Movie,
-  notifyCtx?: AutoDownloadNotify
+  notifyCtx?: AutoDownloadNotify,
+  opts?: { allowUpgrade?: boolean }
 ): Promise<boolean> {
   const settings = getSettings();
   if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
@@ -870,6 +930,17 @@ async function autoDownloadMovie(
   const preferred = (movie.preferredResolution ||
     settings.defaultMovieResolution ||
     settings.defaultResolution) as Resolution;
+  const live = withMovieLocalStatus(movie);
+  const upgrade =
+    !!opts?.allowUpgrade &&
+    live.status === 'downloaded' &&
+    needsPreferredUpgrade(
+      currentLibraryResolution(live.localPath, live.downloadedResolution),
+      preferred
+    );
+  // Missing/forced downloads always; upgrades only when allowUpgrade.
+  if (live.status === 'downloaded' && !upgrade) return false;
+  if (live.status !== 'missing' && live.status !== 'downloaded' && !notifyCtx) return false;
   const res = await searchMovieTorrents(
     settings,
     movie.title,
@@ -877,9 +948,11 @@ async function autoDownloadMovie(
     preferred
   );
   const rules = qualityRules('movie', preferred);
-  const best = pickAutoDownload(res.results, preferred, 'movie', rules);
+  const best = upgrade
+    ? pickUpgradeDownload(res.results, preferred, 'movie', rules)
+    : pickAutoDownload(res.results, preferred, 'movie', rules);
   if (!best?.magnet) return false;
-  const candidates = toHealthyPreferredCandidates(res.results, preferred, 'movie');
+  const candidates = toHealthyPreferredCandidates(res.results, preferred, 'movie', null, upgrade);
   await downloadEngine.startMovie({
     magnet: best.magnet,
     movie: movieForDownload(movie),
@@ -893,7 +966,31 @@ async function autoDownloadMovie(
   upsertMovie(withMovieLocalStatus(movie));
   pushDownloads({ persist: 'now' });
   mainWindow?.webContents.send('movies:changed');
+  if (upgrade) {
+    notify(`Upgrade: ${movie.title}`, 'ok');
+  }
   return true;
+}
+
+async function autoUpgradeMovies(): Promise<number> {
+  const settings = getSettings();
+  if (!settings.autoDownload) return 0;
+  if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+    return 0;
+  }
+  let started = 0;
+  for (const movie of getMovies()) {
+    try {
+      const ok = await autoDownloadMovie(movie, undefined, { allowUpgrade: true });
+      if (ok) {
+        started += 1;
+        await sleep(800);
+      }
+    } catch {
+      // continue
+    }
+  }
+  return started;
 }
 
 function newTelegramRequestId(): string {
@@ -1026,6 +1123,7 @@ async function refreshAllShows(): Promise<Show[]> {
   }
   emitLibraryChanged();
   await autoDownloadForShows(updated);
+  await autoUpgradeMovies();
   return updated;
 }
 
@@ -1044,6 +1142,62 @@ function formatSpeed(bps: number): string {
   return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
 }
 
+
+
+/** Resume incomplete torrents persisted from the previous session / after an update. */
+async function restorePersistedDownloads(): Promise<void> {
+  const pending = (getDownloads() || []).filter(
+    (d) =>
+      d?.magnet &&
+      d.savePath &&
+      (d.status === 'downloading' || d.status === 'queued' || d.status === 'paused')
+  );
+  if (!pending.length) return;
+  const settings = getSettings();
+  let restored = 0;
+  for (const item of pending) {
+    try {
+      if (item.kind === 'movie' && item.movieId != null) {
+        const movie = getMovies().find((m) => m.tmdbId === item.movieId);
+        if (!movie) continue;
+        await downloadEngine.restore(item, {
+          magnet: item.magnet,
+          movie: movieForDownload(movie),
+          movieLibraryRoot: movieRoots(settings)[0] || settings.movieLibraryRoot,
+          candidates: item.candidates,
+          triedInfoHashes: item.triedInfoHashes,
+          notifyChatId: item.notifyChatId,
+          telegramRequestId: item.telegramRequestId,
+          quality: qualityRules('movie', movie.preferredResolution),
+        });
+        restored += 1;
+      } else if (item.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
+        const show = getShows().find((s) => s.tmdbId === item.showId);
+        if (!show) continue;
+        await downloadEngine.restore(item, {
+          magnet: item.magnet,
+          show: showForDownload(show, item.seasonNumber),
+          libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
+          seasonNumber: item.seasonNumber,
+          episodeNumber: item.episodeNumber,
+          episodeTitle: item.episodeTitle || '',
+          candidates: item.candidates,
+          triedInfoHashes: item.triedInfoHashes,
+          notifyChatId: item.notifyChatId,
+          telegramRequestId: item.telegramRequestId,
+          quality: qualityRules('episode', show.preferredResolution, show),
+        });
+        restored += 1;
+      }
+    } catch (err) {
+      console.error('[downloads] restore failed', item.id, err);
+    }
+  }
+  if (restored) {
+    pushDownloads({ persist: 'now' });
+    notify(`Resumed ${restored} download${restored === 1 ? '' : 's'} from last session`, 'info');
+  }
+}
 
 async function importShowFromScan(mazeId: number, folderPath: string): Promise<Show> {
   const settings = getSettings();
@@ -1147,7 +1301,14 @@ async function runFolderScanImport(items: FolderScanImportItem[]): Promise<Folde
           result.skipped += 1;
           continue;
         }
-        const show = await importShowFromScan(item.matchId, item.folderPath);
+        let show = await importShowFromScan(item.matchId, item.folderPath);
+        // Bulk folder import only: mark past aired (no local file) as ignored so we don't snatch the back catalog.
+        const ignoreEntries = ignoreAiredEpisodes(show);
+        if (Object.keys(ignoreEntries).length) {
+          setEpisodeOverridesBulk(ignoreEntries);
+          show = withLocalStatuses(show);
+          upsertShow(show);
+        }
         result.added += 1;
         result.addedTitles.push(show.name);
       } else {
@@ -2136,7 +2297,21 @@ function registerIpc() {
     const shows = getShows();
     const idx = shows.findIndex((s) => s.tmdbId === tmdbId);
     if (idx < 0) throw new Error('Show not found');
-    shows[idx] = { ...shows[idx], ...partial, tmdbId };
+    const merged: Show = { ...shows[idx], ...partial, tmdbId };
+    // Explicit undefined from UI = clear per-show override (use global).
+    for (const key of [
+      'preferredResolution',
+      'minimumResolution',
+      'minSizeMb720p',
+      'minSizeMb1080p',
+      'minSizeMb2160p',
+      'libraryPath',
+    ] as const) {
+      if (key in partial && (partial as any)[key] == null) {
+        delete (merged as any)[key];
+      }
+    }
+    shows[idx] = merged;
     upsertShow(shows[idx]);
     return shows[idx];
   });
@@ -2252,7 +2427,7 @@ function registerIpc() {
         episodeTitle: payload.episodeTitle,
         candidates,
         triedInfoHashes: [],
-        quality: qualityRules('episode', preferred),
+        quality: qualityRules('episode', preferred, show),
       });
       pushDownloads({ persist: 'now' });
       return item;
@@ -2345,6 +2520,9 @@ function registerIpc() {
     );
     upsertMovie(movie);
     mainWindow?.webContents.send('movies:changed');
+    if (settings.autoDownload) {
+      void autoDownloadMovie(movie, undefined, { allowUpgrade: true }).catch(() => undefined);
+    }
     return movie;
   });
 
@@ -2663,6 +2841,7 @@ app.whenReady().then(async () => {
     }
   });
   await ensureTorrentEngine();
+  await restorePersistedDownloads();
   if (getTorrentEngineInfo().mode === 'in-process') {
     notify(
       'WebTorrent utilityProcess failed — downloads run on the UI process. Library search still uses a worker.',
@@ -2673,17 +2852,26 @@ app.whenReady().then(async () => {
   downloadEngine.on('reject-exe', (item: DownloadItem) => {
     void tryNextAfterExeReject(item);
   });
-  downloadEngine.on('done', (item: DownloadItem) => {
+  downloadEngine.on('done', (item: DownloadItem & { downloadedResolution?: Resolution }) => {
     if (item?.kind === 'movie' && item.movieId != null) {
       const movie = getMovies().find((m) => m.tmdbId === item.movieId);
       if (movie) {
         movie.status = 'downloaded';
         movie.localPath = item.savePath || movie.localPath;
+        if (item.downloadedResolution) movie.downloadedResolution = item.downloadedResolution;
+        else if (item.savePath) {
+          movie.downloadedResolution =
+            detectResolution(path.basename(item.savePath)) || movie.downloadedResolution;
+        }
         upsertMovie(withMovieLocalStatus(movie));
       }
       mainWindow?.webContents.send('movies:changed');
     } else if (item?.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
       setEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber, 'downloaded');
+      const res =
+        item.downloadedResolution ||
+        (item.savePath ? detectResolution(path.basename(item.savePath)) : null);
+      if (res) setEpisodeResolution(item.showId, item.seasonNumber, item.episodeNumber, res);
       const show = getShows().find((s) => s.tmdbId === item.showId);
       if (show) {
         upsertShow(withLocalStatuses(show));

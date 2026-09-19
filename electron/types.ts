@@ -126,6 +126,8 @@ export interface AppSettings {
   torrentSources: TorrentSources;
   jackettUrl: string;
   jackettApiKey: string;
+  /** Minimum seeders required for auto-download / best-torrent pick (default 8). */
+  minSeeders: number;
   /** Automatically search + download missing/aired episodes after each refresh. */
   autoDownload: boolean;
   /** Optional pause between auto-started downloads (minutes). 0 = no extra delay. */
@@ -287,6 +289,8 @@ export interface Episode {
   stillPath: string | null;
   status: EpisodeStatus;
   localPath?: string;
+  /** Resolution of the on-disk file when known (used for preferred upgrades). */
+  downloadedResolution?: Resolution;
 }
 
 export interface Season {
@@ -312,6 +316,12 @@ export interface Show {
   /** IMDb id from TVMaze externals, e.g. "tt0903747" — used by EZTV */
   imdbId?: string | null;
   preferredResolution?: Resolution;
+  /** Per-show minimum TV resolution; unset = use global Settings. */
+  minimumResolution?: Resolution;
+  /** Per-show TV min file sizes (MB); unset = use global Settings. */
+  minSizeMb720p?: number;
+  minSizeMb1080p?: number;
+  minSizeMb2160p?: number;
   libraryPath?: string;
   seasons: Season[];
   addedAt: string;
@@ -361,6 +371,8 @@ export interface Movie {
   preferredResolution?: Resolution;
   libraryPath?: string;
   localPath?: string;
+  /** Resolution of the on-disk file when known (used for preferred upgrades). */
+  downloadedResolution?: Resolution;
   addedAt: string;
   lastRefreshedAt?: string;
 }
@@ -396,6 +408,8 @@ export interface DownloadItem {
   downloadSpeed: number;
   uploadSpeed: number;
   numPeers: number;
+  /** Seeders among connected peers (WebTorrent wires). */
+  numSeeders: number;
   status: 'downloading' | 'paused' | 'done' | 'error' | 'queued';
   savePath: string;
   error?: string;
@@ -514,6 +528,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   searchProvider: 'apibay',
   jackettUrl: 'http://127.0.0.1:9117',
   jackettApiKey: '',
+  minSeeders: 8,
   autoDownload: true,
   autoDownloadDelayMinutes: 0,
   launchOnStartup: false,

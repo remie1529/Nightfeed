@@ -10,6 +10,7 @@ import {
   LiveTvChannel,
   Movie,
   DownloadHistoryItem,
+  Resolution,
   Show,
   TelegramRequest,
 } from '../types';
@@ -21,6 +22,8 @@ export interface AppData {
   downloads: DownloadItem[];
   /** Manual episode status overrides keyed by `${showId}:${season}:${episode}` */
   episodeOverrides: Record<string, EpisodeOverrideStatus>;
+  /** Known on-disk resolutions keyed by `${showId}:${season}:${episode}` */
+  episodeResolutions: Record<string, Resolution>;
   /** Telegram movie/TV requests (pending / approved / denied). */
   telegramRequests: TelegramRequest[];
   downloadHistory: DownloadHistoryItem[];
@@ -39,6 +42,7 @@ const defaults: AppData = {
   movies: [],
   downloads: [],
   episodeOverrides: {},
+  episodeResolutions: {},
   telegramRequests: [],
   downloadHistory: [],
   lastDailyBriefingDate: '',
@@ -189,6 +193,11 @@ export function getSettings(): AppSettings {
   if (typeof merged.liveTvFakeEpgMissing !== 'boolean') merged.liveTvFakeEpgMissing = true;
   if (!merged.liveTvFakeEpgMinutes || merged.liveTvFakeEpgMinutes < 15) merged.liveTvFakeEpgMinutes = 60;
   if (!merged.liveTvFakeEpgDays || merged.liveTvFakeEpgDays < 1) merged.liveTvFakeEpgDays = 2;
+  if (typeof merged.minSeeders !== 'number' || !Number.isFinite(merged.minSeeders) || merged.minSeeders < 0) {
+    merged.minSeeders = 8;
+  } else {
+    merged.minSeeders = Math.min(500, Math.floor(merged.minSeeders));
+  }
   return merged;
 }
 
@@ -322,6 +331,29 @@ export function clearShowOverrides(showId: number): void {
     if (!k.startsWith(prefix)) next[k] = v;
   }
   store.set('episodeOverrides', next);
+  const resAll = getEpisodeResolutions();
+  const resNext: Record<string, Resolution> = {};
+  for (const [k, v] of Object.entries(resAll)) {
+    if (!k.startsWith(prefix)) resNext[k] = v;
+  }
+  store.set('episodeResolutions', resNext);
+}
+
+export function getEpisodeResolutions(): Record<string, Resolution> {
+  return store.get('episodeResolutions') || {};
+}
+
+export function setEpisodeResolution(
+  showId: number,
+  season: number,
+  episode: number,
+  resolution: Resolution | null
+): void {
+  const all = { ...getEpisodeResolutions() };
+  const key = episodeKey(showId, season, episode);
+  if (resolution == null) delete all[key];
+  else all[key] = resolution;
+  store.set('episodeResolutions', all);
 }
 
 

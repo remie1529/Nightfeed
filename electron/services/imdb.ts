@@ -5,6 +5,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { detectResolution } from './search';
 import { Movie, MovieStatus } from '../types';
 import { findLocalMovie, getMovieFolderName } from './paths';
 
@@ -105,10 +106,18 @@ export function applyMovieLocalStatus(
 ): Movie {
   const localPath = findLocalMovie(movie, movieLibraryRoot, extraRoots);
   const downloading = downloadingIds.has(movie.tmdbId);
+  let downloadedResolution = movie.downloadedResolution;
+  if (localPath) {
+    downloadedResolution =
+      downloadedResolution || detectResolution(path.basename(localPath)) || undefined;
+  } else {
+    downloadedResolution = undefined;
+  }
   return {
     ...movie,
     localPath,
     status: resolveMovieStatus(localPath, downloading, movie.status),
+    downloadedResolution,
   };
 }
 
@@ -397,6 +406,7 @@ export async function fetchMovieDetail(
     preferredResolution: existing?.preferredResolution,
     libraryPath: existing?.libraryPath,
     localPath: existing?.localPath,
+    downloadedResolution: existing?.downloadedResolution,
     addedAt: existing?.addedAt || new Date().toISOString(),
     lastRefreshedAt: new Date().toISOString(),
     imdbId,

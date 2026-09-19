@@ -2,6 +2,46 @@ import { useEffect, useState } from 'react';
 import { formatPercent, formatSpeed, pad2 } from '../lib/format';
 import type { DownloadItem } from '../lib/types';
 
+type HealthLabel = 'Excellent' | 'Good' | 'Fair' | 'Poor' | 'Dead';
+
+function torrentHealth(item: DownloadItem): HealthLabel {
+  const seeders = item.numSeeders ?? 0;
+  const peers = item.numPeers ?? 0;
+  const progress = item.progress || 0;
+  const speed = item.downloadSpeed || 0;
+  if (item.status === 'done') return 'Excellent';
+  if (item.status === 'error') return 'Dead';
+  if (item.status === 'paused') {
+    if (seeders >= 20) return 'Good';
+    if (seeders >= 8) return 'Fair';
+    if (seeders >= 1) return 'Poor';
+    return 'Dead';
+  }
+  // Stalled download with no useful peers
+  if (progress < 1 && speed <= 0 && seeders <= 0 && peers <= 0) return 'Dead';
+  if (progress < 1 && speed <= 0 && seeders < 3) return 'Poor';
+  if (seeders >= 50) return 'Excellent';
+  if (seeders >= 20) return 'Good';
+  if (seeders >= 8) return 'Fair';
+  if (seeders >= 1) return 'Poor';
+  return 'Dead';
+}
+
+function healthClass(h: HealthLabel): string {
+  switch (h) {
+    case 'Excellent':
+      return 'health-excellent';
+    case 'Good':
+      return 'health-good';
+    case 'Fair':
+      return 'health-fair';
+    case 'Poor':
+      return 'health-poor';
+    default:
+      return 'health-dead';
+  }
+}
+
 export default function Downloads() {
   const [items, setItems] = useState<DownloadItem[]>([]);
 
@@ -18,7 +58,7 @@ export default function Downloads() {
       <div className="page-header">
         <div>
           <h1>Downloads</h1>
-          <p>Up to 3 torrents download at once; the rest stay queued. Pause / resume / cancel anytime.</p>
+          <p>Up to 3 torrents download at once; the rest stay queued. Pause / resume / cancel anytime. Incomplete downloads resume after restart or update.</p>
         </div>
       </div>
 
@@ -38,13 +78,18 @@ export default function Downloads() {
                 <th>Item</th>
                 <th style={{ width: 140 }}>Progress</th>
                 <th style={{ width: 100 }}>Speed</th>
+                <th style={{ width: 90 }}>Seeders</th>
                 <th style={{ width: 70 }}>Peers</th>
+                <th style={{ width: 100 }}>Health</th>
                 <th style={{ width: 90 }}>Status</th>
                 <th style={{ width: 180 }}></th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {items.map((item) => {
+                const health = torrentHealth(item);
+                const leechers = Math.max(0, (item.numPeers || 0) - (item.numSeeders || 0));
+                return (
                 <tr key={item.id}>
                   <td>
                     <div style={{ fontWeight: 600 }}>
@@ -76,7 +121,16 @@ export default function Downloads() {
                     </div>
                   </td>
                   <td className="mono">{formatSpeed(item.downloadSpeed)}</td>
+                  <td className="mono">
+                    {item.numSeeders ?? 0}
+                    {leechers > 0 ? (
+                      <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}> / {leechers} L</span>
+                    ) : null}
+                  </td>
                   <td className="mono">{item.numPeers}</td>
+                  <td>
+                    <span className={`badge health ${healthClass(health)}`}>{health}</span>
+                  </td>
                   <td>
                     <span className={`badge ${item.status === 'done' ? 'downloaded' : item.status === 'error' ? 'missing' : 'downloading'}`}>
                       {item.status}
@@ -97,7 +151,8 @@ export default function Downloads() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

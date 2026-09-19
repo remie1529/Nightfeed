@@ -24,13 +24,13 @@ const GENERAL_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; h
 const ANIME_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: string }> = [
   { id: 'nyaa', label: 'Nyaa', hint: 'Anime/raw RSS' },
   { id: 'tokyotosho', label: 'Tokyo Toshokan', hint: 'Anime RSS + magnets' },
-  { id: 'animetosho', label: 'AnimeTosho', hint: 'Anime JSON feed (off by default)' },
-  { id: 'bangumi', label: 'Bangumi.moe', hint: 'Anime JSON (off by default)' },
-  { id: 'mikan', label: 'Mikan', hint: 'Anime RSS (off by default)' },
-  { id: 'dmhy', label: 'DMHY', hint: 'Anime RSS (off by default)' },
-  { id: 'acgnx', label: 'ACGNX', hint: 'Anime RSS (off by default)' },
-  { id: 'subsplease', label: 'SubsPlease', hint: 'Anime JSON (off by default)' },
-  { id: 'sukebei', label: 'Sukebei', hint: 'Nyaa NSFW (off by default)' },
+  { id: 'animetosho', label: 'AnimeTosho', hint: 'Anime JSON feed' },
+  { id: 'bangumi', label: 'Bangumi.moe', hint: 'Anime JSON' },
+  { id: 'mikan', label: 'Mikan', hint: 'Anime RSS' },
+  { id: 'dmhy', label: 'DMHY', hint: 'Anime RSS' },
+  { id: 'acgnx', label: 'ACGNX', hint: 'Anime RSS' },
+  { id: 'subsplease', label: 'SubsPlease', hint: 'Anime JSON' },
+  { id: 'sukebei', label: 'Sukebei', hint: 'Nyaa NSFW' },
 ];
 
 const SOURCE_OPTIONS = [...GENERAL_SOURCE_OPTIONS, ...ANIME_SOURCE_OPTIONS];
@@ -629,6 +629,27 @@ export default function SettingsView() {
           </select>
         </div>
 
+
+        <div className="field">
+          <label>Minimum seeders</label>
+          <input
+            type="number"
+            min={0}
+            max={500}
+            value={settings.minSeeders ?? 8}
+            onChange={(e) =>
+              setLocal({
+                ...settings,
+                minSeeders: Math.max(0, Math.min(500, parseInt(e.target.value || '0', 10) || 0)),
+              })
+            }
+          />
+          <div className="hint">
+            Auto-download and best-torrent pick skip releases below this seeder count (default 8).
+            Ranking prefers your resolution first, then higher seeders.
+          </div>
+        </div>
+
         <div className="field">
           <label>Minimum file size for TV shows (MB)</label>
           <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
@@ -718,8 +739,13 @@ export default function SettingsView() {
           </label>
           <div className="hint">
             After each refresh (timer or manual), search the preferred resolution and start in-app downloads.
-            Skips ignored episodes, ones already queued, and torrents with fewer than 8 seeders or the wrong
+            Skips ignored episodes, ones already queued, and torrents below your minimum seeders setting or the wrong
             resolution. Default: on.
+            <br />
+            <strong>Upgrade hunting:</strong> if an episode or movie was kept at the <em>minimum</em> resolution
+            while preferred is higher, Nightfeed keeps watching and will queue the preferred release when a healthy
+            torrent appears. The existing file is only replaced after the upgrade finishes and passes quality checks
+            (the old copy is kept until then).
           </div>
         </div>
 
@@ -1068,7 +1094,7 @@ export default function SettingsView() {
           <div className="hint" style={{ marginBottom: 10 }}>
             Enable any combination. Searches query <strong>all enabled</strong> sources in parallel, merge/dedupe by
             infohash, and rank by <strong>preferred resolution first</strong>, then seeders. Auto-download will not
-            start a torrent with under 8 seeders or a different resolution. Partial failures keep other sources’ hits.
+            start a torrent below your minimum seeders setting or below your minimum resolution. Ranking: preferred resolution first, then more seeders. Partial failures keep other sources’ hits.
           </div>
           <div className="source-grid">
             {GENERAL_SOURCE_OPTIONS.map((opt) => (
@@ -1086,7 +1112,7 @@ export default function SettingsView() {
             ))}
           </div>
           <div className="hint" style={{ marginTop: 10 }}>
-            Defaults: free public APIs on (YTS movies-only); Jackett and AnimeTosho off.
+            Defaults: free public APIs on (YTS movies-only); Jackett optional.
           </div>
         </div>
 
@@ -1118,7 +1144,6 @@ export default function SettingsView() {
           <label>Anime torrent sources</label>
           <div className="hint" style={{ marginBottom: 10 }}>
             Optional anime-focused indexers. Searched in parallel with general torrent sources when enabled.
-            <strong> AnimeTosho is off by default</strong>; turn it on if you want its feed.
           </div>
           <div className="source-grid">
             {ANIME_SOURCE_OPTIONS.map((opt) => (
