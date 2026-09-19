@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.3
+
+- VPN: fix false **handshake timed out** when OpenVPN was already up (Interactive Service)
+- Treat `Initialization Sequence Completed` **or** `CONNECTED,SUCCESS` (log/mgmt) as connected; adopting a bind IP while connecting also promotes to connected
+- Management: after auth send `state` (query) plus `state on` so late attach still sees CONNECTED; reconnect mgmt without treating `MANAGEMENT: Client disconnected` as VPN failure
+- Soft wait (~25s) and hard timeout (~75s) re-scan `ovpn.log` / log buffer before Waiting… / failHandshake — never kill a tunnel that already reported success
+
 ## 2.1.2
 
 - VPN: no code regression from 2.1.1 bind/kick — torrent `kickQueue` during OpenVPN handshake is now skipped / deduped so status spam cannot interfere
