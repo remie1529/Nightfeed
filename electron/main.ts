@@ -548,6 +548,11 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/** Unset / undefined means monitored (back-compat for existing library). */
+function isMonitored(item: { monitored?: boolean } | null | undefined): boolean {
+  return item?.monitored !== false;
+}
+
 function toCandidates(results: Array<{ magnet: string; infoHash?: string; title?: string }>): TorrentCandidate[] {
   return (results || [])
     .filter((r) => r?.magnet)
@@ -754,6 +759,7 @@ function toShowListItem(show: Show, downloading: Set<string>): ShowListItem {
     missingCount,
     episodeCount,
     downloadedCount,
+    monitored: show.monitored,
   };
 }
 
@@ -831,6 +837,8 @@ async function autoDownloadForShows(
   try {
     const delayMs = Math.max(0, (settings.autoDownloadDelayMinutes || 0) * 60 * 1000);
     for (const show of shows) {
+      // Per-show pause: skip hunting unless this is an explicit Telegram/web approval force.
+      if (!isMonitored(show) && !force) continue;
       const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
       const rules = qualityRules('episode', preferred, show);
       type EpJob = { ep: Episode; upgrade: boolean };
@@ -937,6 +945,8 @@ async function autoDownloadMovie(
   opts?: { allowUpgrade?: boolean }
 ): Promise<boolean> {
   const settings = getSettings();
+  const force = !!(notifyCtx?.notifyChatId || notifyCtx?.telegramRequestId);
+  if (!isMonitored(movie) && !force) return false;
   if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
     return false;
   }
@@ -2307,6 +2317,86 @@ function registerIpc() {
 
   ipcMain.handle('library:remove', (_e, tmdbId: number) => removeShow(tmdbId));
 
+  ipcMain.handle('library:bulkUpdate', (_e, tmdbIds: number[], partial: Partial<Show>) => {
+    const ids = Array.isArray(tmdbIds) ? tmdbIds.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const shows = getShows();
+    let n = 0;
+    for (const id of ids) {
+      const idx = shows.findIndex((s) => s.tmdbId === id);
+      if (idx < 0) continue;
+      const merged: Show = { ...shows[idx], ...partial, tmdbId: id };
+      for (const key of [
+        'preferredResolution',
+        'minimumResolution',
+        'minSizeMb720p',
+        'minSizeMb1080p',
+        'minSizeMb2160p',
+        'libraryPath',
+      ] as const) {
+        if (key in partial && (partial as any)[key] == null) {
+          delete (merged as any)[key];
+        }
+      }
+      shows[idx] = merged;
+      upsertShow(shows[idx]);
+      n += 1;
+    }
+    if (n) emitLibraryChanged();
+    return { updated: n };
+  });
+
+  ipcMain.handle('library:bulkRemove', (_e, tmdbIds: number[]) => {
+    const ids = new Set(
+      (Array.isArray(tmdbIds) ? tmdbIds : []).map(Number).filter((n) => Number.isFinite(n))
+    );
+    let n = 0;
+    for (const id of ids) {
+      const before = getShows().length;
+      removeShow(id);
+      if (getShows().length < before) n += 1;
+    }
+    if (n) emitLibraryChanged();
+    return { removed: n };
+  });
+
+  /** Mark missing/aired episodes as ignored (or missing) across many shows — whole-show status bulk. */
+  ipcMain.handle(
+    'library:bulkSetMissingStatus',
+    (_e, tmdbIds: number[], status: EpisodeOverrideStatus) => {
+      const allowed: EpisodeOverrideStatus[] = ['missing', 'ignored'];
+      if (!allowed.includes(status)) throw new Error(`Invalid bulk status: ${status}`);
+      const ids = new Set(
+        (Array.isArray(tmdbIds) ? tmdbIds : []).map(Number).filter((n) => Number.isFinite(n))
+      );
+      const entries: Record<string, EpisodeOverrideStatus> = {};
+      for (const show of getShows()) {
+        if (!ids.has(show.tmdbId)) continue;
+        for (const season of show.seasons || []) {
+          for (const ep of season.episodes || []) {
+            if (status === 'ignored') {
+              if (ep.status === 'missing' || ep.status === 'aired') {
+                entries[episodeKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber)] = 'ignored';
+              }
+            } else if (status === 'missing') {
+              if (ep.status === 'ignored') {
+                entries[episodeKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber)] = 'missing';
+              }
+            }
+          }
+        }
+      }
+      if (Object.keys(entries).length) {
+        setEpisodeOverridesBulk(entries);
+        for (const show of getShows()) {
+          if (!ids.has(show.tmdbId)) continue;
+          upsertShow(withLocalStatuses(show));
+        }
+        emitLibraryChanged();
+      }
+      return { updated: Object.keys(entries).length };
+    }
+  );
+
   ipcMain.handle('library:update', (_e, tmdbId: number, partial: Partial<Show>) => {
     const shows = getShows();
     const idx = shows.findIndex((s) => s.tmdbId === tmdbId);
@@ -2509,6 +2599,35 @@ function registerIpc() {
     removeMovie(tmdbId);
     mainWindow?.webContents.send('movies:changed');
     return getMovies().map((m) => withMovieLocalStatus(m));
+  });
+
+  ipcMain.handle('movies:bulkUpdate', (_e, tmdbIds: number[], partial: Partial<Movie>) => {
+    const ids = Array.isArray(tmdbIds) ? tmdbIds.map(Number).filter((n) => Number.isFinite(n)) : [];
+    const movies = getMovies();
+    let n = 0;
+    for (const id of ids) {
+      const idx = movies.findIndex((m) => m.tmdbId === id);
+      if (idx < 0) continue;
+      movies[idx] = { ...movies[idx], ...partial, tmdbId: id };
+      upsertMovie(movies[idx]);
+      n += 1;
+    }
+    if (n) mainWindow?.webContents.send('movies:changed');
+    return { updated: n };
+  });
+
+  ipcMain.handle('movies:bulkRemove', (_e, tmdbIds: number[]) => {
+    const ids = new Set(
+      (Array.isArray(tmdbIds) ? tmdbIds : []).map(Number).filter((n) => Number.isFinite(n))
+    );
+    let n = 0;
+    for (const id of ids) {
+      const before = getMovies().length;
+      removeMovie(id);
+      if (getMovies().length < before) n += 1;
+    }
+    if (n) mainWindow?.webContents.send('movies:changed');
+    return { removed: n };
   });
 
   ipcMain.handle('movies:update', (_e, tmdbId: number, partial: Partial<Movie>) => {

@@ -16,9 +16,9 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 | Area | What you get |
 |------|----------------|
-| **Library** | Track shows via TVMaze (no API key), missing-episodes filter, season bulk status, folder scan import, full-width grid |
+| **Library** | Track shows via TVMaze (no API key), per-show monitor pause, multi-select bulk actions, missing-episodes filter, season bulk status, folder scan import |
 | **Calendar** | Week view of episode air dates; click through to the show |
-| **Movies** | Separate movie library, IMDb metadata scrape (no API key) |
+| **Movies** | Separate movie library, per-movie monitor pause, multi-select bulk actions, IMDb metadata scrape (no API key) |
 | **Downloads** | Embedded WebTorrent (`utilityProcess`), queue of 3 active, pause/resume/cancel |
 | **Requests** | In-app approve/deny + Telegram + web portal |
 | **Settings** | Multi-root libraries, UNC, FTP, OpenVPN split tunnel/kill switch, backup, collapsible full-width sections |
@@ -32,6 +32,8 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 
 - Search & track shows through [TVMaze](https://www.tvmaze.com/) — **no API key**
 - Filter the grid to **shows with missing episodes**
+- **Monitor for new episodes** per show (pause hunting without turning off global auto-download)
+- **Multi-select** posters for bulk pause/resume, ignore/want missing, or remove
 - Fast library list with **season bulk status**
 - **Check new episodes** on demand or on a schedule
 - **Scan folders & import…** — preview matches, confirm; never auto-imports on startup

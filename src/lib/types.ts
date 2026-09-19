@@ -271,6 +271,8 @@ export interface Show {
   minSizeMb1080p?: number;
   minSizeMb2160p?: number;
   libraryPath?: string;
+  /** When false, skip auto-download / upgrade hunting for this show. Default true. */
+  monitored?: boolean;
   seasons: Season[];
   addedAt: string;
   lastRefreshedAt?: string;
@@ -298,6 +300,8 @@ export interface ShowListItem {
   missingCount: number;
   episodeCount: number;
   downloadedCount: number;
+  /** When false, monitoring is paused. Default true when unset. */
+  monitored?: boolean;
 }
 
 export interface Movie {
@@ -319,6 +323,8 @@ export interface Movie {
   localPath?: string;
   /** Resolution of the on-disk file when known (used for preferred upgrades). */
   downloadedResolution?: Resolution;
+  /** When false, skip auto-download / upgrade hunting for this movie. Default true. */
+  monitored?: boolean;
   addedAt: string;
   lastRefreshedAt?: string;
 }
