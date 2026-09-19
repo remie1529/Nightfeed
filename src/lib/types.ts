@@ -224,6 +224,10 @@ export interface VpnStatus {
   launchMethod: VpnLaunchMethod;
   /** True when torrents are blocked because VPN is required and not connected. */
   killSwitch: boolean;
+  /** Last useful OpenVPN log lines (auth/TLS/TAP/handshake), for stuck-connecting UX. */
+  recentLog?: string | null;
+  /** Absolute path to Nightfeed's OpenVPN log file. */
+  logPath?: string;
 }
 
 export interface Episode {
