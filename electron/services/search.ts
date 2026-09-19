@@ -11,6 +11,7 @@ export function buildQuery(showName: string, season: number, episode: number): s
 /** Auto-download / retry skip torrents at or below this — 0–5 seeders almost never complete. */
 export const MIN_AUTO_SEEDERS = 8;
 
+
 export function resolutionRank(res: Resolution | null | undefined): number {
   if (res === '2160p') return 3;
   if (res === '1080p') return 2;
@@ -26,7 +27,16 @@ export interface QualityRules {
   preferred: Resolution;
   minimum: Resolution;
   minSizeMb: { '720p': number; '1080p': number; '2160p': number };
+  /** Override for MIN_AUTO_SEEDERS when set. */
+  minSeeders?: number;
 }
+
+export function effectiveMinSeeders(rules?: QualityRules | null, fallback = MIN_AUTO_SEEDERS): number {
+  const n = rules?.minSeeders;
+  if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return Math.min(500, Math.floor(n));
+  return fallback;
+}
+
 
 export function detectResolution(title: string): Resolution | null {
   const t = (title || '').toLowerCase().replace(/[._]/g, ' ');
@@ -72,8 +82,10 @@ function sizeOkForAuto(
 export function rankResults(
   results: SearchResult[],
   preferred: Resolution,
-  showName?: string
+  showName?: string,
+  minSeeders: number = MIN_AUTO_SEEDERS
 ): SearchResult[] {
+  const minS = typeof minSeeders === 'number' && minSeeders >= 0 ? minSeeders : MIN_AUTO_SEEDERS;
   const score = (r: SearchResult): number => {
     const seeds = r.seeders || 0;
     let s = 0;
@@ -81,7 +93,7 @@ export function rankResults(
     if (r.resolution === preferred) s += 5_000_000;
     else if (r.resolution) s += 150_000;
     if (seeds <= 0) s -= 4_000_000;
-    else if (seeds < MIN_AUTO_SEEDERS) s -= 2_000_000;
+    else if (seeds < minS) s -= 2_000_000;
     else s += Math.min(seeds, 8000) * 25;
     if (isJunkRelease(r.title || '')) s -= 8_000_000;
     s += Math.min(r.leechers || 0, 80);
@@ -97,10 +109,11 @@ export function pickAutoDownload(
   kind: 'episode' | 'movie' = 'episode',
   rules?: QualityRules
 ): SearchResult | null {
+  const minS = effectiveMinSeeders(rules);
   const minimum = rules?.minimum || preferred;
   const pool = (results || []).filter((r) => {
     if (!r?.magnet) return false;
-    if ((r.seeders || 0) < MIN_AUTO_SEEDERS) return false;
+    if ((r.seeders || 0) < minS) return false;
     if (isJunkRelease(r.title || '')) return false;
     if (r.resolution && !meetsMinResolution(r.resolution, minimum)) return false;
     if (!r.resolution && resolutionRank(preferred) > resolutionRank(minimum)) {
@@ -124,16 +137,59 @@ export function pickAutoDownload(
   return pool[0];
 }
 
+/** Prefer-or-better only — used when upgrading a below-preferred library copy. */
+export function pickUpgradeDownload(
+  results: SearchResult[],
+  preferred: Resolution,
+  kind: 'episode' | 'movie' = 'episode',
+  rules?: QualityRules
+): SearchResult | null {
+  const minS = effectiveMinSeeders(rules);
+  const pool = (results || []).filter((r) => {
+    if (!r?.magnet) return false;
+    if ((r.seeders || 0) < minS) return false;
+    if (isJunkRelease(r.title || '')) return false;
+    if (!r.resolution || resolutionRank(r.resolution) < resolutionRank(preferred)) return false;
+    if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) return false;
+    return true;
+  });
+  if (!pool.length) return null;
+  pool.sort((a, b) => {
+    const ar = resolutionRank(a.resolution);
+    const br = resolutionRank(b.resolution);
+    if (br !== ar) return br - ar;
+    return (b.seeders || 0) - (a.seeders || 0);
+  });
+  return pool[0];
+}
+
+export function filterUpgradeResults(
+  results: SearchResult[],
+  preferred: Resolution,
+  kind: 'episode' | 'movie',
+  rules?: QualityRules
+): SearchResult[] {
+  const minS = effectiveMinSeeders(rules);
+  return (results || []).filter((r) => {
+    if (!r?.magnet) return false;
+    if ((r.seeders || 0) < minS) return false;
+    if (!r.resolution || resolutionRank(r.resolution) < resolutionRank(preferred)) return false;
+    if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) return false;
+    return true;
+  });
+}
+
 export function filterQualityResults(
   results: SearchResult[],
   preferred: Resolution,
   kind: 'episode' | 'movie',
   rules?: QualityRules
 ): SearchResult[] {
+  const minS = effectiveMinSeeders(rules);
   const minimum = rules?.minimum || preferred;
   return (results || []).filter((r) => {
     if (!r?.magnet) return false;
-    if ((r.seeders || 0) < MIN_AUTO_SEEDERS) return false;
+    if ((r.seeders || 0) < minS) return false;
     if (r.resolution && !meetsMinResolution(r.resolution, minimum)) return false;
     if (!sizeOkForAuto(r.size || 0, kind, r.resolution || minimum, rules)) return false;
     return true;
@@ -1271,7 +1327,7 @@ async function searchSubsPlease(query: string): Promise<SearchResult[]> {
   return results;
 }
 
-/** Sukebei (Nyaa NSFW) RSS — same schema as Nyaa; off by default. */
+/** Sukebei (Nyaa NSFW) RSS — same schema as Nyaa. */
 async function searchSukebei(query: string): Promise<SearchResult[]> {
   const url = `https://sukebei.nyaa.si/?page=rss&q=${encodeURIComponent(query)}&c=0_0&f=0`;
   const res = await fetchWithTimeout(
@@ -1510,7 +1566,7 @@ export async function searchEpisodeTorrents(
       !isMultiEpisodePack(r.title || '')
   );
   // Never fall back to unfiltered merge — wrong episodes must not appear in Find / auto-download.
-  const ranked = rankResults(episodeOnly, preferred, showName);
+  const ranked = rankResults(episodeOnly, preferred, showName, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const parts: string[] = [];
   if (errors.length > 0) parts.push(errors.join(' | '));
   if (!episodeOnly.length) {
@@ -1614,7 +1670,7 @@ export async function searchMovieTorrents(
 
   const merged = mergeByInfoHash(groups);
   const cleaned = merged.filter((r) => !/\b(trailer|teaser)\b/i.test(r.title || ''));
-  const ranked = rankResults(cleaned.length ? cleaned : merged, preferred);
+  const ranked = rankResults(cleaned.length ? cleaned : merged, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
   return { results: ranked, query, error };

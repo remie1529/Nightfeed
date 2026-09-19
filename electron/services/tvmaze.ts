@@ -1,6 +1,8 @@
-import { Episode, EpisodeOverrideStatus, EpisodeStatus, Season, Show } from '../types';
+import { Episode, EpisodeOverrideStatus, EpisodeStatus, Resolution, Season, Show } from '../types';
 import { indexLocalEpisodes } from './paths';
-import { episodeKey, getEpisodeOverrides } from './store';
+import { episodeKey, getEpisodeOverrides, getEpisodeResolutions } from './store';
+import { detectResolution } from './search';
+import path from 'path';
 
 export { searchShows, type MazeSearchItem } from './tvmaze-search';
 
@@ -78,6 +80,16 @@ interface MazeSeason {
   image: { medium: string | null; original: string | null } | null;
 }
 
+
+function resolveDownloadedResolution(
+  localPath: string | undefined,
+  stored: Resolution | undefined
+): Resolution | undefined {
+  if (stored) return stored;
+  if (!localPath) return undefined;
+  return detectResolution(path.basename(localPath)) || undefined;
+}
+
 function emptyShowShell(
   mazeId: number,
   name: string,
@@ -97,6 +109,10 @@ function emptyShowShell(
     seasons: [],
     addedAt: existing?.addedAt || new Date().toISOString(),
     preferredResolution: existing?.preferredResolution,
+    minimumResolution: existing?.minimumResolution,
+    minSizeMb720p: existing?.minSizeMb720p,
+    minSizeMb1080p: existing?.minSizeMb1080p,
+    minSizeMb2160p: existing?.minSizeMb2160p,
   };
 }
 
@@ -138,6 +154,7 @@ export async function fetchShowDetail(
   ]);
 
   const localIndex = indexLocalEpisodes(shell, libraryRoot, extraRoots);
+  const resolutions = getEpisodeResolutions();
 
   const seasons: Season[] = [...seasonNumbers]
     .sort((a, b) => a - b)
@@ -165,6 +182,7 @@ export async function fetchShowDetail(
           stillPath: ep.image?.medium || ep.image?.original || null,
           status,
           localPath,
+          downloadedResolution: resolveDownloadedResolution(localPath, resolutions[key]),
         };
       });
       return {
@@ -191,6 +209,7 @@ export function applyLocalStatuses(
   extraRoots?: string[]
 ): Show {
   const overrides = getEpisodeOverrides();
+  const resolutions = getEpisodeResolutions();
   // One-pass FS index for the whole show (not per-episode readdir).
   const localIndex = indexLocalEpisodes(show, libraryRoot, extraRoots);
   const seasons = show.seasons.map((season) => ({
@@ -204,7 +223,12 @@ export function applyLocalStatuses(
         downloadingKeys.has(key),
         overrides[key]
       );
-      return { ...ep, localPath, status };
+      return {
+        ...ep,
+        localPath,
+        status,
+        downloadedResolution: resolveDownloadedResolution(localPath, resolutions[key]),
+      };
     }),
   }));
   return { ...show, seasons };
@@ -218,8 +242,8 @@ export function ignoreAiredEpisodes(show: Show): Record<string, EpisodeOverrideS
     for (const ep of season.episodes || []) {
       if (ep.localPath) continue;
       if (ep.status === 'downloaded' || ep.status === 'downloading') continue;
-      const aired = ep.airDate && ep.airDate <= today;
-      if (aired || ep.status === 'missing' || ep.status === 'aired') {
+      // Only past air dates (before today, local). Matched local files stay downloaded; future/unaired unchanged.
+      if (ep.airDate && ep.airDate < today) {
         entries[episodeKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber)] = 'ignored';
       }
     }

@@ -99,6 +99,8 @@ export interface AppSettings {
   torrentSources: TorrentSources;
   jackettUrl: string;
   jackettApiKey: string;
+  /** Minimum seeders for auto-download and best-torrent pick (default 8). */
+  minSeeders: number;
   autoDownload: boolean;
   autoDownloadDelayMinutes: number;
   launchOnStartup: boolean;
@@ -234,6 +236,8 @@ export interface Episode {
   stillPath: string | null;
   status: EpisodeStatus;
   localPath?: string;
+  /** Resolution of the on-disk file when known (used for preferred upgrades). */
+  downloadedResolution?: Resolution;
 }
 
 export interface Season {
@@ -256,6 +260,12 @@ export interface Show {
   status: string;
   imdbId?: string | null;
   preferredResolution?: Resolution;
+  /** Per-show minimum TV resolution; unset = use global Settings. */
+  minimumResolution?: Resolution;
+  /** Per-show TV min file sizes (MB); unset = use global Settings. */
+  minSizeMb720p?: number;
+  minSizeMb1080p?: number;
+  minSizeMb2160p?: number;
   libraryPath?: string;
   seasons: Season[];
   addedAt: string;
@@ -303,6 +313,8 @@ export interface Movie {
   preferredResolution?: Resolution;
   libraryPath?: string;
   localPath?: string;
+  /** Resolution of the on-disk file when known (used for preferred upgrades). */
+  downloadedResolution?: Resolution;
   addedAt: string;
   lastRefreshedAt?: string;
 }
@@ -331,6 +343,8 @@ export interface DownloadItem {
   downloadSpeed: number;
   uploadSpeed: number;
   numPeers: number;
+  /** Seeders among connected peers (WebTorrent wires). */
+  numSeeders: number;
   status: 'downloading' | 'paused' | 'done' | 'error' | 'queued';
   savePath: string;
   error?: string;

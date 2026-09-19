@@ -50,6 +50,13 @@ type MovieStartOpts = {
 
 type PendingJob = { kind: 'episode'; opts: EpisodeStartOpts } | { kind: 'movie'; opts: MovieStartOpts };
 
+
+function countSeeders(torrent: any): number {
+  const wires = torrent?.wires;
+  if (!Array.isArray(wires)) return 0;
+  return wires.filter((w: any) => w && w.isSeeder).length;
+}
+
 export function isIgnorableTorrentSocketError(err: unknown): boolean {
   const s = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
   return /no buffer space|ENOBUFS|UTP\.(bind|connect)|uv_udp_bind/i.test(s);
@@ -100,21 +107,65 @@ function kbpsToBytesPerSec(kbps: number): number {
 }
 
 async function moveFileAsync(src: string, dest: string): Promise<void> {
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  let destExists = false;
   try {
     await fsp.access(dest);
-    await fsp.unlink(dest);
+    destExists = true;
   } catch {
-    // dest missing — fine
+    // dest missing
   }
-  try {
-    await fsp.rename(src, dest);
-  } catch {
-    await fsp.copyFile(src, dest);
+  if (!destExists) {
     try {
-      await fsp.unlink(src);
+      await fsp.rename(src, dest);
+    } catch {
+      await fsp.copyFile(src, dest);
+      try {
+        await fsp.unlink(src);
+      } catch {
+        // ignore
+      }
+    }
+    return;
+  }
+  // Safe replace: never delete the only library copy until the new file is in place.
+  const ext = path.extname(dest) || '.mkv';
+  const tmp = path.join(path.dirname(dest), `.nf-new-${process.pid}-${Date.now()}${ext}`);
+  const bak = path.join(path.dirname(dest), `.nf-bak-${process.pid}-${Date.now()}${ext}`);
+  try {
+    try {
+      await fsp.rename(src, tmp);
+    } catch {
+      await fsp.copyFile(src, tmp);
+      try {
+        await fsp.unlink(src);
+      } catch {
+        // ignore
+      }
+    }
+    await fsp.rename(dest, bak);
+    try {
+      await fsp.rename(tmp, dest);
+    } catch (err) {
+      try {
+        await fsp.rename(bak, dest);
+      } catch {
+        // ignore restore failure
+      }
+      throw err;
+    }
+    try {
+      await fsp.unlink(bak);
     } catch {
       // ignore
     }
+  } catch (err) {
+    try {
+      await fsp.unlink(tmp);
+    } catch {
+      // ignore
+    }
+    throw err;
   }
 }
 
@@ -238,6 +289,7 @@ export class DownloadEngine extends EventEmitter {
           item.downloadSpeed = 0;
           item.uploadSpeed = 0;
           item.numPeers = 0;
+      item.numSeeders = 0;
           if (this.vpnHold) item.error = VPN_KILL_SWITCH_ERROR;
         }
       }
@@ -258,6 +310,7 @@ export class DownloadEngine extends EventEmitter {
       item.downloadSpeed = 0;
       item.uploadSpeed = 0;
       item.numPeers = 0;
+      item.numSeeders = 0;
       item.error = VPN_KILL_SWITCH_ERROR;
     }
     this.emitUpdateNow();
@@ -549,7 +602,9 @@ export class DownloadEngine extends EventEmitter {
     item.downloadSpeed = 0;
     item.status = 'done';
     item.savePath = dest;
-    const snapshot = { ...item };
+    const snapshot = { ...item, downloadedResolution: check.resolution || undefined } as DownloadItem & {
+      downloadedResolution?: Resolution;
+    };
     this.emit('done', snapshot);
     setImmediate(() => this.remove(id));
   }
@@ -594,7 +649,9 @@ export class DownloadEngine extends EventEmitter {
     item.downloadSpeed = 0;
     item.status = 'done';
     item.savePath = dest;
-    const snapshot = { ...item };
+    const snapshot = { ...item, downloadedResolution: check.resolution || undefined } as DownloadItem & {
+      downloadedResolution?: Resolution;
+    };
     this.emit('done', snapshot);
     setImmediate(() => this.remove(id));
   }
@@ -626,6 +683,7 @@ export class DownloadEngine extends EventEmitter {
       downloadSpeed: 0,
       uploadSpeed: 0,
       numPeers: 0,
+      numSeeders: 0,
       status: 'queued',
       savePath: workDir,
       magnet: opts.magnet,
@@ -668,6 +726,7 @@ export class DownloadEngine extends EventEmitter {
         item.downloadSpeed = torrent.downloadSpeed;
         item.uploadSpeed = torrent.uploadSpeed;
         item.numPeers = torrent.numPeers;
+        item.numSeeders = countSeeders(torrent);
         item.status = 'downloading';
         this.emitProgressThrottled();
       });
@@ -743,6 +802,7 @@ export class DownloadEngine extends EventEmitter {
       downloadSpeed: 0,
       uploadSpeed: 0,
       numPeers: 0,
+      numSeeders: 0,
       status: 'queued',
       savePath: workDir,
       magnet: opts.magnet,
@@ -787,6 +847,7 @@ export class DownloadEngine extends EventEmitter {
         item.downloadSpeed = torrent.downloadSpeed;
         item.uploadSpeed = torrent.uploadSpeed;
         item.numPeers = torrent.numPeers;
+        item.numSeeders = countSeeders(torrent);
         item.status = 'downloading';
         this.emitProgressThrottled();
       });
@@ -813,6 +874,34 @@ export class DownloadEngine extends EventEmitter {
       this.pumpQueue();
     }
   }
+
+
+  /**
+   * Re-queue a persisted incomplete download after app restart/update.
+   * Reuses the same savePath so WebTorrent resumes from existing files.
+   */
+  async restore(item: DownloadItem, opts: EpisodeStartOpts | MovieStartOpts): Promise<DownloadItem> {
+    if (this.items.has(item.id)) return this.items.get(item.id)!;
+    const restored: DownloadItem = {
+      ...item,
+      downloadSpeed: 0,
+      uploadSpeed: 0,
+      numPeers: item.numPeers || 0,
+      numSeeders: item.numSeeders || 0,
+      status: item.status === 'paused' ? 'paused' : 'queued',
+      error: undefined,
+    };
+    this.items.set(restored.id, restored);
+    if (restored.kind === 'movie') {
+      this.jobs.set(restored.id, { kind: 'movie', opts: opts as MovieStartOpts });
+    } else {
+      this.jobs.set(restored.id, { kind: 'episode', opts: opts as EpisodeStartOpts });
+    }
+    this.emitUpdateNow();
+    if (restored.status !== 'paused') this.pumpQueue();
+    return restored;
+  }
+
 
   pause(id: string): void {
     const item = this.items.get(id);

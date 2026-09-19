@@ -1064,3 +1064,9 @@ button.ok-btn {
   gap: 0.4rem;
   flex-shrink: 0;
 }
+
+.badge.health-excellent { color: #b5d4b5; border-color: #3d5a3d; background: #1a241a; }
+.badge.health-good { color: #a8c9a0; border-color: #3d5a3d; background: #1a241a; }
+.badge.health-fair { color: #d4c48a; border-color: #5a4d2a; background: #241f14; }
+.badge.health-poor { color: #d4a88a; border-color: #5a4530; background: #241c14; }
+.badge.health-dead { color: #d4a0a0; border-color: #5a3d3d; background: #241a1a; }

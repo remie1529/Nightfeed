@@ -54,6 +54,7 @@ type InMsg =
   | { type: 'hasMovieActivity'; requestId: number; movieId: number }
   | { type: 'getDownloadingKeys'; requestId: number }
   | { type: 'getDownloadingMovieIds'; requestId: number }
+  | { type: 'restore'; requestId: number; item: DownloadItem; opts: any }
   | { type: 'destroy'; requestId: number };
 
 process.on('uncaughtException', (err) => {
@@ -121,6 +122,11 @@ port.on('message', (event) => {
         }
         case 'startMovie': {
           const item = await engine.startMovie(msg.opts);
+          reply(msg.requestId, { ok: true, item });
+          break;
+        }
+        case 'restore': {
+          const item = await engine.restore(msg.item, msg.opts);
           reply(msg.requestId, { ok: true, item });
           break;
         }

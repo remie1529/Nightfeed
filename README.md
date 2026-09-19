@@ -12,6 +12,11 @@ Desktop TV show & movie manager with embedded torrent downloads.
 
 **v2.0.3** — show-name episode match + public release baseline: TV + movies library, embedded downloads, multi-source torrents, Requests (web/Telegram), OpenVPN split tunnel, Live TV/calendar, backup, folder import, and more.
 
+
+![Library](docs/screenshots/library.png)
+
+*Nightfeed Library — track shows, missing episodes, and downloads in one place.*
+
 ---
 
 ## Install

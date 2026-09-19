@@ -234,6 +234,16 @@ class UtilityEngineProxy extends EventEmitter {
     return res.item as DownloadItem;
   }
 
+  async restore(item: DownloadItem, opts: StartEpisodeOpts | StartMovieOpts): Promise<DownloadItem> {
+    const res = await this.call('restore', { item, opts });
+    if (res.item) {
+      const idx = this.cachedItems.findIndex((i) => i.id === res.item.id);
+      if (idx >= 0) this.cachedItems[idx] = res.item;
+      else this.cachedItems.push(res.item);
+    }
+    return res.item as DownloadItem;
+  }
+
   pause(id: string): void {
     void this.call('pause', { id }).catch(() => undefined);
   }
@@ -376,6 +386,19 @@ class EngineFacade extends EventEmitter {
   async startMovie(opts: StartMovieOpts): Promise<DownloadItem> {
     await this.ensureReady();
     return this.syncBackend().startMovie(opts);
+  }
+
+  async restore(item: DownloadItem, opts: StartEpisodeOpts | StartMovieOpts): Promise<DownloadItem> {
+    await this.ensureReady();
+    const backend = this.syncBackend();
+    if ('restore' in backend && typeof (backend as any).restore === 'function') {
+      return (backend as any).restore(item, opts);
+    }
+    // Fallback: re-start with same magnet (new id) — prefer restore when available
+    if ((item.kind === 'movie' || (opts as StartMovieOpts).movie) && (opts as StartMovieOpts).movie) {
+      return this.startMovie(opts as StartMovieOpts);
+    }
+    return this.start(opts as StartEpisodeOpts);
   }
 
   pause(id: string): void {
