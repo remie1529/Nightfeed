@@ -19,9 +19,17 @@ function torrentHealth(item: DownloadItem): HealthLabel {
     if (seeders >= 1) return 'Poor';
     return 'Dead';
   }
+  // Actively transferring — never Dead regardless of seeder flag lag.
+  if (speed > 0) {
+    if (seeders >= 50) return 'Excellent';
+    if (seeders >= 20) return 'Good';
+    if (seeders >= 8) return 'Fair';
+    if (seeders >= 1 || peers >= 1) return 'Fair';
+    return 'Fair';
+  }
   // Stalled download with no useful peers
-  if (progress < 1 && speed <= 0 && seeders <= 0 && peers <= 0) return 'Dead';
-  if (progress < 1 && speed <= 0 && seeders < 3) return 'Poor';
+  if (progress < 1 && seeders <= 0 && peers <= 0) return 'Dead';
+  if (progress < 1 && seeders < 3) return 'Poor';
   if (seeders >= 50) return 'Excellent';
   if (seeders >= 20) return 'Good';
   if (seeders >= 8) return 'Fair';
@@ -80,8 +88,7 @@ export default function Downloads() {
                 <th>Item</th>
                 <th style={{ width: 140 }}>Progress</th>
                 <th style={{ width: 100 }}>Speed</th>
-                <th style={{ width: 90 }}>Seeders</th>
-                <th style={{ width: 70 }}>Peers</th>
+                <th style={{ width: 80 }}>Seeders</th>
                 <th style={{ width: 100 }}>Health</th>
                 <th style={{ width: 90 }}>Status</th>
                 <th style={{ width: 180 }}></th>
@@ -90,7 +97,6 @@ export default function Downloads() {
             <tbody>
               {items.map((item) => {
                 const health = torrentHealth(item);
-                const leechers = Math.max(0, (item.numPeers || 0) - (item.numSeeders || 0));
                 return (
                 <tr key={item.id}>
                   <td>
@@ -123,13 +129,7 @@ export default function Downloads() {
                     </div>
                   </td>
                   <td className="mono">{formatSpeed(item.downloadSpeed)}</td>
-                  <td className="mono">
-                    {item.numSeeders ?? 0}
-                    {leechers > 0 ? (
-                      <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}> / {leechers} L</span>
-                    ) : null}
-                  </td>
-                  <td className="mono">{item.numPeers}</td>
+                  <td className="mono">{item.numSeeders ?? 0}</td>
                   <td>
                     <span className={`badge health ${healthClass(health)}`}>{health}</span>
                   </td>

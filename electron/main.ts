@@ -19,6 +19,10 @@ import {
   getLastDailyBriefingDate,
   getDownloads,
   saveDownloads,
+  addTriedTorrents,
+  getTriedTorrents,
+  triedEpisodeKey,
+  triedMovieKey,
   setEpisodeOverride,
   setEpisodeResolution,
   setLastDailyBriefingDate,
@@ -294,7 +298,7 @@ function pushDownloads(opts?: { persist?: 'debounce' | 'now' | 'skip' }) {
   const key = slim
     .map(
       (i) =>
-        `${i.id}:${i.status}:${Math.round((i.progress || 0) * 100)}:${Math.round(i.downloadSpeed || 0)}:${i.numPeers || 0}:${i.error || ''}`
+        `${i.id}:${i.status}:${Math.round((i.progress || 0) * 100)}:${Math.round(i.downloadSpeed || 0)}:${i.numSeeders || 0}:${i.numPeers || 0}:${i.error || ''}`
     )
     .join('|');
   if (key === lastDownloadsUiKey && mode === 'debounce') return;
@@ -584,6 +588,52 @@ function toHealthyPreferredCandidates(
   return toCandidates(filtered);
 }
 
+function durableTriedKey(item: {
+  kind?: string;
+  movieId?: number;
+  showId?: number;
+  seasonNumber?: number;
+  episodeNumber?: number;
+}): string | null {
+  if (item.kind === 'movie' && item.movieId != null) return triedMovieKey(item.movieId);
+  if (item.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
+    return triedEpisodeKey(item.showId, item.seasonNumber, item.episodeNumber);
+  }
+  return null;
+}
+
+/** Persist rejected/cancelled/stuck infohashes for this episode/movie. */
+function rememberTriedFromItem(item: DownloadItem): string[] {
+  const key = durableTriedKey(item);
+  if (!key) return item.triedInfoHashes || [];
+  const hashes: string[] = [];
+  if (item.infoHash) hashes.push(item.infoHash);
+  const fromMagnet = extractInfoHash(item.magnet || '');
+  if (fromMagnet) hashes.push(fromMagnet);
+  for (const h of item.triedInfoHashes || []) hashes.push(h);
+  return addTriedTorrents(key, hashes);
+}
+
+function loadTriedForEpisode(showId: number, season: number, episode: number): string[] {
+  return getTriedTorrents(triedEpisodeKey(showId, season, episode));
+}
+
+function loadTriedForMovie(movieId: number): string[] {
+  return getTriedTorrents(triedMovieKey(movieId));
+}
+
+function filterResultsSkippingTried<T extends { magnet?: string; infoHash?: string }>(
+  results: T[],
+  tried: Iterable<string>
+): T[] {
+  const set = new Set(Array.from(tried).map((h) => h.toLowerCase()).filter(Boolean));
+  if (!set.size) return results;
+  return (results || []).filter((r) => {
+    const h = (r.infoHash || extractInfoHash(r.magnet || '') || '').toLowerCase();
+    return !h || !set.has(h);
+  });
+}
+
 function pickNextCandidate(
   candidates: TorrentCandidate[] | undefined,
   tried: Set<string>,
@@ -602,7 +652,9 @@ function pickNextCandidate(
 
 async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
   const settings = getSettings();
-  const tried = new Set((item.triedInfoHashes || []).map((h) => h.toLowerCase()));
+  // Durable + in-memory tried set so the same magnet is never re-picked.
+  const durable = rememberTriedFromItem(item);
+  const tried = new Set(durable.map((h) => h.toLowerCase()));
   if (item.infoHash) tried.add(item.infoHash.toLowerCase());
   const curHash = extractInfoHash(item.magnet || '');
   if (curHash) tried.add(curHash.toLowerCase());
@@ -625,7 +677,11 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
             movie.releaseYear,
             preferred
           );
-          candidates = toHealthyPreferredCandidates(res.results, preferred, 'movie');
+          candidates = toHealthyPreferredCandidates(
+            filterResultsSkippingTried(res.results, tried),
+            preferred,
+            'movie'
+          );
           next = pickNextCandidate(candidates, tried, item.magnet);
         }
       } else if (item.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
@@ -640,7 +696,11 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
             preferred,
             { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
-          candidates = toHealthyPreferredCandidates(res.results, preferred, 'episode');
+          candidates = toHealthyPreferredCandidates(
+            filterResultsSkippingTried(res.results, tried),
+            preferred,
+            'episode'
+          );
           next = pickNextCandidate(candidates, tried, item.magnet);
         }
       }
@@ -875,12 +935,14 @@ async function autoDownloadForShows(
             preferred,
             { imdbId: show.imdbId, mazeId: show.tmdbId }
           );
+          const triedList = loadTriedForEpisode(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
+          const pool = filterResultsSkippingTried(results, triedList);
           const best = upgrade
-            ? pickUpgradeDownload(results, preferred, 'episode', rules)
-            : pickAutoDownload(results, preferred, 'episode', rules);
+            ? pickUpgradeDownload(pool, preferred, 'episode', rules)
+            : pickAutoDownload(pool, preferred, 'episode', rules);
           if (!best?.magnet) continue;
           const candidates = toHealthyPreferredCandidates(
-            results,
+            pool,
             preferred,
             'episode',
             show,
@@ -894,7 +956,7 @@ async function autoDownloadForShows(
             episodeNumber: ep.episodeNumber,
             episodeTitle: ep.name,
             candidates,
-            triedInfoHashes: [],
+            triedInfoHashes: triedList,
             notifyChatId: notifyCtx?.notifyChatId,
             telegramRequestId: notifyCtx?.telegramRequestId,
             quality: rules,
@@ -972,17 +1034,19 @@ async function autoDownloadMovie(
     preferred
   );
   const rules = qualityRules('movie', preferred);
+  const triedList = loadTriedForMovie(movie.tmdbId);
+  const pool = filterResultsSkippingTried(res.results, triedList);
   const best = upgrade
-    ? pickUpgradeDownload(res.results, preferred, 'movie', rules)
-    : pickAutoDownload(res.results, preferred, 'movie', rules);
+    ? pickUpgradeDownload(pool, preferred, 'movie', rules)
+    : pickAutoDownload(pool, preferred, 'movie', rules);
   if (!best?.magnet) return false;
-  const candidates = toHealthyPreferredCandidates(res.results, preferred, 'movie', null, upgrade);
+  const candidates = toHealthyPreferredCandidates(pool, preferred, 'movie', null, upgrade);
   await downloadEngine.startMovie({
     magnet: best.magnet,
     movie: movieForDownload(movie),
     movieLibraryRoot: movieRoots(settings)[0] || settings.movieLibraryRoot,
     candidates,
-    triedInfoHashes: [],
+    triedInfoHashes: triedList,
     notifyChatId: notifyCtx?.notifyChatId,
     telegramRequestId: notifyCtx?.telegramRequestId,
     quality: rules,
@@ -1184,12 +1248,15 @@ async function restorePersistedDownloads(): Promise<void> {
       if (item.kind === 'movie' && item.movieId != null) {
         const movie = getMovies().find((m) => m.tmdbId === item.movieId);
         if (!movie) continue;
+        const triedMovie = Array.from(
+          new Set([...(item.triedInfoHashes || []), ...loadTriedForMovie(item.movieId!)])
+        );
         await downloadEngine.restore(item, {
           magnet: item.magnet,
           movie: movieForDownload(movie),
           movieLibraryRoot: movieRoots(settings)[0] || settings.movieLibraryRoot,
           candidates: item.candidates,
-          triedInfoHashes: item.triedInfoHashes,
+          triedInfoHashes: triedMovie,
           notifyChatId: item.notifyChatId,
           telegramRequestId: item.telegramRequestId,
           quality: qualityRules('movie', movie.preferredResolution),
@@ -1198,6 +1265,12 @@ async function restorePersistedDownloads(): Promise<void> {
       } else if (item.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
         const show = getShows().find((s) => s.tmdbId === item.showId);
         if (!show) continue;
+        const triedEp = Array.from(
+          new Set([
+            ...(item.triedInfoHashes || []),
+            ...loadTriedForEpisode(item.showId, item.seasonNumber, item.episodeNumber),
+          ])
+        );
         await downloadEngine.restore(item, {
           magnet: item.magnet,
           show: showForDownload(show, item.seasonNumber),
@@ -1206,7 +1279,7 @@ async function restorePersistedDownloads(): Promise<void> {
           episodeNumber: item.episodeNumber,
           episodeTitle: item.episodeTitle || '',
           candidates: item.candidates,
-          triedInfoHashes: item.triedInfoHashes,
+          triedInfoHashes: triedEp,
           notifyChatId: item.notifyChatId,
           telegramRequestId: item.telegramRequestId,
           quality: qualityRules('episode', show.preferredResolution, show),
@@ -2518,6 +2591,7 @@ function registerIpc() {
       const settings = getSettings();
       const show = getShows().find((s) => s.tmdbId === payload.tmdbId);
       if (!show) throw new Error('Show not found');
+      const triedList = loadTriedForEpisode(payload.tmdbId, payload.season, payload.episode);
       const candidates = payload.candidates?.length
         ? toCandidates(payload.candidates)
         : toCandidates([{ magnet: payload.magnet }]);
@@ -2530,7 +2604,7 @@ function registerIpc() {
         episodeNumber: payload.episode,
         episodeTitle: payload.episodeTitle,
         candidates,
-        triedInfoHashes: [],
+        triedInfoHashes: triedList,
         quality: qualityRules('episode', preferred, show),
       });
       pushDownloads({ persist: 'now' });
@@ -2549,6 +2623,8 @@ function registerIpc() {
     pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:cancel', (_e, id: string) => {
+    const item = downloadEngine.list().find((d) => d.id === id);
+    if (item) rememberTriedFromItem(item);
     downloadEngine.cancel(id);
     pushDownloads({ persist: 'now' });
   });
@@ -2696,6 +2772,7 @@ function registerIpc() {
       if (!mRoots.length) {
         throw new Error('Set a movie library folder in Settings');
       }
+      const triedList = loadTriedForMovie(payload.tmdbId);
       const candidates = payload.candidates?.length
         ? toCandidates(payload.candidates)
         : toCandidates([{ magnet: payload.magnet }]);
@@ -2707,7 +2784,7 @@ function registerIpc() {
         movie: movieForDownload(movie),
         movieLibraryRoot: mRoots[0],
         candidates,
-        triedInfoHashes: [],
+        triedInfoHashes: triedList,
         quality: qualityRules('movie', preferred),
       });
       // Mark downloading in store for UI
