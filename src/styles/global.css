@@ -1151,3 +1151,53 @@ button.ok-btn {
   cursor: pointer;
   font: inherit;
 }
+
+
+/* Activity log viewer */
+.page-log {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.page-log .page-header {
+  flex-shrink: 0;
+}
+
+.log-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0 0 0.65rem;
+  opacity: 0.75;
+}
+
+.log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.log-pre {
+  flex: 1;
+  min-height: 280px;
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  background: #0c0c0c;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: #c8c4b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

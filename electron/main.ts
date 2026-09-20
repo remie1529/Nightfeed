@@ -81,6 +81,7 @@ import {
   writeSessionLock,
 } from './services/crash-watchdog';
 import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
+import { activityLog, summarizeSettingsKeys } from './services/activity-log';
 import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
 import os from 'os';
@@ -135,6 +136,11 @@ process.on('uncaughtException', (err) => {
     return;
   }
   console.error('[nightfeed] uncaughtException', err);
+  try {
+    activityLog.error('app', `uncaughtException: ${err?.message || String(err)}`);
+  } catch {
+    // ignore
+  }
 });
 process.on('unhandledRejection', (reason) => {
   if (isIgnorableTorrentSocketError(reason)) {
@@ -142,6 +148,12 @@ process.on('unhandledRejection', (reason) => {
     return;
   }
   console.error('[nightfeed] unhandledRejection', reason);
+  try {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    activityLog.error('app', `unhandledRejection: ${msg}`);
+  } catch {
+    // ignore
+  }
 });
 
 let mainWindow: BrowserWindow | null = null;
@@ -308,12 +320,25 @@ function pushDownloads(opts?: { persist?: 'debounce' | 'now' | 'skip' }) {
 
 function notify(message: string, kind: 'info' | 'ok' | 'warn' | 'error' = 'info') {
   mainWindow?.webContents.send('app:toast', { message, kind });
+  const level = kind === 'error' ? 'error' : kind === 'warn' ? 'warn' : 'info';
+  activityLog[level]('toast', message);
 }
+
+let lastLoggedVpnState: string | null = null;
 
 function pushVpnStatus(extra?: Partial<AppSettings>): void {
   const settings = { ...getSettings(), ...(extra || {}) };
   const status: VpnStatus = vpnManager.getStatus(settings);
   mainWindow?.webContents.send('vpn:status', status);
+  const stateKey = `${status.state || ''}|${status.killSwitch ? 1 : 0}|${status.bindAddress || ''}`;
+  if (stateKey !== lastLoggedVpnState) {
+    lastLoggedVpnState = stateKey;
+    activityLog.info('vpn', `Status: ${status.state || 'unknown'}`, {
+      killSwitch: !!status.killSwitch,
+      bind: status.bindAddress || '',
+      message: status.message || '',
+    });
+  }
 }
 
 function torrentVpnHold(): boolean {
@@ -709,6 +734,10 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
     }
   }
 
+  activityLog.warn('download', `Try next after reject/stuck: ${item.name}`, {
+    error: item.error || '',
+    infoHash: item.infoHash || '',
+  });
   notify(`Skipped: ${item.error || 'bad torrent'} — trying another for ${item.name}`, 'warn');
 
   if (!next?.magnet) {
@@ -2332,6 +2361,9 @@ function registerIpc() {
     }
 
     const next = setSettings(incoming);
+    activityLog.info('settings', 'Settings saved', {
+      keys: summarizeSettingsKeys(incoming as Record<string, unknown>),
+    });
     applySettingsSideEffects(next);
     mainWindow?.webContents.send('settings:changed', next);
     return next;
@@ -2367,7 +2399,12 @@ function registerIpc() {
   });
 
   ipcMain.handle('library:add', async (_e, mazeId: number, policy?: AddShowPolicy) => {
-    return addShowWithPolicy(mazeId, policy || 'manual');
+    const show = await addShowWithPolicy(mazeId, policy || 'manual');
+    activityLog.info('library', `Added show: ${show?.name || mazeId}`, {
+      mazeId,
+      policy: policy || 'manual',
+    });
+    return show;
   });
 
   // Manual folder mass-import (never auto-runs)
@@ -2388,7 +2425,11 @@ function registerIpc() {
 
 
 
-  ipcMain.handle('library:remove', (_e, tmdbId: number) => removeShow(tmdbId));
+  ipcMain.handle('library:remove', (_e, tmdbId: number) => {
+    const show = getShows().find((s) => s.tmdbId === tmdbId);
+    removeShow(tmdbId);
+    activityLog.info('library', `Removed show: ${show?.name || tmdbId}`, { mazeId: tmdbId });
+  });
 
   ipcMain.handle('library:bulkUpdate', (_e, tmdbIds: number[], partial: Partial<Show>) => {
     const ids = Array.isArray(tmdbIds) ? tmdbIds.map(Number).filter((n) => Number.isFinite(n)) : [];
@@ -2415,6 +2456,16 @@ function registerIpc() {
       n += 1;
     }
     if (n) emitLibraryChanged();
+    if (n && 'monitored' in partial) {
+      activityLog.info(
+        'monitor',
+        `${partial.monitored === false ? 'Paused' : 'Resumed'} monitoring for ${n} show(s)`
+      );
+    } else if (n) {
+      activityLog.info('library', `Bulk updated ${n} show(s)`, {
+        keys: Object.keys(partial || {}).join(','),
+      });
+    }
     return { updated: n };
   });
 
@@ -2490,19 +2541,34 @@ function registerIpc() {
     }
     shows[idx] = merged;
     upsertShow(shows[idx]);
+    if ('monitored' in partial) {
+      activityLog.info(
+        'monitor',
+        `${partial.monitored === false ? 'Paused' : 'Resumed'} monitoring: ${merged.name}`,
+        { mazeId: tmdbId }
+      );
+    } else {
+      activityLog.info('library', `Updated show: ${merged.name}`, {
+        keys: Object.keys(partial || {}).join(','),
+      });
+    }
     return shows[idx];
   });
 
   ipcMain.handle('library:refresh', async (_e, tmdbId: number) => {
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) throw new Error('Show not found');
+    activityLog.info('library', `Refresh show: ${show.name}`, { mazeId: tmdbId });
     const updated = await refreshOne(show);
     await autoDownloadForShows([updated]);
     emitLibraryChanged();
     return updated;
   });
 
-  ipcMain.handle('library:refreshAll', async () => refreshAllShows());
+  ipcMain.handle('library:refreshAll', async () => {
+    activityLog.info('library', 'Refresh all shows');
+    return refreshAllShows();
+  });
 
   ipcMain.handle('library:calendar', (_e, from: string, to: string) => listCalendarEpisodes(from, to));
 
@@ -2563,10 +2629,18 @@ function registerIpc() {
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) throw new Error('Show not found');
     const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
+    activityLog.info('search', `Episode search start: ${show.name} S${pad2(season)}E${pad2(episode)}`, {
+      preferred,
+    });
     const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred, {
       imdbId: show.imdbId,
       mazeId: show.tmdbId,
     });
+    activityLog.info(
+      'search',
+      `Episode search done: ${show.name} S${pad2(season)}E${pad2(episode)} — ${res.results?.length || 0} result(s)`,
+      { error: res.error || '' }
+    );
     // Partial source errors are returned in res.error but must not wipe other results
     if (res.error && !res.results.length) {
       notify(res.error, 'warn');
@@ -2607,6 +2681,11 @@ function registerIpc() {
         triedInfoHashes: triedList,
         quality: qualityRules('episode', preferred, show),
       });
+      activityLog.info('download', `Start: ${item?.name || show.name}`, {
+        infoHash: item?.infoHash || extractInfoHash(payload.magnet) || '',
+        S: payload.season,
+        E: payload.episode,
+      });
       pushDownloads({ persist: 'now' });
       return item;
     }
@@ -2614,18 +2693,23 @@ function registerIpc() {
 
   ipcMain.handle('download:list', () => downloadEngine.list());
   ipcMain.handle('download:pause', (_e, id: string) => {
+    const item = downloadEngine.list().find((d) => d.id === id);
     downloadEngine.pause(id);
+    activityLog.info('download', `Pause: ${item?.name || id}`, { infoHash: item?.infoHash || '' });
     pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:resume', (_e, id: string) => {
     assertVpnAllowsTorrents();
+    const item = downloadEngine.list().find((d) => d.id === id);
     downloadEngine.resume(id);
+    activityLog.info('download', `Resume: ${item?.name || id}`, { infoHash: item?.infoHash || '' });
     pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:cancel', (_e, id: string) => {
     const item = downloadEngine.list().find((d) => d.id === id);
     if (item) rememberTriedFromItem(item);
     downloadEngine.cancel(id);
+    activityLog.info('download', `Cancel: ${item?.name || id}`, { infoHash: item?.infoHash || '' });
     pushDownloads({ persist: 'now' });
   });
 
@@ -2667,12 +2751,15 @@ function registerIpc() {
       movieRoots(settings)
     );
     upsertMovie(movie);
+    activityLog.info('library', `Added movie: ${movie.title}`, { tmdbId });
     mainWindow?.webContents.send('movies:changed');
     return withMovieLocalStatus(movie);
   });
 
   ipcMain.handle('movies:remove', (_e, tmdbId: number) => {
+    const movie = getMovies().find((m) => m.tmdbId === tmdbId);
     removeMovie(tmdbId);
+    activityLog.info('library', `Removed movie: ${movie?.title || tmdbId}`, { tmdbId });
     mainWindow?.webContents.send('movies:changed');
     return getMovies().map((m) => withMovieLocalStatus(m));
   });
@@ -2689,6 +2776,16 @@ function registerIpc() {
       n += 1;
     }
     if (n) mainWindow?.webContents.send('movies:changed');
+    if (n && 'monitored' in partial) {
+      activityLog.info(
+        'monitor',
+        `${partial.monitored === false ? 'Paused' : 'Resumed'} monitoring for ${n} movie(s)`
+      );
+    } else if (n) {
+      activityLog.info('library', `Bulk updated ${n} movie(s)`, {
+        keys: Object.keys(partial || {}).join(','),
+      });
+    }
     return { updated: n };
   });
 
@@ -2712,6 +2809,17 @@ function registerIpc() {
     if (idx < 0) throw new Error('Movie not found');
     movies[idx] = { ...movies[idx], ...partial, tmdbId };
     upsertMovie(movies[idx]);
+    if ('monitored' in partial) {
+      activityLog.info(
+        'monitor',
+        `${partial.monitored === false ? 'Paused' : 'Resumed'} monitoring: ${movies[idx].title}`,
+        { tmdbId }
+      );
+    } else {
+      activityLog.info('library', `Updated movie: ${movies[idx].title}`, {
+        keys: Object.keys(partial || {}).join(','),
+      });
+    }
     mainWindow?.webContents.send('movies:changed');
     return withMovieLocalStatus(movies[idx]);
   });
@@ -2720,6 +2828,7 @@ function registerIpc() {
     const settings = getSettings();
     const existing = getMovies().find((m) => m.tmdbId === tmdbId);
     if (!existing) throw new Error('Movie not found');
+    activityLog.info('library', `Refresh movie: ${existing.title}`, { tmdbId });
     const movie = await fetchMovieDetail(
       tmdbId,
       settings.movieLibraryRoot,
@@ -2742,11 +2851,17 @@ function registerIpc() {
     const preferred = (movie.preferredResolution ||
       settings.defaultMovieResolution ||
       settings.defaultResolution) as Resolution;
+    activityLog.info('search', `Movie search start: ${movie.title}`, { preferred });
     const res = await searchMovieTorrents(
       settings,
       movie.title,
       movie.releaseYear,
       preferred
+    );
+    activityLog.info(
+      'search',
+      `Movie search done: ${movie.title} — ${res.results?.length || 0} result(s)`,
+      { error: res.error || '' }
     );
     if (res.error && !res.results.length) {
       notify(res.error, 'warn');
@@ -2786,6 +2901,9 @@ function registerIpc() {
         candidates,
         triedInfoHashes: triedList,
         quality: qualityRules('movie', preferred),
+      });
+      activityLog.info('download', `Start movie: ${item?.name || movie.title}`, {
+        infoHash: item?.infoHash || extractInfoHash(payload.magnet) || '',
       });
       // Mark downloading in store for UI
       upsertMovie(withMovieLocalStatus(movie));
@@ -2858,7 +2976,14 @@ function registerIpc() {
       if (action !== 'approved' && action !== 'denied') {
         return { ok: false, message: 'Invalid action' };
       }
-      return resolveTelegramRequest(String(id || ''), action, 0);
+      const req = getTelegramRequest(String(id || ''));
+      const result = await resolveTelegramRequest(String(id || ''), action, 0);
+      activityLog.info(
+        'telegram',
+        `${action === 'approved' ? 'Approved' : 'Denied'} request: ${req?.title || id}`,
+        { id, action }
+      );
+      return result;
     }
   );
   ipcMain.handle('liveTv:status', () => liveTv.getStatus(getSettings()));
@@ -2934,6 +3059,20 @@ function registerIpc() {
     }
     autoUpdater.quitAndInstall(false, true);
   });
+
+  ipcMain.handle('log:get', (_e, opts?: { maxBytes?: number }) => {
+    const maxBytes = opts?.maxBytes;
+    return activityLog.readAll(typeof maxBytes === 'number' ? maxBytes : undefined);
+  });
+  ipcMain.handle('log:tail', (_e, opts?: { lines?: number }) => {
+    const lines = opts?.lines;
+    return activityLog.tail(typeof lines === 'number' ? lines : 800);
+  });
+  ipcMain.handle('log:openFolder', async () => activityLog.openFolder());
+  ipcMain.handle('log:path', () => ({
+    dir: activityLog.getDir(),
+    file: activityLog.getCurrentPath(),
+  }));
 
   ipcMain.handle('poster:cache', async (_e, url: string) => {
     try {
@@ -3020,6 +3159,11 @@ app.whenReady().then(async () => {
   } catch {
     // ignore
   }
+  activityLog.init();
+  activityLog.info('app', `Nightfeed starting v${app.getVersion()}`);
+  activityLog.on('changed', () => {
+    mainWindow?.webContents.send('log:changed');
+  });
   registerIpc();
   createWindow();
   writeSessionLock();
@@ -3075,6 +3219,10 @@ app.whenReady().then(async () => {
     );
   }
   downloadEngine.on('reject-exe', (item: DownloadItem) => {
+    activityLog.warn('download', `Reject/stuck-abandon: ${item?.name || 'download'}`, {
+      error: item?.error || '',
+      infoHash: item?.infoHash || '',
+    });
     void tryNextAfterExeReject(item);
   });
   downloadEngine.on('done', (item: DownloadItem & { downloadedResolution?: Resolution }) => {
@@ -3104,6 +3252,10 @@ app.whenReady().then(async () => {
       emitLibraryChanged();
     }
     if (item?.name) {
+      activityLog.info('download', `Complete: ${item.name}`, {
+        infoHash: item.infoHash || '',
+        kind: item.kind || '',
+      });
       notify(`Finished: ${item.name}`, 'ok');
     }
     {
@@ -3178,6 +3330,7 @@ app.whenReady().then(async () => {
   scheduleRefresh();
   void autoConnectVpnOnLaunch();
   signalUiReady();
+  activityLog.info('app', 'UI ready');
 
   // Non-blocking update check on startup, then every 6 hours
   setTimeout(() => {
@@ -3199,6 +3352,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  activityLog.info('app', 'Nightfeed quitting');
+  activityLog.destroy();
   clearSessionLock();
 });
 

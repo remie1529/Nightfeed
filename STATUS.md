@@ -1,6 +1,13 @@
 ## Nightfeed status
 
-**Current:** v2.2.1 — Downloads seeders/Health fix, durable tried torrents, 1h stuck → try next.
+**Current:** v2.3.0 — In-app activity log (Settings → Logging → See log), ~7 day retention.
+
+# Status v2.3.0
+
+## New
+- Settings **Logging** section with **See log** → dedicated in-app log viewer
+- Central main-process logger (daily files under userData/logs, prune after ~one week)
+- Mirrors downloads, searches, library/monitor changes, settings, Telegram approve/deny, errors; VPN status changes only (no VPN code changes)
 
 # Status v2.2.1
 
