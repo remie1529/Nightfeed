@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.2
+
+- **Fix**: WebTorrent `utilityProcess` failed to start on packaged Windows builds because the unpacked entry could not `require()` WebTorrent's JS deps that live only inside `app.asar`
+- Set `NODE_PATH` (and a Module.globalPaths bootstrap) so the download helper resolves `app.asar` + `app.asar.unpacked` node_modules
+- **Floater / backup download worker**: still only one active WebTorrent utilityProcess; if it fails to become ready, exits, or crashes mid-session, automatically spawn a replacement with backoff (limited retries) and hand the queue to it
+- Only fall back to the UI/main process if the floater also cannot start; toast: “Download worker unavailable — using UI process until restart” + concrete reason in **See log**
+- Not a pool of idle download workers — search workers stay separate and unchanged
+- No VPN / OpenVPN / bind / split-tunnel changes
+
 ## 2.3.1
 
 - **Richer activity log**: See log now trails essentially every meaningful action with timestamps
