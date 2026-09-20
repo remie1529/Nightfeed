@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.1
+
+- **Downloads seeders**: show real connected seeder count from the torrent engine (no more confusing `0 / N L`); remove the Peers column
+- **Health**: never mark DEAD while download speed is > 0; Health tracks seeders + transfer again
+- **Tried / rejected torrents**: persist infohashes per episode/movie across restarts (cancel, exe/quality reject, stuck abandon) and skip them on the next auto-download / try-next search
+- **Stuck 1 hour**: if an active download gains ~no bytes for 1 hour, abandon it, record as tried, and automatically start the next candidate
+
 ## 2.2.0
 
 - **Per-show / per-movie monitoring**: on Show and Movie detail, toggle **Monitor for new episodes** / **Monitor for download**. When off (Paused), Nightfeed skips auto-download, upgrade hunting, and refresh snatch for that title only; global auto-download stays on for everything else. Manual Find / Get still works. Telegram approvals can still force a grab.

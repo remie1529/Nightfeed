@@ -20,6 +20,11 @@ export interface AppData {
   shows: Show[];
   movies: Movie[];
   downloads: DownloadItem[];
+  /**
+   * Infohashes rejected/abandoned per episode or movie, durable across restarts.
+   * Keys: `ep:${showId}:${season}:${episode}` or `movie:${movieId}`.
+   */
+  triedTorrents: Record<string, string[]>;
   /** Manual episode status overrides keyed by `${showId}:${season}:${episode}` */
   episodeOverrides: Record<string, EpisodeOverrideStatus>;
   /** Known on-disk resolutions keyed by `${showId}:${season}:${episode}` */
@@ -41,6 +46,7 @@ const defaults: AppData = {
   shows: [],
   movies: [],
   downloads: [],
+  triedTorrents: {},
   episodeOverrides: {},
   episodeResolutions: {},
   telegramRequests: [],
@@ -289,6 +295,43 @@ export function saveDownloads(items: DownloadItem[]): void {
   store.set('downloads', items);
 }
 
+/** Durable key for tried/rejected torrents for an episode. */
+export function triedEpisodeKey(showId: number, season: number, episode: number): string {
+  return `ep:${showId}:${season}:${episode}`;
+}
+
+/** Durable key for tried/rejected torrents for a movie. */
+export function triedMovieKey(movieId: number): string {
+  return `movie:${movieId}`;
+}
+
+export function getTriedTorrentsMap(): Record<string, string[]> {
+  const raw = store.get('triedTorrents');
+  return raw && typeof raw === 'object' ? { ...raw } : {};
+}
+
+export function getTriedTorrents(key: string): string[] {
+  const all = getTriedTorrentsMap();
+  const list = all[key];
+  if (!Array.isArray(list)) return [];
+  return list.map((h) => String(h || '').toLowerCase()).filter(Boolean);
+}
+
+/** Merge infohashes into the durable tried list for a media key (capped). */
+export function addTriedTorrents(key: string, hashes: string[]): string[] {
+  if (!key) return [];
+  const all = getTriedTorrentsMap();
+  const set = new Set(getTriedTorrents(key));
+  for (const h of hashes || []) {
+    const n = String(h || '').toLowerCase().trim();
+    if (n) set.add(n);
+  }
+  const next = Array.from(set).slice(-120);
+  all[key] = next;
+  store.set('triedTorrents', all);
+  return next;
+}
+
 export function getEpisodeOverrides(): Record<string, EpisodeOverrideStatus> {
   return store.get('episodeOverrides') || {};
 }
@@ -425,6 +468,7 @@ export function exportBackupData(): AppData & { exportedAt: string; app: string;
     shows: getShows(),
     movies: getMovies(),
     downloads: getDownloads(),
+    triedTorrents: getTriedTorrentsMap(),
     episodeOverrides: getEpisodeOverrides(),
     telegramRequests: getTelegramRequests(),
     downloadHistory: getDownloadHistory(),
@@ -459,6 +503,9 @@ export function importBackupData(raw: unknown): { shows: number; movies: number 
   if (!Array.isArray(data.downloads)) {
     data.downloads = [];
   }
+  if (!(data as AppData).triedTorrents || typeof (data as AppData).triedTorrents !== 'object') {
+    (data as AppData).triedTorrents = {};
+  }
   if (!data.episodeOverrides || typeof data.episodeOverrides !== 'object') {
     data.episodeOverrides = {};
   }
@@ -487,6 +534,7 @@ export function importBackupData(raw: unknown): { shows: number; movies: number 
   store.set('shows', data.shows);
   store.set('movies', data.movies);
   store.set('downloads', data.downloads);
+  store.set('triedTorrents', (data as AppData).triedTorrents || {});
   store.set('episodeOverrides', data.episodeOverrides);
   store.set('telegramRequests', (data as AppData).telegramRequests || []);
   store.set('downloadHistory', Array.isArray((data as AppData).downloadHistory) ? (data as AppData).downloadHistory : []);

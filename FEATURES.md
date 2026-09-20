@@ -71,6 +71,9 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 - **WebTorrent** embedded — prefers Electron `utilityProcess` so hashing/peers stay off the UI thread
 - Up to **3 torrents** active; the rest stay queued
 - Pause / resume / cancel anytime
+- Live **seeders** + **Health** on the Downloads table (Peers column removed); Health stays fair while speed > 0
+- **Tried torrents** remembered per episode/movie across restarts; cancel / reject / stuck skips that magnet next time
+- Active download with **no progress for 1 hour** is abandoned and the next candidate is started automatically
 - **Multi-source search** on `worker_threads`: 22 indexers — Apibay, Knaben, YourBittorrent, Torrents.csv, EZTV, YTS, TheRarBG, TorrentDownloads, SolidTorrents/BitSearch, TorrentDownload.info, TPB mirrors, LimeTorrents; Anime (Nyaa, Tokyo Toshokan, AnimeTosho/Bangumi/Mikan/DMHY/ACGNX/SubsPlease/Sukebei — several off by default); optional Jackett
 - Library/show search (TVMaze / IMDb) also runs on its own worker so typing stays responsive during downloads
 - Rank by preferred resolution, then seeders; skip junk (CAM/TS) and low-seed results

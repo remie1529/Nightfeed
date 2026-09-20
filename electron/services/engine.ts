@@ -24,6 +24,8 @@ const MAX_PEER_CONNS = 48;
 const MAX_ACTIVE_DOWNLOADS = 3;
 /** Refresh peer/seeder counts while a torrent is active (even with 0 B/s). */
 const PEER_STATS_MS = 3000;
+/** Active download with no byte progress for this long → abandon and try next. */
+const STUCK_NO_PROGRESS_MS = 60 * 60 * 1000;
 
 type EpisodeStartOpts = {
   magnet: string;
@@ -53,10 +55,59 @@ type MovieStartOpts = {
 type PendingJob = { kind: 'episode'; opts: EpisodeStartOpts } | { kind: 'movie'; opts: MovieStartOpts };
 
 
+/**
+ * Connected seeders from the WebTorrent swarm.
+ * Prefer wire.isSeeder; fall back to full peer bitfield / peers actively uploading to us
+ * (webtorrent often leaves isSeeder false until bitfields fully match).
+ */
 function countSeeders(torrent: any): number {
   const wires = torrent?.wires;
-  if (!Array.isArray(wires)) return 0;
-  return wires.filter((w: any) => w && w.isSeeder).length;
+  if (!Array.isArray(wires) || wires.length === 0) return 0;
+  let n = 0;
+  const pieceCount =
+    typeof torrent?.pieces?.length === 'number'
+      ? torrent.pieces.length
+      : typeof torrent?.bitfield?.buffer?.length === 'number'
+        ? torrent.bitfield.buffer.length * 8
+        : 0;
+  for (const w of wires) {
+    if (!w) continue;
+    if (w.isSeeder) {
+      n += 1;
+      continue;
+    }
+    try {
+      const peerPieces = w.peerPieces;
+      if (peerPieces && pieceCount > 0 && typeof peerPieces.get === 'function') {
+        let complete = true;
+        // Cap scan to declared piece length; skip indices beyond peer bitfield.
+        const max = Math.min(pieceCount, (peerPieces.buffer?.length || 0) * 8 || pieceCount);
+        if (max > 0) {
+          for (let i = 0; i < max; i++) {
+            if (!peerPieces.get(i)) {
+              complete = false;
+              break;
+            }
+          }
+          if (complete) {
+            n += 1;
+            continue;
+          }
+        }
+      }
+    } catch {
+      // ignore bitfield probe errors
+    }
+    // Peer unchoked us and has sent data → treat as a seeder for UI/health.
+    try {
+      if (!w.peerChoking && typeof w.downloaded === 'number' && w.downloaded > 0) {
+        n += 1;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return n;
 }
 
 export function isIgnorableTorrentSocketError(err: unknown): boolean {
@@ -203,6 +254,8 @@ export class DownloadEngine extends EventEmitter {
   private lastProgressEmit = 0;
   private progressEmitTimer: NodeJS.Timeout | null = null;
   private peerStatsTimer: NodeJS.Timeout | null = null;
+  /** Last observed downloaded bytes + timestamp for stuck detection. */
+  private progressWatch = new Map<string, { bytes: number; at: number }>();
 
   /** Apply connection / speed / VPN bind settings. Safe to call before or after client exists. */
   applySettings(settings: EngineSettings): void {
@@ -438,6 +491,8 @@ export class DownloadEngine extends EventEmitter {
       return;
     }
     let changed = false;
+    const stuckIds: string[] = [];
+    const now = Date.now();
     for (const [id, torrent] of this.torrents) {
       const item = this.items.get(id);
       if (!item || (item.status !== 'downloading' && item.status !== 'queued')) continue;
@@ -446,6 +501,17 @@ export class DownloadEngine extends EventEmitter {
       const speed = torrent.downloadSpeed || 0;
       const up = torrent.uploadSpeed || 0;
       const progress = typeof torrent.progress === 'number' ? torrent.progress : item.progress;
+      const downloaded =
+        typeof torrent.downloaded === 'number'
+          ? torrent.downloaded
+          : Math.round((progress || 0) * (torrent.length || 0));
+      const watch = this.progressWatch.get(id);
+      if (!watch || downloaded > watch.bytes + 1024) {
+        // Progress advanced (≥1 KiB) — reset stuck clock.
+        this.progressWatch.set(id, { bytes: downloaded, at: now });
+      } else if (now - watch.at >= STUCK_NO_PROGRESS_MS) {
+        stuckIds.push(id);
+      }
       if (
         item.numPeers !== peers ||
         item.numSeeders !== seeders ||
@@ -465,6 +531,13 @@ export class DownloadEngine extends EventEmitter {
       }
     }
     if (changed) this.emitProgressThrottled();
+    for (const id of stuckIds) {
+      const item = this.items.get(id);
+      const torrent = this.torrents.get(id);
+      if (!item || !torrent) continue;
+      this.progressWatch.delete(id);
+      void this.handleRejectExe(id, item, torrent, 'No progress for 1 hour (dead/stuck)');
+    }
   }
 
   private dropTorrent(id: string, destroyStore = false): void {
@@ -480,6 +553,7 @@ export class DownloadEngine extends EventEmitter {
       }
     }
     this.torrents.delete(id);
+    this.progressWatch.delete(id);
   }
 
   list(): DownloadItem[] {
@@ -615,6 +689,7 @@ export class DownloadEngine extends EventEmitter {
       }
     }
     this.torrents.delete(id);
+    this.progressWatch.delete(id);
     this.jobs.delete(id);
     this.items.delete(id);
     const work = item.savePath;
@@ -1020,6 +1095,7 @@ export class DownloadEngine extends EventEmitter {
     if (!item) return;
     const hadTorrent = this.torrents.has(id);
     this.dropTorrent(id);
+    this.progressWatch.delete(id);
     item.status = 'paused';
     item.downloadSpeed = 0;
     item.uploadSpeed = 0;
@@ -1048,6 +1124,7 @@ export class DownloadEngine extends EventEmitter {
   /** Remove from queue and destroy torrent (keep files on disk). */
   remove(id: string): void {
     this.dropTorrent(id);
+    this.progressWatch.delete(id);
     this.jobs.delete(id);
     if (this.items.delete(id)) {
       this.emitUpdateNow();
@@ -1072,6 +1149,7 @@ export class DownloadEngine extends EventEmitter {
     this.torrents.clear();
     this.jobs.clear();
     this.items.clear();
+    this.progressWatch.clear();
   }
 }
 

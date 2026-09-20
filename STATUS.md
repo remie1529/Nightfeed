@@ -1,6 +1,16 @@
 ## Nightfeed status
 
-**Current:** v2.0.3 — Episode search requires show-name match (Monster anthology fix).
+**Current:** v2.2.1 — Downloads seeders/Health fix, durable tried torrents, 1h stuck → try next.
+
+# Status v2.2.1
+
+## Fixed
+- Seeders column shows real connected seeder count (removed confusing `0 / N L` and Peers column)
+- Health no longer DEAD while downloading at speed
+
+## New
+- Durable tried/rejected infohashes per episode/movie (survive restart; skipped on auto-download / try-next)
+- Active download with no byte progress for 1 hour is abandoned and the next candidate is started
 
 # Status v2.0.3
 
