@@ -23,6 +23,7 @@ import {
   getTriedTorrents,
   triedEpisodeKey,
   triedMovieKey,
+  getEpisodeOverride,
   setEpisodeOverride,
   setEpisodeResolution,
   setLastDailyBriefingDate,
@@ -721,6 +722,34 @@ function rememberTriedFromItem(item: DownloadItem): string[] {
   return addTriedTorrents(key, hashes);
 }
 
+/** Cancel active/queued/paused downloads for an episode (e.g. user set Ignored). Remembers tried hashes. */
+function cancelActiveDownloadsForEpisode(
+  showId: number,
+  season: number,
+  episode: number,
+  reason: string
+): number {
+  let n = 0;
+  for (const item of downloadEngine.list()) {
+    if (
+      item.showId === showId &&
+      item.seasonNumber === season &&
+      item.episodeNumber === episode &&
+      (item.status === 'downloading' || item.status === 'queued' || item.status === 'paused')
+    ) {
+      rememberTriedFromItem(item);
+      downloadEngine.cancel(item.id);
+      activityLog.info('download', `Cancel: ${item.name || `${showId} S${pad2(season)}E${pad2(episode)}`}`, {
+        reason,
+        infoHash: shortInfoHash(item.infoHash || item.magnet) || item.infoHash || '',
+      });
+      n += 1;
+    }
+  }
+  if (n) pushDownloads({ persist: 'now' });
+  return n;
+}
+
 function loadTriedForEpisode(showId: number, season: number, episode: number): string[] {
   return getTriedTorrents(triedEpisodeKey(showId, season, episode));
 }
@@ -759,6 +788,21 @@ function pickNextCandidate(
 
 async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
   const settings = getSettings();
+  // User Ignored must stop try-next even if a reject raced in after the override.
+  if (
+    item.showId != null &&
+    item.seasonNumber != null &&
+    item.episodeNumber != null &&
+    getEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber) === 'ignored'
+  ) {
+    rememberTriedFromItem(item);
+    activityLog.info('download', `Skip try-next: episode ignored — ${item.name}`, {
+      reason: 'ignored',
+      infoHash: shortInfoHash(item.infoHash || item.magnet) || item.infoHash || '',
+    });
+    pushDownloads({ persist: 'now' });
+    return;
+  }
   // Durable + in-memory tried set so the same magnet is never re-picked.
   const durable = rememberTriedFromItem(item);
   const tried = new Set(durable.map((h) => h.toLowerCase()));
@@ -1075,7 +1119,10 @@ async function autoDownloadForShows(
       let haveOk = 0;
       for (const season of show.seasons || []) {
         for (const ep of season.episodes || []) {
-          if (ep.status === 'ignored') {
+          if (
+            ep.status === 'ignored' ||
+            getEpisodeOverride(show.tmdbId, ep.seasonNumber, ep.episodeNumber) === 'ignored'
+          ) {
             ignored += 1;
             continue;
           }
@@ -2892,11 +2939,37 @@ function registerIpc() {
       if (!allowed.includes(status)) {
         throw new Error(`Invalid status: ${status}`);
       }
+      const epLabel = `${show.name} S${pad2(season)}E${pad2(episode)}`;
+      let hadDownloaded = false;
+      for (const s of show.seasons || []) {
+        for (const ep of s.episodes || []) {
+          if (ep.seasonNumber === season && ep.episodeNumber === episode) {
+            if (ep.localPath || ep.status === 'downloaded') hadDownloaded = true;
+          }
+        }
+      }
       setEpisodeOverride(tmdbId, season, episode, status);
-      activityLog.info(
-        'library',
-        `Episode status: ${show.name} S${pad2(season)}E${pad2(episode)} → ${status}`
-      );
+      activityLog.info('library', `Episode status: ${epLabel} → ${status}`);
+      if (status === 'ignored') {
+        if (hadDownloaded) {
+          activityLog.info(
+            'library',
+            `Ignored overrides downloaded: ${epLabel} (file on disk kept; auto paths skipped)`
+          );
+        }
+        const cancelled = cancelActiveDownloadsForEpisode(
+          tmdbId,
+          season,
+          episode,
+          'ignored by user'
+        );
+        if (cancelled) {
+          activityLog.info(
+            'library',
+            `Cancelled ${cancelled} active download(s) for ignored episode: ${epLabel}`
+          );
+        }
+      }
       const updated = withLocalStatuses(show);
       upsertShow(updated);
       emitLibraryChanged();
@@ -2916,11 +2989,38 @@ function registerIpc() {
       const seasonObj = show.seasons.find((s) => s.seasonNumber === season);
       if (!seasonObj) throw new Error(`Season ${season} not found`);
       const entries: Record<string, EpisodeOverrideStatus> = {};
+      let overriddenDownloaded = 0;
+      let cancelled = 0;
       for (const ep of seasonObj.episodes || []) {
         entries[episodeKey(tmdbId, ep.seasonNumber, ep.episodeNumber)] = status;
+        if (status === 'ignored' && (ep.localPath || ep.status === 'downloaded')) {
+          overriddenDownloaded += 1;
+        }
       }
       if (Object.keys(entries).length) {
         setEpisodeOverridesBulk(entries);
+      }
+      if (status === 'ignored') {
+        for (const ep of seasonObj.episodes || []) {
+          cancelled += cancelActiveDownloadsForEpisode(
+            tmdbId,
+            ep.seasonNumber,
+            ep.episodeNumber,
+            'ignored by user (season bulk)'
+          );
+        }
+        if (overriddenDownloaded) {
+          activityLog.info(
+            'library',
+            `Ignored overrides downloaded: ${show.name} S${pad2(season)} (${overriddenDownloaded} ep(s) with file on disk; auto paths skipped)`
+          );
+        }
+        if (cancelled) {
+          activityLog.info(
+            'library',
+            `Cancelled ${cancelled} active download(s) for ignored season: ${show.name} S${pad2(season)}`
+          );
+        }
       }
       const updated = withLocalStatuses(show);
       upsertShow(updated);
@@ -3678,7 +3778,20 @@ app.whenReady().then(async () => {
       }
       mainWindow?.webContents.send('movies:changed');
     } else if (item?.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
-      setEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber, 'downloaded');
+      const alreadyIgnored =
+        getEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber) === 'ignored';
+      if (alreadyIgnored) {
+        activityLog.info(
+          'download',
+          `Complete but kept Ignored: ${item.showName || item.name} S${pad2(item.seasonNumber)}E${pad2(item.episodeNumber)}`,
+          {
+            infoHash: shortInfoHash(item.infoHash || item.magnet) || item.infoHash || '',
+            reason: 'ignored override',
+          }
+        );
+      } else {
+        setEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber, 'downloaded');
+      }
       const res =
         item.downloadedResolution ||
         (item.savePath ? detectResolution(path.basename(item.savePath)) : null);

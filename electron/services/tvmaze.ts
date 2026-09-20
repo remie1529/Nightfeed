@@ -19,8 +19,9 @@ function todayISO(): string {
 
 /**
  * Resolve episode status.
- * Priority: downloading (derived) > file on disk > manual override > air-date compute.
- * Manual ignored/downloaded survive metadata refresh; disk presence always becomes downloaded.
+ * Priority: manual ignored > downloading (derived) > file on disk > other overrides > air-date.
+ * Ignored always wins — even when a file is already on disk or a download is active —
+ * so auto-hunt / upgrade / try-next never touch that episode after the user marks it Ignored.
  */
 export function resolveEpisodeStatus(
   airDate: string | null,
@@ -28,9 +29,9 @@ export function resolveEpisodeStatus(
   downloading: boolean,
   override?: EpisodeOverrideStatus | null
 ): EpisodeStatus {
+  if (override === 'ignored') return 'ignored';
   if (downloading) return 'downloading';
   if (localPath) return 'downloaded';
-  if (override === 'ignored') return 'ignored';
   if (override === 'downloaded') return 'downloaded';
   if (override === 'missing') return 'missing';
   if (override === 'upcoming') return 'upcoming';

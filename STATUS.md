@@ -1,6 +1,13 @@
 ## Nightfeed status
 
-**Current:** v2.3.2 — WebTorrent utilityProcess fix + floater respawn; concrete failure logs.
+**Current:** v2.3.3 — Ignored overrides on-disk / active downloads; auto paths skip.
+
+# Status v2.3.3
+
+## Fixed
+- Setting an episode to **Ignored** sticks after refresh even when the file is already on disk (status no longer flips back to Downloaded)
+- Active downloads for that episode are cancelled; auto hunt / upgrade / try-next never touch ignored episodes
+- Completing a download does not overwrite an Ignored override
 
 # Status v2.3.2
 

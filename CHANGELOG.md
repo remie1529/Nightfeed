@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.3
+
+- **Fix**: Episode **Ignored** now overrides everything — including when a file is already on disk or a download is active
+- Status resolve priority: ignored → downloading → on-disk downloaded → other overrides → air-date
+- Setting Ignored (episode or season) cancels any active download for that ep and remembers tried hashes; refresh keeps Ignored (not flipped back to Downloaded)
+- Download complete no longer writes a `downloaded` override if the user already set Ignored
+- Auto hunt / upgrade / try-next skip ignored (status or override); activity log notes when Ignored overrides a downloaded file or cancels a download
+- Manual Find stays available; no VPN changes
+
 ## 2.3.2
 
 - **Fix**: WebTorrent `utilityProcess` failed to start on packaged Windows builds because the unpacked entry could not `require()` WebTorrent's JS deps that live only inside `app.asar`
