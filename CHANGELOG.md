@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0
+
+- **Activity log**: Settings → Logging → **See log** opens an in-app viewer (not Notepad)
+- Timestamped lines for app start/quit, settings saves, library add/remove/refresh, monitor pause/resume, search start/results, download start/pause/resume/cancel/complete/fail/stuck-abandon/try-next, Telegram approve/deny, toasts/errors, and VPN connect/disconnect status changes (no VPN logic changes)
+- Daily log files under userData `logs/` with ~**7 day** auto-prune; secrets and full magnets omitted
+- Viewer: scrollable dark UI, newest-at-bottom toggle, live refresh, Copy, Open folder
+
 ## 2.2.1
 
 - **Downloads seeders**: show real connected seeder count from the torrent engine (no more confusing `0 / N L`); remove the Peers column

@@ -169,6 +169,17 @@ const api = {
     return () => ipcRenderer.removeListener('vpn:status', listener);
   },
 
+
+  getLog: (opts?: { maxBytes?: number }) => ipcRenderer.invoke('log:get', opts),
+  getLogTail: (opts?: { lines?: number }) => ipcRenderer.invoke('log:tail', opts),
+  openLogFolder: () => ipcRenderer.invoke('log:openFolder'),
+  getLogPath: () => ipcRenderer.invoke('log:path'),
+  onLogChanged: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('log:changed', listener);
+    return () => ipcRenderer.removeListener('log:changed', listener);
+  },
+
   onRequestsChanged: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on('requests:changed', listener);

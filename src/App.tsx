@@ -7,6 +7,7 @@ import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import Requests from './views/Requests';
 import SettingsView from './views/Settings';
+import LogView from './views/LogView';
 import LiveTvView from './views/LiveTv';
 import type { AppSettings, DownloadItem, Movie, UpdateStatus, VpnStatus } from './lib/types';
 
@@ -19,7 +20,8 @@ type View =
   | 'settings'
   | 'show'
   | 'movie'
-  | 'livetv';
+  | 'livetv'
+  | 'log';
 
 interface Toast {
   id: number;
@@ -197,7 +199,7 @@ export default function App() {
           </button>
         )}
         <button
-          className={`nav-item ${view === 'settings' ? 'active' : ''}`}
+          className={`nav-item ${view === 'settings' || view === 'log' ? 'active' : ''}`}
           onClick={() => setView('settings')}
         >
           Settings
@@ -253,7 +255,8 @@ export default function App() {
         {view === 'downloads' && <Downloads />}
         {view === 'requests' && <Requests refreshToken={requestsKey} />}
         {view === 'livetv' && liveTvOn && <LiveTvView />}
-        {view === 'settings' && <SettingsView />}
+        {view === 'settings' && <SettingsView onOpenLog={() => setView('log')} />}
+        {view === 'log' && <LogView onBack={() => setView('settings')} />}
       </main>
       <div className="toast-stack" aria-live="polite">
         {updateBanner && (

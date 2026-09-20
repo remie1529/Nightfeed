@@ -196,7 +196,7 @@ const empty: AppSettings = {
   liveTvFakeEpgDays: 2,
 };
 
-export default function SettingsView() {
+export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } = {}) {
   const [settings, setLocal] = useState<AppSettings>(empty);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -487,7 +487,7 @@ export default function SettingsView() {
       <div className="page-header">
         <div>
           <h1>Settings</h1>
-          <p>TV & movie libraries, downloads, VPN, auto-download, startup, Telegram, web portal, updates</p>
+          <p>TV & movie libraries, downloads, VPN, auto-download, startup, Telegram, web portal, logging, updates</p>
         </div>
         <div className="toolbar">
           {saved && <span style={{ color: 'var(--ok)' }}>Saved</span>}
@@ -1545,6 +1545,24 @@ export default function SettingsView() {
         </div>
       </div>
 
+        </SettingsSection>
+
+
+        <SettingsSection title="Logging">
+      <div className="field">
+        <label>Activity log</label>
+        <div className="hint" style={{ marginBottom: 10 }}>
+          Nightfeed records what it does (downloads, searches, library changes, monitor toggles,
+          settings saves, Telegram approve/deny, errors, and VPN connect/disconnect state) with a
+          date and time on each line. Logs are kept for about <strong>one week</strong>, then older
+          files are removed automatically. Secrets and full magnet links are not written.
+        </div>
+        <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="primary" onClick={() => onOpenLog?.()}>
+            See log
+          </button>
+        </div>
+      </div>
         </SettingsSection>
 
         <SettingsSection title="Backup" defaultOpen>
