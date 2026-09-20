@@ -1,6 +1,13 @@
 ## Nightfeed status
 
-**Current:** v2.3.0 — In-app activity log (Settings → Logging → See log), ~7 day retention.
+**Current:** v2.3.1 — Comprehensive activity log (hunt/pick/cancel reasons + full action trail).
+
+# Status v2.3.1
+
+## New
+- Activity log covers auto hunt checks, torrent choice reasons, cancel/abandon reasons, and most app actions (library, search, downloads, Telegram, updater, backup, Live TV, portal)
+- Skip reasons for ignored / not monitored / already downloading / below seeders / tried hashes / no candidates
+- Progress milestones at 25/50/75%; ~7 day retention unchanged; no VPN logic changes
 
 # Status v2.3.0
 
