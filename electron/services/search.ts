@@ -137,6 +137,84 @@ export function pickAutoDownload(
   return pool[0];
 }
 
+/** Plain-English why auto-pick found nothing (for activity log). */
+export function summarizeAutoRejects(
+  results: SearchResult[],
+  preferred: Resolution,
+  kind: 'episode' | 'movie',
+  rules?: QualityRules,
+  opts?: { upgrade?: boolean; triedSkipped?: number }
+): string {
+  const list = results || [];
+  const minS = effectiveMinSeeders(rules);
+  const minimum = rules?.minimum || preferred;
+  const upgrade = !!opts?.upgrade;
+  let noMagnet = 0;
+  let belowSeeders = 0;
+  let junk = 0;
+  let wrongRes = 0;
+  let sizeFail = 0;
+  let ok = 0;
+  for (const r of list) {
+    if (!r?.magnet) {
+      noMagnet += 1;
+      continue;
+    }
+    if ((r.seeders || 0) < minS) {
+      belowSeeders += 1;
+      continue;
+    }
+    if (isJunkRelease(r.title || '')) {
+      junk += 1;
+      continue;
+    }
+    if (upgrade) {
+      if (!r.resolution || resolutionRank(r.resolution) < resolutionRank(preferred)) {
+        wrongRes += 1;
+        continue;
+      }
+      if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) {
+        sizeFail += 1;
+        continue;
+      }
+    } else {
+      if (r.resolution && !meetsMinResolution(r.resolution, minimum)) {
+        wrongRes += 1;
+        continue;
+      }
+      if (!r.resolution && resolutionRank(preferred) > resolutionRank(minimum)) {
+        if (!sizeOkForAuto(r.size || 0, kind, minimum, rules)) {
+          sizeFail += 1;
+          continue;
+        }
+      } else if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) {
+        sizeFail += 1;
+        continue;
+      }
+    }
+    ok += 1;
+  }
+  const parts: string[] = [];
+  const tried = opts?.triedSkipped || 0;
+  if (!list.length && !tried) return 'no search results';
+  if (!list.length && tried) return `no results left after skipping ${tried} tried hash${tried === 1 ? '' : 'es'}`;
+  if (tried) parts.push(`${tried} already tried`);
+  if (belowSeeders) parts.push(`${belowSeeders} below min seeders (${minS})`);
+  if (wrongRes) {
+    parts.push(
+      upgrade
+        ? `${wrongRes} below preferred ${preferred}`
+        : `${wrongRes} below minimum ${minimum}`
+    );
+  }
+  if (junk) parts.push(`${junk} junk/cam`);
+  if (sizeFail) parts.push(`${sizeFail} size fail`);
+  if (noMagnet) parts.push(`${noMagnet} without magnet`);
+  if (ok) parts.push(`${ok} passed filters but none started`);
+  if (!parts.length) return `${list.length} result(s), none usable`;
+  return `${list.length} result(s): ${parts.join(', ')}`;
+}
+
 /** Prefer-or-better only — used when upgrading a below-preferred library copy. */
 export function pickUpgradeDownload(
   results: SearchResult[],

@@ -48,6 +48,7 @@ import {
   pickAutoDownload,
   pickUpgradeDownload,
   resolutionRank,
+  summarizeAutoRejects,
   type QualityRules,
 } from './services/search';
 import { searchEpisodeTorrents, searchMovieTorrents, destroySearchPool, getSearchPoolInfo } from './services/search-pool';
@@ -95,11 +96,13 @@ import {
   AddShowPolicy,
   AppSettings,
   CalendarEpisode,
+  DEFAULT_TORRENT_SOURCES,
   DownloadItem,
   Episode,
   EpisodeOverrideStatus,
   Movie,
   Resolution,
+  SearchResult,
   Show,
   ShowListItem,
   LiveTvChannel,
@@ -582,6 +585,85 @@ function isMonitored(item: { monitored?: boolean } | null | undefined): boolean 
   return item?.monitored !== false;
 }
 
+
+function shortInfoHash(hashOrMagnet?: string | null): string {
+  const raw = (hashOrMagnet || '').trim();
+  if (!raw) return '';
+  const fromMagnet = extractInfoHash(raw);
+  const h = (fromMagnet || raw).toLowerCase().replace(/[^a-f0-9]/g, '');
+  return h ? h.slice(0, 8) : '';
+}
+
+function enabledTorrentSourceIds(settings: AppSettings): string[] {
+  const src = { ...DEFAULT_TORRENT_SOURCES, ...(settings.torrentSources || {}) };
+  return (Object.keys(src) as Array<keyof typeof src>).filter((k) => !!(src as any)[k]).map(String);
+}
+
+function sourcesInResults(results: Array<{ source?: string }> | undefined): string {
+  const set = new Set<string>();
+  for (const r of results || []) {
+    if (r?.source) set.add(String(r.source));
+  }
+  return set.size ? Array.from(set).sort().join(',') : '(none)';
+}
+
+function describeTorrentChoice(
+  best: {
+    title?: string;
+    magnet?: string;
+    infoHash?: string;
+    resolution?: Resolution | null;
+    seeders?: number;
+    source?: string;
+  },
+  opts: {
+    preferred: Resolution;
+    upgrade?: boolean;
+    triedSkipped: number;
+    healthyCount: number;
+    mode: 'auto' | 'upgrade' | 'try-next' | 'manual';
+  }
+): string {
+  const title = String(best.title || 'torrent').slice(0, 120);
+  const hash = shortInfoHash(best.infoHash || best.magnet);
+  const bits: string[] = [`"${title}"`];
+  if (hash) bits.push(`hash ${hash}`);
+  if (best.resolution) bits.push(String(best.resolution));
+  else {
+    const guessed = detectResolution(title);
+    if (guessed) bits.push(guessed);
+  }
+  if (typeof best.seeders === 'number') bits.push(`${best.seeders} seeders`);
+  if (best.source) bits.push(`via ${best.source}`);
+  const why: string[] = [];
+  if (opts.mode === 'try-next') why.push('next after abandon/reject');
+  else if (opts.mode === 'upgrade' || opts.upgrade) why.push('upgrade hunt');
+  else if (opts.mode === 'manual') why.push('manual start');
+  else why.push('auto hunt');
+  const res = best.resolution || detectResolution(title);
+  if (res === opts.preferred) why.push(`preferred ${opts.preferred}`);
+  else if (res) why.push(`${res} (preferred ${opts.preferred})`);
+  else why.push(`preferred ${opts.preferred}`);
+  if (typeof best.seeders === 'number') why.push(`${best.seeders} seeders`);
+  if (opts.triedSkipped > 0) {
+    why.push(`skipped ${opts.triedSkipped} tried hash${opts.triedSkipped === 1 ? '' : 'es'}`);
+  }
+  if (opts.healthyCount > 0) {
+    why.push(`highest rank of ${opts.healthyCount} healthy`);
+  }
+  return `${bits.join(', ')} — ${why.join(', ')}`;
+}
+
+function cancelReasonFromError(error?: string | null): string {
+  const e = (error || '').trim();
+  if (!e) return 'rejected';
+  if (/no progress for 1 hour/i.test(e)) return '1h no progress (stuck)';
+  if (/below minimum|too small|resolution/i.test(e)) return `quality reject (${e})`;
+  if (/\.exe|non-video|payload/i.test(e)) return `exe/payload reject (${e})`;
+  return e;
+}
+
+
 function toCandidates(results: Array<{ magnet: string; infoHash?: string; title?: string }>): TorrentCandidate[] {
   return (results || [])
     .filter((r) => r?.magnet)
@@ -734,19 +816,47 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
     }
   }
 
-  activityLog.warn('download', `Try next after reject/stuck: ${item.name}`, {
+  const abandonReason = cancelReasonFromError(item.error);
+  activityLog.warn('download', `Abandon: ${item.name}`, {
+    reason: abandonReason,
+    infoHash: shortInfoHash(item.infoHash || item.magnet) || item.infoHash || '',
     error: item.error || '',
-    infoHash: item.infoHash || '',
   });
   notify(`Skipped: ${item.error || 'bad torrent'} — trying another for ${item.name}`, 'warn');
 
   if (!next?.magnet) {
+    activityLog.warn('download', `No alternative after abandon: ${item.name}`, {
+      reason: abandonReason,
+      tried: tried.size,
+    });
     notify(`No alternative torrents after skipping ${item.name}`, 'error');
     pushDownloads({ persist: 'now' });
     return;
   }
 
   const triedList = Array.from(tried);
+  const preferredForNext = (
+    item.kind === 'movie'
+      ? (getMovies().find((m) => m.tmdbId === item.movieId)?.preferredResolution ||
+          settings.defaultMovieResolution ||
+          settings.defaultResolution)
+      : (getShows().find((s) => s.tmdbId === item.showId)?.preferredResolution ||
+          settings.defaultResolution)
+  ) as Resolution;
+  const nextRes = detectResolution(next.title || '');
+  activityLog.info(
+    'download',
+    `Chose next: ${describeTorrentChoice(
+      { title: next.title, magnet: next.magnet, infoHash: next.infoHash, resolution: nextRes },
+      {
+        preferred: preferredForNext,
+        triedSkipped: triedList.length,
+        healthyCount: candidates.length,
+        mode: 'try-next',
+      }
+    )}`,
+    { replacing: item.name, reason: abandonReason }
+  );
   try {
     if (item.kind === 'movie' && item.movieId != null) {
       const movie = getMovies().find((m) => m.tmdbId === item.movieId);
@@ -782,6 +892,10 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
     }
     pushDownloads({ persist: 'now' });
   } catch (err) {
+    activityLog.error(
+      'download',
+      `Failed to start next torrent for ${item.name}: ${err instanceof Error ? err.message : String(err)}`
+    );
     notify(
       `Failed to start next torrent: ${err instanceof Error ? err.message : String(err)}`,
       'error'
@@ -792,11 +906,17 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
 async function maybeFtpUpload(localPath: string | undefined, label: string): Promise<void> {
   const settings = getSettings();
   if (!settings.ftpEnabled || !localPath) return;
+  activityLog.info('ftp', `Upload start: ${label}`);
   try {
     await uploadFinishedFile(settings, localPath);
+    activityLog.info('ftp', `Upload ok: ${label}`);
     notify(`FTP uploaded: ${label}`, 'ok');
   } catch (err) {
     // Local success stands; never undo. Never include password in message.
+    activityLog.warn(
+      'ftp',
+      `Upload failed: ${label}: ${err instanceof Error ? err.message : String(err)}`
+    );
     notify(`FTP upload failed: ${err instanceof Error ? err.message : String(err)}`, 'warn');
   }
 }
@@ -916,26 +1036,51 @@ async function autoDownloadForShows(
   const settings = getSettings();
   // Telegram-approved requests may force a download pass even when autoDownload is off.
   const force = !!(notifyCtx?.notifyChatId || notifyCtx?.telegramRequestId);
-  if (!settings.autoDownload && !force) return 0;
-  if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+  if (!settings.autoDownload && !force) {
+    activityLog.info('hunt', 'Auto hunt skipped: auto-download is off');
     return 0;
   }
-  if (autoDownloadRunning) return 0;
+  if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+    activityLog.info('hunt', 'Auto hunt held: VPN required but not connected', {
+      vpnHold: true,
+    });
+    return 0;
+  }
+  if (autoDownloadRunning) {
+    activityLog.info('hunt', 'Auto hunt skipped: already running');
+    return 0;
+  }
   autoDownloadRunning = true;
   let started = 0;
+  const sourceIds = enabledTorrentSourceIds(settings);
+  activityLog.info(
+    'hunt',
+    `Auto hunt start: ${shows.length} show(s)${force ? ' (forced)' : ''}`,
+    { sources: sourceIds.join(',') || '(none)' }
+  );
   try {
     const delayMs = Math.max(0, (settings.autoDownloadDelayMinutes || 0) * 60 * 1000);
     for (const show of shows) {
       // Per-show pause: skip hunting unless this is an explicit Telegram/web approval force.
-      if (!isMonitored(show) && !force) continue;
+      if (!isMonitored(show) && !force) {
+        activityLog.info('hunt', `Skipped show: ${show.name} (monitoring paused)`);
+        continue;
+      }
       const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
       const rules = qualityRules('episode', preferred, show);
       type EpJob = { ep: Episode; upgrade: boolean };
       const jobs: EpJob[] = [];
+      let ignored = 0;
+      let alreadyDl = 0;
+      let haveOk = 0;
       for (const season of show.seasons || []) {
         for (const ep of season.episodes || []) {
-          if (ep.status === 'ignored') continue;
+          if (ep.status === 'ignored') {
+            ignored += 1;
+            continue;
+          }
           if (downloadEngine.hasEpisodeActivity(show.tmdbId, ep.seasonNumber, ep.episodeNumber)) {
+            alreadyDl += 1;
             continue;
           }
           if (ep.status === 'missing' || ep.status === 'aired') {
@@ -947,16 +1092,30 @@ async function autoDownloadForShows(
             const current = currentLibraryResolution(ep.localPath, ep.downloadedResolution);
             if (needsPreferredUpgrade(current, preferred)) {
               jobs.push({ ep, upgrade: true });
+            } else {
+              haveOk += 1;
             }
           }
         }
       }
+      activityLog.info(
+        'hunt',
+        `Scan show: ${show.name} — ${jobs.length} to check (${jobs.filter((j) => j.upgrade).length} upgrade), skipped ${ignored} ignored / ${alreadyDl} already downloading / ${haveOk} have preferred`,
+        { preferred, mazeId: show.tmdbId }
+      );
       for (const { ep, upgrade } of jobs) {
+        const epLabel = `${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
         if (downloadEngine.hasEpisodeActivity(show.tmdbId, ep.seasonNumber, ep.episodeNumber)) {
+          activityLog.info('hunt', `Skipped ${epLabel}: already downloading`);
           continue;
         }
         try {
-          const { results } = await searchEpisodeTorrents(
+          activityLog.info(
+            'hunt',
+            `Checking episode: ${epLabel} (${upgrade ? 'upgrade' : 'missing'})`,
+            { preferred, sources: sourceIds.join(',') || '(none)' }
+          );
+          const { results, error: searchErr } = await searchEpisodeTorrents(
             settings,
             show.name,
             ep.seasonNumber,
@@ -966,16 +1125,46 @@ async function autoDownloadForShows(
           );
           const triedList = loadTriedForEpisode(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
           const pool = filterResultsSkippingTried(results, triedList);
+          const triedSkipped = (results?.length || 0) - pool.length;
+          activityLog.info(
+            'search',
+            `Auto episode search: ${epLabel} — ${results?.length || 0} result(s)`,
+            {
+              sourcesHit: sourcesInResults(results),
+              triedSkipped,
+              error: searchErr || '',
+            }
+          );
           const best = upgrade
             ? pickUpgradeDownload(pool, preferred, 'episode', rules)
             : pickAutoDownload(pool, preferred, 'episode', rules);
-          if (!best?.magnet) continue;
+          if (!best?.magnet) {
+            activityLog.info(
+              'hunt',
+              `Skipped ${epLabel}: no candidates — ${summarizeAutoRejects(pool, preferred, 'episode', rules, {
+                upgrade,
+                triedSkipped,
+              })}`
+            );
+            continue;
+          }
           const candidates = toHealthyPreferredCandidates(
             pool,
             preferred,
             'episode',
             show,
             upgrade
+          );
+          activityLog.info(
+            'download',
+            `Chose torrent: ${describeTorrentChoice(best, {
+              preferred,
+              upgrade,
+              triedSkipped,
+              healthyCount: candidates.length,
+              mode: upgrade ? 'upgrade' : 'auto',
+            })}`,
+            { episode: epLabel }
           );
           await downloadEngine.start({
             magnet: best.magnet,
@@ -998,14 +1187,18 @@ async function autoDownloadForShows(
           );
           if (delayMs > 0) await sleep(delayMs);
           else await sleep(800);
-        } catch {
-          // skip failed episode; continue others
+        } catch (err) {
+          activityLog.warn(
+            'hunt',
+            `Episode check failed: ${epLabel}: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
       }
     }
   } finally {
     autoDownloadRunning = false;
   }
+  activityLog.info('hunt', `Auto hunt done: started ${started} download(s)`);
   if (started > 0) {
     notify(`Started ${started} auto-download${started === 1 ? '' : 's'}`, 'ok');
   }
@@ -1037,11 +1230,20 @@ async function autoDownloadMovie(
 ): Promise<boolean> {
   const settings = getSettings();
   const force = !!(notifyCtx?.notifyChatId || notifyCtx?.telegramRequestId);
-  if (!isMonitored(movie) && !force) return false;
-  if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+  if (!isMonitored(movie) && !force) {
+    activityLog.info('hunt', `Skipped movie: ${movie.title} (monitoring paused)`);
     return false;
   }
-  if (downloadEngine.hasMovieActivity(movie.tmdbId)) return false;
+  if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+    activityLog.info('hunt', `Auto movie hunt held: ${movie.title} (VPN required but not connected)`, {
+      vpnHold: true,
+    });
+    return false;
+  }
+  if (downloadEngine.hasMovieActivity(movie.tmdbId)) {
+    activityLog.info('hunt', `Skipped movie: ${movie.title} (already downloading)`);
+    return false;
+  }
   const preferred = (movie.preferredResolution ||
     settings.defaultMovieResolution ||
     settings.defaultResolution) as Resolution;
@@ -1054,8 +1256,20 @@ async function autoDownloadMovie(
       preferred
     );
   // Missing/forced downloads always; upgrades only when allowUpgrade.
-  if (live.status === 'downloaded' && !upgrade) return false;
-  if (live.status !== 'missing' && live.status !== 'downloaded' && !notifyCtx) return false;
+  if (live.status === 'downloaded' && !upgrade) {
+    activityLog.info('hunt', `Skipped movie: ${movie.title} (already have / no upgrade needed)`);
+    return false;
+  }
+  if (live.status !== 'missing' && live.status !== 'downloaded' && !notifyCtx) {
+    activityLog.info('hunt', `Skipped movie: ${movie.title} (status ${live.status})`);
+    return false;
+  }
+  const sourceIds = enabledTorrentSourceIds(settings);
+  activityLog.info(
+    'hunt',
+    `Checking movie: ${movie.title}${movie.releaseYear ? ` (${movie.releaseYear})` : ''} (${upgrade ? 'upgrade' : 'missing'})`,
+    { preferred, sources: sourceIds.join(',') || '(none)' }
+  );
   const res = await searchMovieTorrents(
     settings,
     movie.title,
@@ -1065,11 +1279,41 @@ async function autoDownloadMovie(
   const rules = qualityRules('movie', preferred);
   const triedList = loadTriedForMovie(movie.tmdbId);
   const pool = filterResultsSkippingTried(res.results, triedList);
+  const triedSkipped = (res.results?.length || 0) - pool.length;
+  activityLog.info(
+    'search',
+    `Auto movie search: ${movie.title} — ${res.results?.length || 0} result(s)`,
+    {
+      sourcesHit: sourcesInResults(res.results),
+      triedSkipped,
+      error: res.error || '',
+    }
+  );
   const best = upgrade
     ? pickUpgradeDownload(pool, preferred, 'movie', rules)
     : pickAutoDownload(pool, preferred, 'movie', rules);
-  if (!best?.magnet) return false;
+  if (!best?.magnet) {
+    activityLog.info(
+      'hunt',
+      `Skipped movie ${movie.title}: no candidates — ${summarizeAutoRejects(pool, preferred, 'movie', rules, {
+        upgrade,
+        triedSkipped,
+      })}`
+    );
+    return false;
+  }
   const candidates = toHealthyPreferredCandidates(pool, preferred, 'movie', null, upgrade);
+  activityLog.info(
+    'download',
+    `Chose torrent: ${describeTorrentChoice(best, {
+      preferred,
+      upgrade,
+      triedSkipped,
+      healthyCount: candidates.length,
+      mode: upgrade ? 'upgrade' : 'auto',
+    })}`,
+    { movie: movie.title }
+  );
   await downloadEngine.startMovie({
     magnet: best.magnet,
     movie: movieForDownload(movie),
@@ -1093,20 +1337,29 @@ async function autoUpgradeMovies(): Promise<number> {
   const settings = getSettings();
   if (!settings.autoDownload) return 0;
   if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+    activityLog.info('hunt', 'Movie upgrade hunt held: VPN required but not connected', {
+      vpnHold: true,
+    });
     return 0;
   }
+  const movies = getMovies();
+  activityLog.info('hunt', `Movie upgrade hunt start: ${movies.length} movie(s)`);
   let started = 0;
-  for (const movie of getMovies()) {
+  for (const movie of movies) {
     try {
       const ok = await autoDownloadMovie(movie, undefined, { allowUpgrade: true });
       if (ok) {
         started += 1;
         await sleep(800);
       }
-    } catch {
-      // continue
+    } catch (err) {
+      activityLog.warn(
+        'hunt',
+        `Movie upgrade check failed: ${movie.title}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
+  activityLog.info('hunt', `Movie upgrade hunt done: started ${started}`);
   return started;
 }
 
@@ -1210,6 +1463,9 @@ function applySettingsSideEffects(next: AppSettings): void {
   telegramBot.sync(next);
   const portalSettings = ensureWebPortalSecrets(next);
   webPortal.sync(portalSettings);
+  activityLog.info('portal', 'Web portal settings applied', {
+    enabled: !!portalSettings.webPortalEnabled,
+  });
   liveTv.sync(next);
   downloadEngine.applySettings({
     maxConnections: next.maxConnections,
@@ -1229,11 +1485,16 @@ function applySettingsSideEffects(next: AppSettings): void {
 
 
 async function refreshAllShows(): Promise<Show[]> {
+  activityLog.info('library', 'Scheduled/manual refresh all + auto hunt');
   const updated: Show[] = [];
   for (const show of getShows()) {
     try {
       updated.push(await refreshOne(show));
-    } catch {
+    } catch (err) {
+      activityLog.warn(
+        'library',
+        `Refresh failed: ${show.name}: ${err instanceof Error ? err.message : String(err)}`
+      );
       updated.push(show);
     }
     await new Promise<void>((r) => setImmediate(r));
@@ -1241,13 +1502,18 @@ async function refreshAllShows(): Promise<Show[]> {
   emitLibraryChanged();
   await autoDownloadForShows(updated);
   await autoUpgradeMovies();
+  activityLog.info('library', `Refresh all finished (${updated.length} show(s))`);
   return updated;
 }
 
 function scheduleRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
   const minutes = getSettings().refreshIntervalMinutes;
-  if (!minutes || minutes <= 0) return;
+  if (!minutes || minutes <= 0) {
+    activityLog.info('library', 'Scheduled refresh disabled');
+    return;
+  }
+  activityLog.info('library', `Scheduled refresh every ${minutes} min`);
   refreshTimer = setInterval(() => {
     void refreshAllShows().catch(() => undefined);
   }, minutes * 60 * 1000);
@@ -1269,7 +1535,11 @@ async function restorePersistedDownloads(): Promise<void> {
       d.savePath &&
       (d.status === 'downloading' || d.status === 'queued' || d.status === 'paused')
   );
-  if (!pending.length) return;
+  if (!pending.length) {
+    activityLog.info('download', 'Restore: no persisted downloads');
+    return;
+  }
+  activityLog.info('download', `Restore: ${pending.length} persisted download(s)`);
   const settings = getSettings();
   let restored = 0;
   for (const item of pending) {
@@ -1323,6 +1593,7 @@ async function restorePersistedDownloads(): Promise<void> {
     pushDownloads({ persist: 'now' });
     notify(`Resumed ${restored} download${restored === 1 ? '' : 's'} from last session`, 'info');
   }
+  activityLog.info('download', `Restore done: ${restored} resumed`);
 }
 
 async function importShowFromScan(mazeId: number, folderPath: string): Promise<Show> {
@@ -1536,6 +1807,7 @@ function setupAutoUpdater() {
     updateState.checking = true;
     updateState.error = null;
     updateState.message = 'Checking for updates…';
+    activityLog.info('updater', 'Checking for updates');
     pushUpdateStatus();
   });
 
@@ -1546,6 +1818,7 @@ function setupAutoUpdater() {
     updateState.progress = 0;
     updateState.version = info.version || null;
     updateState.message = `Update ${info.version} available — downloading…`;
+    activityLog.info('updater', `Update available: v${info.version}`);
     pushUpdateStatus();
     notify(`Update ${info.version} found — downloading installer…`, 'info');
     void downloadAppUpdate();
@@ -1557,6 +1830,7 @@ function setupAutoUpdater() {
     updateState.progress = null;
     updateState.version = info.version || app.getVersion();
     updateState.message = `Up to date (v${info.version || app.getVersion()})`;
+    activityLog.info('updater', `Up to date (v${info.version || app.getVersion()})`);
     pushUpdateStatus();
   });
 
@@ -1573,6 +1847,7 @@ function setupAutoUpdater() {
     updateState.progress = null;
     updateState.error = formatUpdateError(err);
     updateState.message = updateState.error;
+    activityLog.error('updater', `Update error: ${updateState.error}`);
     pushUpdateStatus();
   });
 
@@ -1584,6 +1859,7 @@ function setupAutoUpdater() {
     updateState.version = info.version || updateState.version;
     updateState.error = null;
     updateState.message = `Update ${updateState.version} ready — restart to install`;
+    activityLog.info('updater', `Update downloaded: v${updateState.version}`);
     pushUpdateStatus();
     notify(`Update ${updateState.version} ready — restart to install`, 'ok');
   });
@@ -2166,6 +2442,11 @@ async function submitPendingMediaRequest(input: {
   };
   upsertTelegramRequest(req);
   emitRequestsChanged();
+  activityLog.info('telegram', `New request: ${req.title}`, {
+    id: req.id,
+    mediaType: req.mediaType,
+    source: req.source || '',
+  });
 
   const typeLabel = input.mediaType === 'movie' ? 'Movie' : 'TV show';
   const who =
@@ -2209,6 +2490,10 @@ async function resolveTelegramRequest(
   const settings = getSettings();
 
   if (action === 'denied') {
+    activityLog.info('telegram', `Denied request: ${req.title}`, {
+      id: req.id,
+      mediaType: req.mediaType,
+    });
     const updated: TelegramRequest = {
       ...req,
       status: 'denied',
@@ -2241,6 +2526,10 @@ async function resolveTelegramRequest(
           telegramRequestId: req.id,
         };
   try {
+    activityLog.info('telegram', `Approved request: ${req.title}`, {
+      id: req.id,
+      mediaType: req.mediaType,
+    });
     if (req.mediaType === 'show') {
       const show = await addShowWithPolicy(req.mediaId, 'manual');
       // Kick off search+download with Telegram notify tags on each item.
@@ -2410,17 +2699,30 @@ function registerIpc() {
   // Manual folder mass-import (never auto-runs)
   ipcMain.handle('library:scanPreview', async (_e, scope: LibraryScanScope) => {
     const settings = getSettings();
-    return buildScanPreview(
+    activityLog.info('library', `Folder scan preview (${scope || 'both'})`);
+    const preview = await buildScanPreview(
       scope || 'both',
       tvRoots(settings),
       movieRoots(settings),
       getShows(),
       getMovies()
     );
+    activityLog.info(
+      'library',
+      `Folder scan preview done: ${preview?.candidates?.length || 0} candidate(s)`
+    );
+    return preview;
   });
 
   ipcMain.handle('library:scanImport', async (_e, items: FolderScanImportItem[]) => {
-    return runFolderScanImport(items || []);
+    const selected = (items || []).filter((i) => i.selected && i.matchId);
+    activityLog.info('library', `Folder scan import start: ${selected.length} selected`);
+    const result = await runFolderScanImport(items || []);
+    activityLog.info(
+      'library',
+      `Folder scan import done: added ${result.added}, skipped ${result.skipped}, failed ${result.failed}`
+    );
+    return result;
   });
 
 
@@ -2479,7 +2781,10 @@ function registerIpc() {
       removeShow(id);
       if (getShows().length < before) n += 1;
     }
-    if (n) emitLibraryChanged();
+    if (n) {
+      activityLog.info('library', `Bulk removed ${n} show(s)`);
+      emitLibraryChanged();
+    }
     return { removed: n };
   });
 
@@ -2588,6 +2893,10 @@ function registerIpc() {
         throw new Error(`Invalid status: ${status}`);
       }
       setEpisodeOverride(tmdbId, season, episode, status);
+      activityLog.info(
+        'library',
+        `Episode status: ${show.name} S${pad2(season)}E${pad2(episode)} → ${status}`
+      );
       const updated = withLocalStatuses(show);
       upsertShow(updated);
       emitLibraryChanged();
@@ -2616,6 +2925,10 @@ function registerIpc() {
       const updated = withLocalStatuses(show);
       upsertShow(updated);
       emitLibraryChanged();
+      activityLog.info(
+        'library',
+        `Season status: ${show.name} S${pad2(season)} → ${status} (${Object.keys(entries).length} eps)`
+      );
       notify(
         `Season ${season}: set ${Object.keys(entries).length} episode(s) to ${status}`,
         'ok'
@@ -2629,8 +2942,10 @@ function registerIpc() {
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) throw new Error('Show not found');
     const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
+    const sources = enabledTorrentSourceIds(settings);
     activityLog.info('search', `Episode search start: ${show.name} S${pad2(season)}E${pad2(episode)}`, {
       preferred,
+      sources: sources.join(',') || '(none)',
     });
     const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred, {
       imdbId: show.imdbId,
@@ -2639,7 +2954,7 @@ function registerIpc() {
     activityLog.info(
       'search',
       `Episode search done: ${show.name} S${pad2(season)}E${pad2(episode)} — ${res.results?.length || 0} result(s)`,
-      { error: res.error || '' }
+      { sourcesHit: sourcesInResults(res.results), error: res.error || '' }
     );
     // Partial source errors are returned in res.error but must not wipe other results
     if (res.error && !res.results.length) {
@@ -2681,11 +2996,26 @@ function registerIpc() {
         triedInfoHashes: triedList,
         quality: qualityRules('episode', preferred, show),
       });
-      activityLog.info('download', `Start: ${item?.name || show.name}`, {
-        infoHash: item?.infoHash || extractInfoHash(payload.magnet) || '',
-        S: payload.season,
-        E: payload.episode,
-      });
+      const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
+      const startTitle = item?.name || payload.episodeTitle || show.name;
+      activityLog.info(
+        'download',
+        `Start (manual): ${describeTorrentChoice(
+          {
+            title: startTitle,
+            magnet: payload.magnet,
+            infoHash: startHash,
+            resolution: detectResolution(startTitle),
+          },
+          {
+            preferred,
+            triedSkipped: triedList.length,
+            healthyCount: candidates.length,
+            mode: 'manual',
+          }
+        )}`,
+        { S: payload.season, E: payload.episode, infoHash: shortInfoHash(startHash) || startHash }
+      );
       pushDownloads({ persist: 'now' });
       return item;
     }
@@ -2695,21 +3025,30 @@ function registerIpc() {
   ipcMain.handle('download:pause', (_e, id: string) => {
     const item = downloadEngine.list().find((d) => d.id === id);
     downloadEngine.pause(id);
-    activityLog.info('download', `Pause: ${item?.name || id}`, { infoHash: item?.infoHash || '' });
+    activityLog.info('download', `Pause: ${item?.name || id}`, {
+      reason: 'user pause',
+      infoHash: shortInfoHash(item?.infoHash || item?.magnet) || item?.infoHash || '',
+    });
     pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:resume', (_e, id: string) => {
     assertVpnAllowsTorrents();
     const item = downloadEngine.list().find((d) => d.id === id);
     downloadEngine.resume(id);
-    activityLog.info('download', `Resume: ${item?.name || id}`, { infoHash: item?.infoHash || '' });
+    activityLog.info('download', `Resume: ${item?.name || id}`, {
+      reason: 'user resume',
+      infoHash: shortInfoHash(item?.infoHash || item?.magnet) || item?.infoHash || '',
+    });
     pushDownloads({ persist: 'now' });
   });
   ipcMain.handle('download:cancel', (_e, id: string) => {
     const item = downloadEngine.list().find((d) => d.id === id);
     if (item) rememberTriedFromItem(item);
     downloadEngine.cancel(id);
-    activityLog.info('download', `Cancel: ${item?.name || id}`, { infoHash: item?.infoHash || '' });
+    activityLog.info('download', `Cancel: ${item?.name || id}`, {
+      reason: 'user cancel',
+      infoHash: shortInfoHash(item?.infoHash || item?.magnet) || item?.infoHash || '',
+    });
     pushDownloads({ persist: 'now' });
   });
 
@@ -2799,7 +3138,10 @@ function registerIpc() {
       removeMovie(id);
       if (getMovies().length < before) n += 1;
     }
-    if (n) mainWindow?.webContents.send('movies:changed');
+    if (n) {
+      activityLog.info('library', `Bulk removed ${n} movie(s)`);
+      mainWindow?.webContents.send('movies:changed');
+    }
     return { removed: n };
   });
 
@@ -2851,7 +3193,11 @@ function registerIpc() {
     const preferred = (movie.preferredResolution ||
       settings.defaultMovieResolution ||
       settings.defaultResolution) as Resolution;
-    activityLog.info('search', `Movie search start: ${movie.title}`, { preferred });
+    const sources = enabledTorrentSourceIds(settings);
+    activityLog.info('search', `Movie search start: ${movie.title}`, {
+      preferred,
+      sources: sources.join(',') || '(none)',
+    });
     const res = await searchMovieTorrents(
       settings,
       movie.title,
@@ -2861,7 +3207,7 @@ function registerIpc() {
     activityLog.info(
       'search',
       `Movie search done: ${movie.title} — ${res.results?.length || 0} result(s)`,
-      { error: res.error || '' }
+      { sourcesHit: sourcesInResults(res.results), error: res.error || '' }
     );
     if (res.error && !res.results.length) {
       notify(res.error, 'warn');
@@ -2902,9 +3248,26 @@ function registerIpc() {
         triedInfoHashes: triedList,
         quality: qualityRules('movie', preferred),
       });
-      activityLog.info('download', `Start movie: ${item?.name || movie.title}`, {
-        infoHash: item?.infoHash || extractInfoHash(payload.magnet) || '',
-      });
+      const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
+      const startTitle = item?.name || movie.title;
+      activityLog.info(
+        'download',
+        `Start movie (manual): ${describeTorrentChoice(
+          {
+            title: startTitle,
+            magnet: payload.magnet,
+            infoHash: startHash,
+            resolution: detectResolution(startTitle),
+          },
+          {
+            preferred,
+            triedSkipped: triedList.length,
+            healthyCount: candidates.length,
+            mode: 'manual',
+          }
+        )}`,
+        { infoHash: shortInfoHash(startHash) || startHash }
+      );
       // Mark downloading in store for UI
       upsertMovie(withMovieLocalStatus(movie));
       pushDownloads({ persist: 'now' });
@@ -2923,6 +3286,7 @@ function registerIpc() {
     if (canceled || !filePath) return { ok: false, canceled: true };
     const fs = await import('fs/promises');
     await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+    activityLog.info('backup', 'Exported backup', { path: filePath });
     return { ok: true, path: filePath };
   });
 
@@ -2958,11 +3322,23 @@ function registerIpc() {
     emitLibraryChanged();
     mainWindow?.webContents.send('movies:changed');
     pushDownloads({ persist: 'skip' });
+    activityLog.info('backup', 'Imported backup', {
+      path: filePaths[0],
+      ...Object.fromEntries(
+        Object.entries(counts || {}).map(([k, v]) => [k, v])
+      ),
+    });
     return { ok: true, ...counts, path: filePaths[0] };
   });
 
     ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
-  ipcMain.handle('telegram:test', async () => telegramBot.sendTest(getSettings()));
+  ipcMain.handle('telegram:test', async () => {
+    activityLog.info('telegram', 'Sending test message');
+    const r = await telegramBot.sendTest(getSettings());
+    if (r?.ok) activityLog.info('telegram', 'Test message sent');
+    else activityLog.warn('telegram', `Test message failed: ${r?.error || 'unknown'}`);
+    return r;
+  });
   ipcMain.handle('requests:list', async () => {
     const all = getTelegramRequests();
     return enrichTelegramRequests(all);
@@ -2976,21 +3352,21 @@ function registerIpc() {
       if (action !== 'approved' && action !== 'denied') {
         return { ok: false, message: 'Invalid action' };
       }
-      const req = getTelegramRequest(String(id || ''));
       const result = await resolveTelegramRequest(String(id || ''), action, 0);
-      activityLog.info(
-        'telegram',
-        `${action === 'approved' ? 'Approved' : 'Denied'} request: ${req?.title || id}`,
-        { id, action }
-      );
       return result;
     }
   );
   ipcMain.handle('liveTv:status', () => liveTv.getStatus(getSettings()));
   ipcMain.handle('liveTv:channels', () => getLiveTvLineup().map(withLogoPreview));
-  ipcMain.handle('liveTv:refresh', async () => liveTv.refreshSources());
+  ipcMain.handle('liveTv:refresh', async () => {
+    activityLog.info('livetv', 'Refreshing Live TV sources');
+    const r = await liveTv.refreshSources();
+    activityLog.info('livetv', 'Live TV sources refreshed');
+    return r;
+  });
   ipcMain.handle('liveTv:setChannels', (_e, channels: LiveTvChannel[]) => {
     if (!Array.isArray(channels)) return getLiveTvLineup();
+    activityLog.info('livetv', `Saving Live TV lineup (${channels.length} channel(s))`);
     setLiveTvLineup(
       channels.map((c, i) => ({
         id: String(c.id || ''),
@@ -3047,6 +3423,7 @@ function registerIpc() {
   ipcMain.handle('update:download', async () => downloadAppUpdate());
   ipcMain.handle('update:install', async () => {
     if (!updateState.downloaded) return;
+    activityLog.info('updater', `Installing update v${updateState.version || '?'}`);
     try {
       downloadEngine.destroy();
     } catch {
@@ -3104,6 +3481,10 @@ function registerIpc() {
     });
     if (res.canceled || !res.filePaths[0]) return { canceled: true };
     const imported = await vpnManager.importConfig(res.filePaths[0]);
+    activityLog.info('vpn', `Imported OpenVPN config: ${imported.configName || 'config'}`, {
+      // path only — never credentials
+      path: imported.configPath || '',
+    });
     const next = setSettings({
       vpnConfigPath: imported.configPath,
       vpnConfigName: imported.configName,
@@ -3118,6 +3499,7 @@ function registerIpc() {
     if (!s.vpnConfigPath) {
       throw new Error('Import an .ovpn file first');
     }
+    activityLog.info('vpn', 'Connect requested');
     // password never logged
     await vpnManager.connect({
       configPath: s.vpnConfigPath,
@@ -3130,6 +3512,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('vpn:disconnect', async () => {
+    activityLog.info('vpn', 'Disconnect requested');
     await vpnManager.disconnect();
     applyTorrentBindFromVpn();
     pushVpnStatus();
@@ -3196,7 +3579,34 @@ app.whenReady().then(async () => {
   });
   await ensureTorrentEngine();
   // Wire progress listeners BEFORE restore so the first promotions are not dropped.
-  downloadEngine.on('update', () => pushDownloads({ persist: 'debounce' }));
+  const progressMilestones = new Map<string, number>();
+  downloadEngine.on('update', () => {
+    try {
+      for (const d of downloadEngine.list()) {
+        if (d.status !== 'downloading') continue;
+        const pct = Math.floor((d.progress || 0) * 100);
+        const prev = progressMilestones.get(d.id) || 0;
+        let next = prev;
+        for (const mark of [25, 50, 75]) {
+          if (pct >= mark && prev < mark) next = mark;
+        }
+        if (next > prev) {
+          progressMilestones.set(d.id, next);
+          activityLog.info('download', `Progress ${next}%: ${d.name}`, {
+            infoHash: shortInfoHash(d.infoHash || d.magnet) || d.infoHash || '',
+          });
+        }
+      }
+      for (const id of [...progressMilestones.keys()]) {
+        if (!downloadEngine.list().some((d) => d.id === id && d.status === 'downloading')) {
+          progressMilestones.delete(id);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    pushDownloads({ persist: 'debounce' });
+  });
   // Apply bind/VPN/processFolder before re-queuing persisted downloads.
   {
     const settings = getSettings();
@@ -3219,11 +3629,15 @@ app.whenReady().then(async () => {
     );
   }
   downloadEngine.on('reject-exe', (item: DownloadItem) => {
-    activityLog.warn('download', `Reject/stuck-abandon: ${item?.name || 'download'}`, {
+    activityLog.warn('download', `Cancel/abandon: ${item?.name || 'download'}`, {
+      reason: cancelReasonFromError(item?.error),
+      infoHash: shortInfoHash(item?.infoHash || item?.magnet) || item?.infoHash || '',
       error: item?.error || '',
-      infoHash: item?.infoHash || '',
     });
     void tryNextAfterExeReject(item);
+  });
+  downloadEngine.on('engine-error', (msg: string) => {
+    activityLog.error('download', `Engine error: ${msg || 'unknown'}`);
   });
   downloadEngine.on('done', (item: DownloadItem & { downloadedResolution?: Resolution }) => {
     if (item?.kind === 'movie' && item.movieId != null) {
@@ -3253,7 +3667,7 @@ app.whenReady().then(async () => {
     }
     if (item?.name) {
       activityLog.info('download', `Complete: ${item.name}`, {
-        infoHash: item.infoHash || '',
+        infoHash: shortInfoHash(item.infoHash || item.magnet) || item.infoHash || '',
         kind: item.kind || '',
       });
       notify(`Finished: ${item.name}`, 'ok');

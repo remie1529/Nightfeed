@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.3.1
+
+- **Richer activity log**: See log now trails essentially every meaningful action with timestamps
+- Auto hunt: which shows/movies are scanned, each episode/movie check, skip reasons (monitoring paused, ignored, already downloading, already have, below min seeders, tried hashes, no candidates)
+- Torrent choice in plain words (title, short infoHash, resolution, seeders, preferred/upgrade/try-next, skipped tried hashes)
+- Cancel/abandon always includes reason (user cancel, 1h stuck, exe/quality reject, replaced by next)
+- Also: refresh/scan/import, episode/season status, backup, requests/Telegram, updater, FTP, Live TV, portal apply, download progress milestones (25/50/75%), restore-after-restart
+- Still omits passwords, tokens, VPN credentials, and full magnet URIs (~7 day retention unchanged)
+- No VPN/OpenVPN/bind/split-tunnel logic changes
+
 ## 2.3.0
 
 - **Activity log**: Settings → Logging → **See log** opens an in-app viewer (not Notepad)
