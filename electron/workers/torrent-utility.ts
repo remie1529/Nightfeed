@@ -2,6 +2,7 @@
  * Electron utilityProcess entry — hosts WebTorrent DownloadEngine off the UI/main process.
  * Communicates with main via process.parentPort message RPC.
  */
+import './utility-module-paths';
 import { DownloadEngine, isIgnorableTorrentSocketError } from '../services/engine';
 import type { DownloadItem, Movie, Show, TorrentCandidate } from '../types';
 

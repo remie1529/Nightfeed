@@ -1,6 +1,15 @@
 ## Nightfeed status
 
-**Current:** v2.3.1 — Comprehensive activity log (hunt/pick/cancel reasons + full action trail).
+**Current:** v2.3.2 — WebTorrent utilityProcess fix + floater respawn; concrete failure logs.
+
+# Status v2.3.2
+
+## Fixed
+- Packaged Windows: download `utilityProcess` can resolve WebTorrent deps from `app.asar` when the entry runs from `app.asar.unpacked`
+- Activity log shows concrete failure (path / stderr / exit); toast no longer implies “need more workers”
+
+## New
+- Floater download worker: one active utilityProcess; auto-respawn with backoff on failure and hand off the queue; UI-process fallback only after floater budget is exhausted
 
 # Status v2.3.1
 

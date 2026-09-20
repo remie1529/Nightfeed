@@ -785,10 +785,9 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
           />
           <div className="hint">
             Higher values can improve throughput when many peers are available. Default 200.
-            WebTorrent peer I/O uses many connections; piece hashing and peer churn run in an
-            Electron <code>utilityProcess</code> when available (separate from the UI process).
-            Torrent search merge/dedupe/ranking runs on a <code>worker_threads</code> pool
-            (up to 4 workers / CPU cores). Progress IPC is throttled (~1s); download store writes are debounced so Library search stays responsive.
+            Downloads use one Electron <code>utilityProcess</code> helper (piece hashing &amp; peers off the UI), with an automatic floater respawn if that helper dies.
+            Library search uses a separate <code>worker_threads</code> pool (up to 4 / CPU cores) — that is unrelated to downloads.
+            Progress IPC is throttled (~1s); download store writes are debounced so search stays responsive.
           </div>
         </div>
 

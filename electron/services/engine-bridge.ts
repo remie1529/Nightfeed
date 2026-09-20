@@ -1,12 +1,15 @@
 /**
  * Download engine facade for the Electron main process.
  * Prefers Electron utilityProcess (WebTorrent + piece hashing off the UI process).
- * Falls back to in-process DownloadEngine if utilityProcess cannot start.
+ * One active download worker + floater respawns on failure; in-process only as last resort.
  */
 import { EventEmitter } from 'events';
-import { resolveDistElectronAsset } from './asset-path';
+import fs from 'fs';
+import path from 'path';
+import { resolveDistElectronAsset, buildUtilityProcessEnv } from './asset-path';
 import { utilityProcess, app } from 'electron';
 import { DownloadEngine, EngineSettings } from './engine';
+import { activityLog } from './activity-log';
 import { DownloadItem, Movie, Show, TorrentCandidate } from '../types';
 
 type StartEpisodeOpts = {
@@ -32,6 +35,119 @@ type StartMovieOpts = {
   telegramRequestId?: string;
 };
 
+export type UtilityStartFailure = {
+  pathTried: string;
+  pathExists: boolean;
+  forkError?: string;
+  exitCode?: number | null;
+  timedOut?: boolean;
+  stderr?: string;
+  stdout?: string;
+  attempt: number;
+  note?: string;
+};
+
+/** Primary + floater forks before giving up on utilityProcess. */
+const MAX_UTILITY_SPAWNS = 6;
+const FLOATER_BACKOFF_MS = 500;
+
+let lastUtilityFailure: UtilityStartFailure | null = null;
+
+export function getLastUtilityFailure(): UtilityStartFailure | null {
+  return lastUtilityFailure;
+}
+
+function summarizeFailure(f: UtilityStartFailure): string {
+  const bits: string[] = [];
+  bits.push(`path=${f.pathTried}`);
+  bits.push(`exists=${f.pathExists ? 'yes' : 'no'}`);
+  if (f.forkError) bits.push(`forkError=${f.forkError}`);
+  if (f.timedOut) bits.push('timedOut=yes');
+  if (f.exitCode !== undefined && f.exitCode !== null) bits.push(`exit=${f.exitCode}`);
+  if (f.stderr) bits.push(`stderr=${f.stderr.slice(0, 800)}`);
+  if (f.stdout && !f.stderr) bits.push(`stdout=${f.stdout.slice(0, 400)}`);
+  if (f.note) bits.push(f.note);
+  return bits.join(' | ');
+}
+
+function logUtilityFailure(f: UtilityStartFailure, level: 'warn' | 'error' = 'warn'): void {
+  lastUtilityFailure = f;
+  const msg = `WebTorrent utilityProcess start failed (spawn ${f.attempt}): ${summarizeFailure(f)}`;
+  console.error(`[engine-bridge] ${msg}`);
+  try {
+    activityLog[level]('download', msg, {
+      path: f.pathTried,
+      exists: f.pathExists,
+      exit: f.exitCode ?? '',
+      timedOut: !!f.timedOut,
+    });
+  } catch {
+    // activity log may not be ready very early
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Rebuild start opts from a cached item so a floater can resume the queue. */
+function synthesizeOpts(item: DownloadItem): StartEpisodeOpts | StartMovieOpts {
+  const save = item.savePath || '';
+  if (item.kind === 'movie') {
+    const movieLibraryRoot = save ? path.dirname(save) : '';
+    const movie = {
+      id: item.movieId || item.showId,
+      tmdbId: item.movieId || item.showId,
+      title: item.showName || item.name,
+      overview: '',
+      posterPath: null,
+      backdropPath: null,
+      releaseDate: null,
+      releaseYear: null,
+      runtime: null,
+      status: 'downloading' as const,
+      addedAt: '',
+    } satisfies Movie;
+    return {
+      magnet: item.magnet || '',
+      movie,
+      movieLibraryRoot,
+      candidates: item.candidates,
+      triedInfoHashes: item.triedInfoHashes,
+      notifyChatId: item.notifyChatId,
+      telegramRequestId: item.telegramRequestId,
+    };
+  }
+  // savePath is usually .../Show/Season N/.nf-work-... — library root ≈ show dir parent
+  const seasonDir = save ? path.dirname(save) : '';
+  const showDir = seasonDir ? path.dirname(seasonDir) : '';
+  const libraryRoot = showDir ? path.dirname(showDir) : '';
+  const show = {
+    id: item.showId,
+    tmdbId: item.showId,
+    name: item.showName || item.name,
+    overview: '',
+    posterPath: null,
+    backdropPath: null,
+    firstAirDate: null,
+    status: '',
+    seasons: [],
+    addedAt: '',
+  } satisfies Show;
+  return {
+    magnet: item.magnet || '',
+    show,
+    libraryRoot,
+    seasonNumber: item.seasonNumber,
+    episodeNumber: item.episodeNumber,
+    episodeTitle: item.episodeTitle || '',
+    candidates: item.candidates,
+    triedInfoHashes: item.triedInfoHashes,
+    notifyChatId: item.notifyChatId,
+    telegramRequestId: item.telegramRequestId,
+  };
+}
+
 class UtilityEngineProxy extends EventEmitter {
   private child: Electron.UtilityProcess | null = null;
   private ready = false;
@@ -39,38 +155,158 @@ class UtilityEngineProxy extends EventEmitter {
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private cachedItems: DownloadItem[] = [];
   private startPromise: Promise<boolean> | null = null;
+  private spawnsUsed = 0;
+  private everReady = false;
+  private permanentlyFailed = false;
+  private needsRehydrate = false;
+  private floaterLaunching = false;
+  private lastSettings: EngineSettings | null = null;
 
   async ensureStarted(): Promise<boolean> {
     if (this.ready && this.child) return true;
+    if (this.permanentlyFailed) return false;
     if (this.startPromise) return this.startPromise;
-    this.startPromise = (async () => {
-      // Prefer utilityProcess; one retry if first fork times out / fails.
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        const ok = await this.fork();
-        if (ok) return true;
-        console.error(`[engine-bridge] utilityProcess attempt ${attempt} failed`);
-        this.child = null;
-        this.ready = false;
-        if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
-      }
+    this.startPromise = this.spawnWithBudget().then((ok) => {
       this.startPromise = null;
-      return false;
-    })();
+      if (!ok) this.permanentlyFailed = true;
+      return ok;
+    });
     return this.startPromise;
   }
 
-  private fork(): Promise<boolean> {
+  private async spawnWithBudget(): Promise<boolean> {
+    while (this.spawnsUsed < MAX_UTILITY_SPAWNS) {
+      this.spawnsUsed += 1;
+      const attempt = this.spawnsUsed;
+      const isFloater = this.everReady || this.needsRehydrate;
+      if (isFloater) {
+        activityLog.info(
+          'download',
+          `Launching floater download worker (spawn ${attempt}/${MAX_UTILITY_SPAWNS})`
+        );
+      }
+      const ok = await this.fork(attempt, isFloater);
+      if (ok) {
+        this.everReady = true;
+        if (this.needsRehydrate) {
+          this.needsRehydrate = false;
+          await this.rehydrateAfterFloater();
+        }
+        return true;
+      }
+      this.child = null;
+      this.ready = false;
+      if (this.spawnsUsed < MAX_UTILITY_SPAWNS) {
+        const delay = Math.min(
+          8000,
+          Math.round(FLOATER_BACKOFF_MS * Math.pow(1.8, Math.max(0, attempt - 1)))
+        );
+        activityLog.info(
+          'download',
+          `Download worker spawn ${attempt} failed — retrying in ${delay}ms (${MAX_UTILITY_SPAWNS - this.spawnsUsed} left)`
+        );
+        await sleep(delay);
+      }
+    }
+    return false;
+  }
+
+  private async rehydrateAfterFloater(): Promise<void> {
+    activityLog.info('download', 'Floater ready — re-applying settings and handing off queue');
+    try {
+      if (this.lastSettings) {
+        await this.call('applySettings', { settings: this.lastSettings });
+      }
+    } catch (err) {
+      activityLog.warn(
+        'download',
+        `Floater applySettings failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    const active = this.cachedItems.filter(
+      (i) =>
+        (i.status === 'downloading' || i.status === 'queued' || i.status === 'paused') &&
+        !!(i.magnet && i.magnet.trim())
+    );
+    let restored = 0;
+    for (const item of active) {
+      try {
+        const res = await this.call('restore', { item, opts: synthesizeOpts(item) });
+        if (res?.item) this.upsertCachedItem(res.item);
+        restored += 1;
+      } catch (err) {
+        activityLog.warn(
+          'download',
+          `Floater could not restore: ${item.name}`,
+          { error: err instanceof Error ? err.message : String(err) }
+        );
+      }
+    }
+    try {
+      await this.call('kickQueue');
+    } catch {
+      // ignore
+    }
+    this.emit('update', this.cachedItems);
+    activityLog.info(
+      'download',
+      `Floater handoff done: restored ${restored}/${active.length} download(s)`
+    );
+  }
+
+  private fork(attempt: number, isFloater: boolean): Promise<boolean> {
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(ok);
+      };
+
       try {
         const script = resolveDistElectronAsset('torrent-utility.js');
+        const pathExists = fs.existsSync(script);
+        const stderrChunks: string[] = [];
+        const stdoutChunks: string[] = [];
+
+        if (!pathExists) {
+          logUtilityFailure({
+            pathTried: script,
+            pathExists: false,
+            attempt,
+            note: 'torrent-utility.js missing (asarUnpack / build issue)',
+          });
+          finish(false);
+          return;
+        }
+
+        activityLog.info('download', `Starting WebTorrent utilityProcess`, {
+          path: script,
+          attempt,
+          floater: isFloater,
+          packaged: !!app.isPackaged,
+        });
+
         const child = utilityProcess.fork(script, [], {
-          serviceName: 'torrent-engine',
+          serviceName: isFloater ? 'torrent-engine-floater' : 'torrent-engine',
           stdio: 'pipe',
+          env: buildUtilityProcessEnv(),
         });
         this.child = child;
 
         const timer = setTimeout(() => {
-          console.error('[engine-bridge] utilityProcess ready timeout');
+          const failure: UtilityStartFailure = {
+            pathTried: script,
+            pathExists: true,
+            timedOut: true,
+            attempt,
+            stderr: stderrChunks.join('').trim().slice(0, 1200) || undefined,
+            stdout: stdoutChunks.join('').trim().slice(0, 600) || undefined,
+            note: isFloater
+              ? 'floater: no ready message within 20s'
+              : 'no ready message within 20s',
+          };
+          logUtilityFailure(failure);
           try {
             child.kill();
           } catch {
@@ -78,14 +314,21 @@ class UtilityEngineProxy extends EventEmitter {
           }
           this.child = null;
           this.ready = false;
-          resolve(false);
+          finish(false);
         }, 20000);
 
         child.on('message', (msg: any) => {
           if (msg?.type === 'ready') {
             clearTimeout(timer);
             this.ready = true;
-            resolve(true);
+            activityLog.info(
+              'download',
+              isFloater
+                ? 'Floater WebTorrent utilityProcess ready'
+                : 'WebTorrent utilityProcess ready',
+              { path: script, attempt }
+            );
+            finish(true);
             return;
           }
           if (msg?.type === 'reply' && typeof msg.requestId === 'number') {
@@ -111,28 +354,111 @@ class UtilityEngineProxy extends EventEmitter {
         });
 
         child.on('exit', (code) => {
+          const wasReady = this.ready;
+          const hadBeenReady = this.everReady;
           console.error('[engine-bridge] utilityProcess exited', code);
+          clearTimeout(timer);
           this.ready = false;
           this.child = null;
+          this.startPromise = null;
           for (const [, p] of this.pending) {
             p.reject(new Error('Torrent utility process exited'));
           }
           this.pending.clear();
+
+          if (!settled) {
+            logUtilityFailure({
+              pathTried: script,
+              pathExists: true,
+              exitCode: code,
+              attempt,
+              stderr: stderrChunks.join('').trim().slice(0, 1200) || undefined,
+              stdout: stdoutChunks.join('').trim().slice(0, 600) || undefined,
+              note: isFloater ? 'floater exited before ready' : 'exited before ready',
+            });
+            finish(false);
+            return;
+          }
+
+          // Unexpected death after ready — launch floater if budget remains.
+          if (wasReady || hadBeenReady) {
+            const detail = `exit=${code}${
+              stderrChunks.length ? ` stderr=${stderrChunks.join('').trim().slice(0, 400)}` : ''
+            }`;
+            activityLog.warn(
+              'download',
+              `Download utilityProcess exited unexpectedly (${detail})`
+            );
+            this.emit('engine-error', `Torrent utility process exited (${code})`);
+            this.scheduleFloater();
+          }
         });
 
         child.stdout?.on('data', (buf: Buffer) => {
-          const s = buf.toString().trim();
-          if (s) console.log('[torrent-utility]', s);
+          const s = buf.toString();
+          stdoutChunks.push(s);
+          const t = s.trim();
+          if (t) console.log('[torrent-utility]', t);
         });
         child.stderr?.on('data', (buf: Buffer) => {
-          const s = buf.toString().trim();
-          if (s) console.error('[torrent-utility]', s);
+          const s = buf.toString();
+          stderrChunks.push(s);
+          const t = s.trim();
+          if (t) console.error('[torrent-utility]', t);
         });
       } catch (err) {
-        console.error('[engine-bridge] fork failed', err);
-        resolve(false);
+        const script = resolveDistElectronAsset('torrent-utility.js');
+        logUtilityFailure({
+          pathTried: script,
+          pathExists: fs.existsSync(script),
+          forkError: err instanceof Error ? err.message : String(err),
+          attempt,
+        });
+        finish(false);
       }
     });
+  }
+
+  private scheduleFloater(): void {
+    if (this.floaterLaunching || this.permanentlyFailed) return;
+    if (this.spawnsUsed >= MAX_UTILITY_SPAWNS) {
+      activityLog.error(
+        'download',
+        'Download worker floater budget exhausted — in-process fallback needed'
+      );
+      this.permanentlyFailed = true;
+      this.emit('utility-dead');
+      return;
+    }
+    this.floaterLaunching = true;
+    this.needsRehydrate = true;
+    activityLog.info(
+      'download',
+      `Primary download worker died — spawning floater (${MAX_UTILITY_SPAWNS - this.spawnsUsed} attempt(s) left)`
+    );
+    void this.ensureStarted()
+      .then((ok) => {
+        this.floaterLaunching = false;
+        if (ok) {
+          activityLog.info('download', 'Floater download worker is active');
+        } else {
+          activityLog.error(
+            'download',
+            `Floater download worker unavailable. ${
+              lastUtilityFailure ? summarizeFailure(lastUtilityFailure) : ''
+            }`
+          );
+          this.emit('utility-dead');
+        }
+      })
+      .catch((err) => {
+        this.floaterLaunching = false;
+        activityLog.error(
+          'download',
+          `Floater launch error: ${err instanceof Error ? err.message : String(err)}`
+        );
+        this.emit('utility-dead');
+      });
   }
 
   private call(type: string, payload: Record<string, unknown> = {}): Promise<any> {
@@ -149,7 +475,6 @@ class UtilityEngineProxy extends EventEmitter {
     });
   }
 
-
   private upsertCachedItem(item: DownloadItem): void {
     const idx = this.cachedItems.findIndex((i) => i.id === item.id);
     if (idx < 0) {
@@ -157,19 +482,24 @@ class UtilityEngineProxy extends EventEmitter {
       return;
     }
     const prev = this.cachedItems[idx];
-    // Never let a stale RPC reply downgrade an in-flight download back to queued.
     if (prev.status === 'downloading' && item.status === 'queued') {
-      this.cachedItems[idx] = { ...item, status: 'downloading', progress: Math.max(prev.progress || 0, item.progress || 0) };
+      this.cachedItems[idx] = {
+        ...item,
+        status: 'downloading',
+        progress: Math.max(prev.progress || 0, item.progress || 0),
+      };
       return;
     }
     this.cachedItems[idx] = item;
   }
 
   applySettings(settings: EngineSettings): void {
+    this.lastSettings = settings;
     void this.call('applySettings', { settings }).catch(() => undefined);
   }
 
   async applySettingsAsync(settings: EngineSettings): Promise<void> {
+    this.lastSettings = settings;
     await this.call('applySettings', { settings });
   }
 
@@ -278,6 +608,7 @@ class UtilityEngineProxy extends EventEmitter {
   }
 
   destroy(): void {
+    this.permanentlyFailed = true;
     void this.call('destroy').catch(() => undefined);
     try {
       this.child?.kill();
@@ -286,6 +617,7 @@ class UtilityEngineProxy extends EventEmitter {
     }
     this.child = null;
     this.ready = false;
+    this.startPromise = null;
     this.cachedItems = [];
   }
 }
@@ -296,9 +628,35 @@ class EngineFacade extends EventEmitter {
   private initPromise: Promise<void> | null = null;
   private pendingSettings: EngineSettings | null = null;
   private _tempLocal: DownloadEngine | null = null;
+  private proxy: UtilityEngineProxy | null = null;
 
   getMode(): 'utilityProcess' | 'in-process' {
     return this.mode;
+  }
+
+  private switchToInProcess(reason: string): void {
+    if (this.mode === 'in-process' && this.backend && !(this.backend instanceof UtilityEngineProxy)) {
+      return;
+    }
+    activityLog.warn('download', `Falling back to in-process WebTorrent: ${reason}`);
+    const local = new DownloadEngine();
+    local.on('update', (items) => this.emit('update', items));
+    local.on('done', (item) => this.emit('done', item));
+    local.on('reject-exe', (item) => this.emit('reject-exe', item));
+    local.on('engine-error', (msg) => this.emit('engine-error', msg));
+    if (this.pendingSettings) {
+      local.applySettings(this.pendingSettings);
+    }
+    // Best-effort: keep UI list; new downloads will use in-process engine.
+    try {
+      this.proxy?.destroy();
+    } catch {
+      // ignore
+    }
+    this.backend = local;
+    this.mode = 'in-process';
+    this.proxy = null;
+    this.emit('fallback-in-process', reason);
   }
 
   ensureReady(): Promise<void> {
@@ -306,7 +664,7 @@ class EngineFacade extends EventEmitter {
     if (this.initPromise) return this.initPromise;
     this.initPromise = (async () => {
       const proxy = new UtilityEngineProxy();
-      // Forward events
+      this.proxy = proxy;
       const forward = (event: string) => {
         proxy.on(event, (...args: unknown[]) => this.emit(event, ...args));
       };
@@ -314,14 +672,24 @@ class EngineFacade extends EventEmitter {
       forward('done');
       forward('reject-exe');
       forward('engine-error');
+      proxy.on('utility-dead', () => {
+        if (this.mode === 'utilityProcess') {
+          this.switchToInProcess('floater budget exhausted after utilityProcess failure');
+        }
+      });
 
       const ok = await proxy.ensureStarted();
       if (ok) {
         this.backend = proxy;
         this.mode = 'utilityProcess';
       } else {
+        const detail = lastUtilityFailure ? summarizeFailure(lastUtilityFailure) : 'unknown';
         console.error(
-          '[engine-bridge] utilityProcess unavailable — falling back to in-process WebTorrent (may contend with UI/search IPC)'
+          `[engine-bridge] utilityProcess unavailable after floater retries — in-process (${detail})`
+        );
+        activityLog.warn(
+          'download',
+          `Download worker unavailable after floater retries — using UI process. ${detail}`
         );
         const local = new DownloadEngine();
         local.on('update', (items) => this.emit('update', items));
@@ -335,6 +703,7 @@ class EngineFacade extends EventEmitter {
         } catch {
           // ignore
         }
+        this.proxy = null;
       }
       if (this._tempLocal) {
         try {
@@ -354,8 +723,6 @@ class EngineFacade extends EventEmitter {
 
   private syncBackend(): UtilityEngineProxy | DownloadEngine {
     if (!this.backend) {
-      // Init still pending — use a temporary empty local until ensureReady finishes.
-      // Do not set this.backend permanently here (would race with utilityProcess).
       void this.ensureReady();
       if (!this._tempLocal) {
         this._tempLocal = new DownloadEngine();
@@ -431,7 +798,6 @@ class EngineFacade extends EventEmitter {
     if ('restore' in backend && typeof (backend as any).restore === 'function') {
       return (backend as any).restore(item, opts);
     }
-    // Fallback: re-start with same magnet (new id) — prefer restore when available
     if ((item.kind === 'movie' || (opts as StartMovieOpts).movie) && (opts as StartMovieOpts).movie) {
       return this.startMovie(opts as StartMovieOpts);
     }
@@ -467,12 +833,19 @@ export function getTorrentEngineInfo(): {
   detail: string;
 } {
   const mode = downloadEngine.getMode();
+  if (mode === 'utilityProcess') {
+    return {
+      mode,
+      detail:
+        'WebTorrent in utilityProcess (one download worker + floater respawn on failure)',
+    };
+  }
+  const fail = lastUtilityFailure;
   return {
     mode,
-    detail:
-      mode === 'utilityProcess'
-        ? 'WebTorrent runs in Electron utilityProcess (piece hashing & peer churn off the UI process)'
-        : 'WebTorrent on main process (utilityProcess unavailable)',
+    detail: fail
+      ? `WebTorrent on UI process (download worker unavailable: ${summarizeFailure(fail)})`
+      : 'WebTorrent on UI process (download worker unavailable)',
   };
 }
 
@@ -480,7 +853,6 @@ export async function ensureTorrentEngine(): Promise<void> {
   await downloadEngine.ensureReady();
 }
 
-// Kick off as soon as the module loads once app can fork
 if (app.isReady()) {
   void downloadEngine.ensureReady();
 } else {

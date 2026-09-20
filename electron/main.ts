@@ -57,7 +57,7 @@ import {
   applyMovieLocalStatus,
   fetchMovieDetail,
 } from './services/imdb';
-import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo } from './services/engine-bridge';
+import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo, getLastUtilityFailure } from './services/engine-bridge';
 import { isIgnorableTorrentSocketError } from './services/engine';
 import {
   approveDenyKeyboard,
@@ -3623,11 +3623,35 @@ app.whenReady().then(async () => {
   await restorePersistedDownloads();
   downloadEngine.kickQueue();
   if (getTorrentEngineInfo().mode === 'in-process') {
+    const fail = getLastUtilityFailure();
+    const why = fail
+      ? `path=${fail.pathTried}; exists=${fail.pathExists ? 'yes' : 'no'}` +
+        (fail.forkError ? `; fork=${fail.forkError}` : '') +
+        (fail.timedOut ? '; timedOut' : '') +
+        (fail.exitCode != null ? `; exit=${fail.exitCode}` : '') +
+        (fail.stderr ? `; stderr=${String(fail.stderr).slice(0, 240)}` : '') +
+        (fail.note ? `; ${fail.note}` : '')
+      : getTorrentEngineInfo().detail;
+    activityLog.warn('download', `Download worker unavailable; using UI process until restart. ${why}`);
     notify(
-      'WebTorrent utilityProcess failed — downloads run on the UI process. Library search still uses a worker.',
+      'Download worker unavailable — using UI process until restart. See log for details.',
       'warn'
     );
+  } else {
+    activityLog.info('download', 'Download engine: utilityProcess (one worker + floater on failure)');
   }
+
+  downloadEngine.on('fallback-in-process', (reason: string) => {
+    const fail = getLastUtilityFailure();
+    const extra = fail
+      ? `path=${fail.pathTried}; exit=${fail.exitCode ?? ''}; ${fail.stderr ? String(fail.stderr).slice(0, 160) : fail.note || ''}`
+      : reason || '';
+    activityLog.warn('download', `Switched to UI process mid-session: ${reason || 'unknown'}${extra ? ` | ${extra}` : ''}`);
+    notify(
+      'Download worker unavailable — using UI process until restart. See log for details.',
+      'warn'
+    );
+  });
   downloadEngine.on('reject-exe', (item: DownloadItem) => {
     activityLog.warn('download', `Cancel/abandon: ${item?.name || 'download'}`, {
       reason: cancelReasonFromError(item?.error),

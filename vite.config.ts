@@ -45,6 +45,24 @@ export default defineConfig({
             emptyOutDir: false,
             rollupOptions: {
               external: electronExternal,
+              output: {
+                // Run before any hoisted require('webtorrent') in the CJS bundle.
+                intro: `
+(function () {
+  try {
+    var path = require('path');
+    var Module = require('module');
+    var mark = path.sep + 'app.asar.unpacked' + path.sep;
+    if (typeof __dirname === 'string' && __dirname.indexOf(mark) !== -1) {
+      var resourcesDir = path.resolve(__dirname, '..', '..');
+      [path.join(resourcesDir, 'app.asar.unpacked', 'node_modules'),
+       path.join(resourcesDir, 'app.asar', 'node_modules')].forEach(function (p) {
+        if (Module.globalPaths.indexOf(p) === -1) Module.globalPaths.push(p);
+      });
+    }
+  } catch (e) {}
+})();`.trim(),
+              },
             },
           },
         },
