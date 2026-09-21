@@ -24,6 +24,8 @@ import {
   triedEpisodeKey,
   triedMovieKey,
   getEpisodeOverride,
+  getEpisodeOverrides,
+  getEpisodeResolutions,
   setEpisodeOverride,
   setEpisodeResolution,
   setLastDailyBriefingDate,
@@ -54,6 +56,13 @@ import {
 } from './services/search';
 import { searchEpisodeTorrents, searchMovieTorrents, destroySearchPool, getSearchPoolInfo } from './services/search-pool';
 import { searchShowsMeta, searchMoviesMeta, destroyMetadataPool, getMetadataPoolInfo } from './services/metadata-pool';
+import {
+  refreshAllViaPool,
+  fetchShowsViaPool,
+  scanPreviewViaPool,
+  destroyLibraryPool,
+  getLibraryPoolInfo,
+} from './services/library-pool';
 import {
   applyMovieLocalStatus,
   fetchMovieDetail,
@@ -88,7 +97,6 @@ import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
 import os from 'os';
 import {
-  buildScanPreview,
   type FolderScanImportItem,
   type FolderScanImportResult,
   type LibraryScanScope,
@@ -584,6 +592,13 @@ function yieldMain(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function episodeMetaMaps() {
+  return {
+    overrides: getEpisodeOverrides(),
+    resolutions: getEpisodeResolutions(),
+  };
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -974,7 +989,13 @@ async function maybeFtpUpload(localPath: string | undefined, label: string): Pro
 
 function withLocalStatuses(show: Show): Show {
   const s = getSettings();
-  return applyLocalStatuses(show, s.libraryRoot, downloadingKeys(), tvRoots(s));
+  return applyLocalStatuses(
+    show,
+    s.libraryRoot,
+    downloadingKeys(),
+    tvRoots(s),
+    episodeMetaMaps()
+  );
 }
 
 let libraryChangedTimer: NodeJS.Timeout | null = null;
@@ -1072,7 +1093,8 @@ async function refreshOne(show: Show): Promise<Show> {
     settings.libraryRoot,
     show,
     downloadingKeys(),
-    tvRoots(settings)
+    tvRoots(settings),
+    episodeMetaMaps()
   );
   upsertShow(detailed);
   return detailed;
@@ -1247,6 +1269,7 @@ async function autoDownloadForShows(
             `Episode check failed: ${epLabel}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
+        await yieldMain();
       }
       await yieldMain();
     }
@@ -1492,33 +1515,36 @@ async function autoUpgradeMovies(): Promise<number> {
 
 async function runRefreshAllShows(): Promise<Show[]> {
   const t0 = Date.now();
+  const settings = getSettings();
   const shows = getShows();
   activityLog.info('library', `Refresh all start: ${shows.length} show(s)`);
   emitRefreshAllProgress({ phase: 'refresh', current: 0, total: shows.length });
+
+  const { shows: refreshed, failed, usedWorker } = await refreshAllViaPool({
+    shows,
+    libraryRoot: settings.libraryRoot,
+    extraRoots: tvRoots(settings),
+    downloadingKeys: Array.from(downloadingKeys()),
+    overrides: getEpisodeOverrides(),
+    resolutions: getEpisodeResolutions(),
+    onProgress: (p) => {
+      emitRefreshAllProgress({
+        phase: 'refresh',
+        current: p.current,
+        total: p.total,
+        label: p.label,
+      });
+    },
+    onWarn: (message) => activityLog.warn('library', message),
+  });
+
   const updated: Show[] = [];
-  let failed = 0;
-  let i = 0;
-  for (const show of shows) {
-    i += 1;
-    emitRefreshAllProgress({
-      phase: 'refresh',
-      current: i,
-      total: shows.length,
-      label: show.name,
-    });
-    try {
-      updated.push(await refreshOne(show));
-    } catch (err) {
-      failed += 1;
-      activityLog.warn(
-        'library',
-        `Refresh failed: ${show.name}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      updated.push(show);
-    }
-    // Yield every show so Settings/Downloads IPC and Chromium painting stay responsive.
-    await yieldMain();
+  for (const show of refreshed) {
+    upsertShow(show);
+    updated.push(show);
   }
+  // Tiny yield so library:changed / progress paint before hunt starts.
+  await yieldMain();
   emitLibraryChanged();
   emitRefreshAllProgress({ phase: 'hunt', current: 0, total: updated.length });
   const huntStarted = await autoDownloadForShows(updated);
@@ -1527,7 +1553,8 @@ async function runRefreshAllShows(): Promise<Show[]> {
   const sec = (ms / 1000).toFixed(1);
   activityLog.info(
     'library',
-    `Refresh all finished (${updated.length} show(s), ${failed} failed) in ${sec}s — hunt started ${huntStarted}, movie upgrades ${movieStarted}`
+    `Refresh all finished (${updated.length} show(s), ${failed} failed) in ${sec}s — hunt started ${huntStarted}, movie upgrades ${movieStarted}`,
+    { worker: usedWorker ? 'library-worker' : 'main-fallback' }
   );
   emitRefreshAllProgress({
     phase: 'done',
@@ -1541,6 +1568,7 @@ async function runRefreshAllShows(): Promise<Show[]> {
     huntStarted,
     movieStarted,
     durationMs: ms,
+    usedWorker,
   });
   return updated;
 }
@@ -1789,7 +1817,14 @@ async function importShowFromScan(mazeId: number, folderPath: string): Promise<S
     seasons: [],
     addedAt: new Date().toISOString(),
   } as Show;
-  let show = await fetchShowDetail(mazeId, settings.libraryRoot, shell, downloadingKeys(), tvRoots(settings));
+  let show = await fetchShowDetail(
+    mazeId,
+    settings.libraryRoot,
+    shell,
+    downloadingKeys(),
+    tvRoots(settings),
+    episodeMetaMaps()
+  );
   show = { ...show, libraryPath: folderPath || show.libraryPath };
   show = withLocalStatuses(show);
   upsertShow(show);
@@ -1850,50 +1885,77 @@ async function runFolderScanImport(items: FolderScanImportItem[]): Promise<Folde
   };
   const selected = (items || []).filter((i) => i.selected && i.matchId);
   const total = selected.length;
-  for (let i = 0; i < selected.length; i++) {
-    const item = selected[i];
+  const settings = getSettings();
+
+  const showItems = selected.filter((i) => i.kind === 'show');
+  const movieItems = selected.filter((i) => i.kind === 'movie');
+
+  // TV: fetch metadata + disk index on the library worker (batch).
+  const toFetch = showItems.filter((i) => !getShows().some((s) => s.tmdbId === i.matchId));
+  result.skipped += showItems.length - toFetch.length;
+  if (toFetch.length) {
+    const { shows, failed, errors, usedWorker } = await fetchShowsViaPool({
+      items: toFetch.map((i) => ({ mazeId: i.matchId, folderPath: i.folderPath })),
+      libraryRoot: settings.libraryRoot,
+      extraRoots: tvRoots(settings),
+      downloadingKeys: Array.from(downloadingKeys()),
+      overrides: getEpisodeOverrides(),
+      resolutions: getEpisodeResolutions(),
+      onProgress: (p) => {
+        mainWindow?.webContents.send('library:scanProgress', {
+          current: p.current,
+          total: p.total || toFetch.length,
+          phase: 'importing',
+          label: p.label || '',
+        });
+      },
+    });
+    activityLog.info(
+      'library',
+      `Folder scan TV fetch: ${shows.length} ok, ${failed} failed`,
+      { worker: usedWorker ? 'library-worker' : 'main-fallback' }
+    );
+    for (const err of errors) result.errors.push(err);
+    result.failed += failed;
+    for (let show of shows) {
+      upsertShow(show);
+      const ignoreEntries = ignoreAiredEpisodes(show);
+      if (Object.keys(ignoreEntries).length) {
+        setEpisodeOverridesBulk(ignoreEntries);
+        show = withLocalStatuses(show);
+        upsertShow(show);
+      }
+      result.added += 1;
+      result.addedTitles.push(show.name);
+    }
+  }
+
+  for (let i = 0; i < movieItems.length; i++) {
+    const item = movieItems[i];
     mainWindow?.webContents.send('library:scanProgress', {
-      current: i + 1,
+      current: toFetch.length + i + 1,
       total,
       phase: 'importing',
-      label: item.kind === 'show' ? `TV #${item.matchId}` : `Movie #${item.matchId}`,
+      label: `Movie #${item.matchId}`,
     });
     try {
-      if (item.kind === 'show') {
-        const before = getShows().some((s) => s.tmdbId === item.matchId);
-        if (before) {
-          result.skipped += 1;
-          continue;
-        }
-        let show = await importShowFromScan(item.matchId, item.folderPath);
-        // Bulk folder import only: mark past aired (no local file) as ignored so we don't snatch the back catalog.
-        const ignoreEntries = ignoreAiredEpisodes(show);
-        if (Object.keys(ignoreEntries).length) {
-          setEpisodeOverridesBulk(ignoreEntries);
-          show = withLocalStatuses(show);
-          upsertShow(show);
-        }
-        result.added += 1;
-        result.addedTitles.push(show.name);
-      } else {
-        const before = getMovies().some((m) => m.tmdbId === item.matchId);
-        if (before) {
-          result.skipped += 1;
-          continue;
-        }
-        const movie = await importMovieFromScan(item.matchId, item.folderPath);
-        result.added += 1;
-        result.addedTitles.push(movie.title);
+      const before = getMovies().some((m) => m.tmdbId === item.matchId);
+      if (before) {
+        result.skipped += 1;
+        continue;
       }
+      const movie = await importMovieFromScan(item.matchId, item.folderPath);
+      result.added += 1;
+      result.addedTitles.push(movie.title);
     } catch (e) {
       result.failed += 1;
       result.errors.push(
-        `${item.kind} ${item.matchId}: ${e instanceof Error ? e.message : String(e)}`
+        `movie ${item.matchId}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
-    // Yield between items so UI stays responsive on large imports.
-    await new Promise<void>((r) => setImmediate(r));
+    await yieldMain();
   }
+
   mainWindow?.webContents.send('library:scanProgress', {
     current: total,
     total,
@@ -1910,7 +1972,14 @@ async function runFolderScanImport(items: FolderScanImportItem[]): Promise<Folde
 async function addShowWithPolicy(mazeId: number, policy: AddShowPolicy = 'manual'): Promise<Show> {
   const settings = getSettings();
   const existing = getShows().find((s) => s.tmdbId === mazeId);
-  let show = await fetchShowDetail(mazeId, settings.libraryRoot, existing, downloadingKeys(), tvRoots(settings));
+  let show = await fetchShowDetail(
+    mazeId,
+    settings.libraryRoot,
+    existing,
+    downloadingKeys(),
+    tvRoots(settings),
+    episodeMetaMaps()
+  );
   upsertShow(show);
 
   if (policy === 'future') {
@@ -2851,7 +2920,13 @@ function registerIpc() {
     const settings = getSettings();
     const show = getShows().find((s) => s.tmdbId === tmdbId);
     if (!show) return null;
-    return applyLocalStatuses(show, settings.libraryRoot, downloadingKeys(), tvRoots(settings));
+    return applyLocalStatuses(
+      show,
+      settings.libraryRoot,
+      downloadingKeys(),
+      tvRoots(settings),
+      episodeMetaMaps()
+    );
   });
 
   ipcMain.handle('library:add', async (_e, mazeId: number, policy?: AddShowPolicy) => {
@@ -2867,16 +2942,25 @@ function registerIpc() {
   ipcMain.handle('library:scanPreview', async (_e, scope: LibraryScanScope) => {
     const settings = getSettings();
     activityLog.info('library', `Folder scan preview (${scope || 'both'})`);
-    const preview = await buildScanPreview(
-      scope || 'both',
-      tvRoots(settings),
-      movieRoots(settings),
-      getShows(),
-      getMovies()
-    );
+    const { preview, usedWorker } = await scanPreviewViaPool({
+      scope: scope || 'both',
+      tvRoots: tvRoots(settings),
+      movieRoots: movieRoots(settings),
+      shows: getShows(),
+      movies: getMovies(),
+      onProgress: (p) => {
+        mainWindow?.webContents.send('library:scanProgress', {
+          current: p.current,
+          total: p.total,
+          phase: 'scanning',
+          label: p.label || '',
+        });
+      },
+    });
     activityLog.info(
       'library',
-      `Folder scan preview done: ${preview?.candidates?.length || 0} candidate(s)`
+      `Folder scan preview done: ${preview?.candidates?.length || 0} candidate(s)`,
+      { worker: usedWorker ? 'library-worker' : 'main-fallback' }
     );
     return preview;
   });
@@ -4047,6 +4131,7 @@ app.on('window-all-closed', () => {
     downloadEngine.destroy();
     void destroySearchPool();
     void destroyMetadataPool();
+    void destroyLibraryPool();
     app.quit();
   }
 });

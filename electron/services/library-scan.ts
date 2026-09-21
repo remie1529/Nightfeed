@@ -6,10 +6,20 @@
 import fs from 'fs';
 import path from 'path';
 import { Movie, Show } from '../types';
-import { searchShowsMeta, searchMoviesMeta } from './metadata-pool';
-import type { MazeSearchItem } from './tvmaze-search';
-import type { MovieSearchItem } from './imdb';
+import { searchShows as searchShowsDirect, type MazeSearchItem } from './tvmaze-search';
+import { searchMovies as searchMoviesDirect, type MovieSearchItem } from './imdb';
 import { sanitizeName, uniqueRoots } from './paths';
+
+/** Injectable so a worker can use direct search; main may pass metadata-pool. */
+export type FolderScanSearchers = {
+  searchShows: (query: string) => Promise<MazeSearchItem[]>;
+  searchMovies: (query: string) => Promise<MovieSearchItem[]>;
+};
+
+const defaultSearchers: FolderScanSearchers = {
+  searchShows: searchShowsDirect,
+  searchMovies: searchMoviesDirect,
+};
 
 const VIDEO_EXTS = new Set([
   '.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.flv', '.webm',
@@ -368,12 +378,15 @@ export function detectMovieEntries(
 
 export async function buildScanPreview(
   scope: LibraryScanScope,
-  libraryRoot: string,
-  movieLibraryRoot: string,
+  libraryRoot: string | string[],
+  movieLibraryRoot: string | string[],
   shows: Show[],
   movies: Movie[],
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  searchers: FolderScanSearchers = defaultSearchers
 ): Promise<FolderScanPreview> {
+  const searchShowsMeta = searchers.searchShows;
+  const searchMoviesMeta = searchers.searchMovies;
   const errors: string[] = [];
   const candidates: FolderScanCandidate[] = [];
   const tvRoots = uniqueRoots(libraryRoot);

@@ -1,6 +1,14 @@
 ## Nightfeed status
 
-**Current:** v2.3.4 — Refresh-all yields on main; movie hunt skip summary.
+**Current:** v2.3.5 — Dedicated library refresh/scan worker (UI stays responsive).
+
+# Status v2.3.5
+
+## Fixed
+- Refresh all / folder scan no longer freeze the window on 300+ shows — work runs on `library-worker`, not main/`setTimeout(0)` yields
+
+## Changed
+- Main process only starts the job, applies results, and runs chunked hunt; activity log notes worker vs fallback once
 
 # Status v2.3.4
 
