@@ -94,6 +94,19 @@ export default defineConfig({
         },
       },
       {
+        entry: 'electron/workers/hunt-worker.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
         entry: 'electron/preload.ts',
         onstart(args) {
           args.reload()

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.6
+
+- **Fix**: Auto hunt after refresh no longer freezes the UI — decision/search/pick run on a dedicated `hunt-worker` (`worker_threads`), not Electron main yields
+- Worker returns start-download intents only; main handles VPN/kill-switch gate, `downloadEngine.start` / `startMovie` (yielded), progress UI, and activity-log summaries
+- Packaged `hunt-worker.js` via vite + `asarUnpack` (same pattern as library/search workers); falls back to main only if the worker fails to start (one log line)
+- Same monitored / ignored / upgrade / tried-hash rules; Manual Find unchanged; WebTorrent stays in torrent-utility; no VPN changes
+- Activity log: hunt uses worker vs fallback; routine skips summarized (no per-skip spam)
+
 ## 2.3.5
 
 - **Fix**: Library **Refresh all** / hunt no longer freezes the UI — heavy TVMaze fetch + local episode indexing run on a dedicated `library-worker` (`worker_threads`), not Electron main or the GUI
