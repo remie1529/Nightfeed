@@ -13,6 +13,7 @@ import { PassThrough } from 'stream';
 import { app, nativeImage } from 'electron';
 import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus } from '../types';
 import { getLiveTvLineup, getLiveTvXmltvCache, getSettings, setLiveTvLineup, setLiveTvXmltvCache } from './store';
+import { refreshLiveTvViaPool } from './livetv-pool';
 
 const insecureHttps = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
 const keepAliveHttp = new http.Agent({ keepAlive: true });
@@ -614,39 +615,23 @@ class LiveTvServer {
 
   async refreshSources(): Promise<LiveTvChannel[]> {
     const s = getSettings();
-    const ua = s.liveTvUserAgent || DEFAULT_UA;
-    let incoming: LiveTvChannel[] = [];
     try {
-      if (s.liveTvSourceType === 'direct' && s.liveTvDirectUrl.trim()) {
-        const url = s.liveTvDirectUrl.trim();
-        incoming = [
-          {
-            id: channelId(url),
-            name: s.liveTvDirectName.trim() || 'Live',
-            number: 1,
-            group: '',
-            logo: '',
-            tvgId: '',
-            url,
-            enabled: false,
-          },
-        ];
-      } else if (s.liveTvSourceType === 'm3u' && s.liveTvM3uUrl.trim()) {
-        const src = s.liveTvM3uUrl.trim();
-        const text = /^https?:\/\//i.test(src) ? await fetchText(src, ua) : fs.readFileSync(src, 'utf8');
-        incoming = parseM3u(text);
-      } else if (s.liveTvSourceType === 'xtream' && s.liveTvXtreamHost.trim() && s.liveTvXtreamUsername) {
-        incoming = await this.fetchXtream(s, ua);
-      }
-      if (s.liveTvHideAdult) incoming = incoming.filter((c) => !isAdult(c));
-      const merged = mergeLineup(incoming, getLiveTvLineup());
-      setLiveTvLineup(merged);
+      const { channels, xmltv, usedWorker } = await refreshLiveTvViaPool({
+        settings: s,
+        existing: getLiveTvLineup(),
+      });
+      setLiveTvLineup(channels);
       this.lastRefresh = new Date().toISOString();
       this.lastError = null;
-      await this.refreshXmltv(s, ua);
+      if (typeof xmltv === 'string') {
+        this.xmltvMem = xmltv;
+        setLiveTvXmltvCache(xmltv.length > 8_000_000 ? '' : xmltv);
+      } else if (!xmltv) {
+        this.xmltvMem = getLiveTvXmltvCache();
+      }
       this.reindexXmltv();
       void this.cacheEnabledLogos().catch(() => undefined);
-      return merged;
+      return channels;
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
       throw err;

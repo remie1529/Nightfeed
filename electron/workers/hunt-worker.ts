@@ -66,6 +66,9 @@ parentPort.on('message', (msg: HuntWorkerRequest) => {
               label: p.label,
             });
           },
+          onLog: (line) => {
+            parentPort!.postMessage({ type: 'log', id: msg.id, line });
+          },
         });
         parentPort!.postMessage({ id: msg.id, ok: true, result });
         return;
@@ -87,6 +90,9 @@ parentPort.on('message', (msg: HuntWorkerRequest) => {
               total: p.total,
               label: p.label,
             });
+          },
+          onLog: (line) => {
+            parentPort!.postMessage({ type: 'log', id: msg.id, line });
           },
         });
         parentPort!.postMessage({ id: msg.id, ok: true, result });

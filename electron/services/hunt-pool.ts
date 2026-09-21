@@ -21,6 +21,7 @@ type Pending = {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
   onProgress?: (p: HuntProgress) => void;
+  onLog?: (line: HuntLogLine) => void;
 };
 
 let worker: Worker | null = null;
@@ -67,13 +68,18 @@ async function ensureWorker(): Promise<void> {
           return;
         }
         if (msg?.type === 'progress') {
-          const p = pending.get(msg.id);
-          p?.onProgress?.({
+          const pend = pending.get(msg.id);
+          pend?.onProgress?.({
             phase: msg.phase || 'hunt',
             current: msg.current || 0,
             total: msg.total || 0,
             label: msg.label,
           });
+          return;
+        }
+        if (msg?.type === 'log') {
+          const pend = pending.get(msg.id);
+          if (msg.line) pend?.onLog?.(msg.line as HuntLogLine);
           return;
         }
         if (typeof msg?.id === 'number') {
@@ -128,7 +134,8 @@ async function ensureWorker(): Promise<void> {
 
 function runOnWorker(
   payload: Record<string, unknown>,
-  onProgress?: (p: HuntProgress) => void
+  onProgress?: (p: HuntProgress) => void,
+  onLog?: (line: HuntLogLine) => void
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (!worker || !ready) {
@@ -136,7 +143,7 @@ function runOnWorker(
       return;
     }
     const id = nextId++;
-    pending.set(id, { resolve, reject, onProgress });
+    pending.set(id, { resolve, reject, onProgress, onLog });
     worker.postMessage({ ...payload, id });
   });
 }
@@ -157,6 +164,7 @@ export async function huntShowsViaPool(
     return { ...result, usedWorker: false };
   }
   try {
+    let streamed = false;
     const result = (await runOnWorker(
       {
         op: 'huntShows',
@@ -167,11 +175,16 @@ export async function huntShowsViaPool(
         triedTorrents: input.triedTorrents,
         activeEpisodeKeys: input.activeEpisodeKeys,
       },
-      input.onProgress
+      input.onProgress,
+      (line) => {
+        streamed = true;
+        input.onLog?.(line);
+      }
     )) as { intents: HuntDownloadIntent[]; logs: HuntLogLine[] };
     return {
       intents: result.intents || [],
-      logs: result.logs || [],
+      // Avoid double-apply when lines were streamed live
+      logs: streamed ? [] : result.logs || [],
       usedWorker: true,
     };
   } catch (err) {
@@ -193,6 +206,7 @@ export async function huntMoviesViaPool(
     return { ...result, usedWorker: false };
   }
   try {
+    let streamed = false;
     const result = (await runOnWorker(
       {
         op: 'huntMovies',
@@ -203,11 +217,15 @@ export async function huntMoviesViaPool(
         triedTorrents: input.triedTorrents,
         activeMovieIds: input.activeMovieIds,
       },
-      input.onProgress
+      input.onProgress,
+      (line) => {
+        streamed = true;
+        input.onLog?.(line);
+      }
     )) as { intents: HuntDownloadIntent[]; logs: HuntLogLine[] };
     return {
       intents: result.intents || [],
-      logs: result.logs || [],
+      logs: streamed ? [] : result.logs || [],
       usedWorker: true,
     };
   } catch (err) {

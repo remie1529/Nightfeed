@@ -2,6 +2,14 @@ import { app, shell } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
+import {
+  appendLogLines,
+  destroyLogWriter,
+  getLogWriterInfo,
+  initLogWriter,
+  readLogAll,
+  setLogWriterModeLogger,
+} from './log-writer-pool';
 
 const RETENTION_DAYS = 7;
 const FILE_PREFIX = 'nightfeed-';
@@ -75,6 +83,10 @@ class ActivityLogService extends EventEmitter {
   private stream: fs.WriteStream | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
   private ready = false;
+  private pendingLines: string[] = [];
+  private flushTimer: NodeJS.Timeout | null = null;
+  private useLogWorker = false;
+  private modeLogged = false;
 
   init(): void {
     if (this.ready) return;
@@ -90,11 +102,30 @@ class ActivityLogService extends EventEmitter {
       () => {
         this.pruneOld();
         this.openToday();
+        void this.flush(true);
       },
       60 * 60 * 1000
     );
     this.pruneTimer.unref?.();
     this.ready = true;
+    setLogWriterModeLogger((using) => {
+      if (this.modeLogged && using) return;
+      if (using) {
+        // Defer so we don't recurse into write during init
+        setImmediate(() => this.info('log', 'Activity log using dedicated writer worker'));
+        this.modeLogged = true;
+        this.useLogWorker = true;
+      } else if (!this.modeLogged) {
+        setImmediate(() =>
+          this.warn('log', 'Log writer worker unavailable — activity log falling back to main process')
+        );
+        this.modeLogged = true;
+        this.useLogWorker = false;
+      }
+    });
+    void initLogWriter(this.dir).then((r) => {
+      this.useLogWorker = !!r.usedWorker;
+    });
   }
 
   getDir(): string {
@@ -132,14 +163,42 @@ class ActivityLogService extends EventEmitter {
       const line =
         `${formatLocalStamp()} [${level.toUpperCase()}] [${category}] ${message}` +
         `${safeMeta(meta)}\n`;
-      if (this.stream && !this.stream.destroyed) {
-        this.stream.write(line);
-      } else {
-        fs.appendFileSync(this.getCurrentPath(), line, 'utf8');
-      }
+      this.pendingLines.push(line);
       this.emit('changed');
+      if (!this.flushTimer) {
+        this.flushTimer = setTimeout(() => {
+          this.flushTimer = null;
+          void this.flush(false);
+        }, 16);
+        this.flushTimer.unref?.();
+      }
     } catch {
       // never throw from logger
+    }
+  }
+
+  /** Flush buffered lines to log-writer worker (or sync fallback). */
+  private async flush(_force: boolean): Promise<void> {
+    if (!this.pendingLines.length) return;
+    const batch = this.pendingLines.splice(0, this.pendingLines.length);
+    const day = this.currentDay || dayKey();
+    if (this.useLogWorker || getLogWriterInfo().usingWorker) {
+      try {
+        await appendLogLines(day, batch);
+        this.useLogWorker = true;
+        return;
+      } catch {
+        this.useLogWorker = false;
+      }
+    }
+    try {
+      if (this.stream && !this.stream.destroyed) {
+        for (const line of batch) this.stream.write(line);
+      } else {
+        fs.appendFileSync(this.getCurrentPath(), batch.join(''), 'utf8');
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -277,6 +336,12 @@ class ActivityLogService extends EventEmitter {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
     }
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    void this.flush(true);
+    void destroyLogWriter();
     try {
       this.stream?.end();
     } catch {
