@@ -1,4 +1,5 @@
 import { AppSettings, TelegramStatus } from '../types';
+import { sendTelegramMessageViaPool, sendTelegramPhotoViaPool } from './telegram-send-pool';
 
 type SendFn = (
   chatId: number | string,
@@ -204,21 +205,7 @@ export class TelegramBot {
     text: string,
     extra?: Record<string, unknown>
   ): Promise<void> {
-    const body: Record<string, unknown> = {
-      chat_id: chatId,
-      text: text.slice(0, 3900),
-      disable_web_page_preview: true,
-      ...(extra || {}),
-    };
-    const res = await fetch(this.apiUrl(token, 'sendMessage'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      throw new Error(`Telegram send failed: HTTP ${res.status} ${errBody.slice(0, 120)}`);
-    }
+    await sendTelegramMessageViaPool(token, chatId, text, extra);
   }
 
   async sendPhoto(
@@ -228,21 +215,7 @@ export class TelegramBot {
     caption: string,
     extra?: Record<string, unknown>
   ): Promise<void> {
-    const body: Record<string, unknown> = {
-      chat_id: chatId,
-      photo: photoUrl,
-      caption: (caption || '').slice(0, 1024),
-      parse_mode: 'HTML',
-      ...(extra || {}),
-    };
-    const res = await fetch(this.apiUrl(token, 'sendPhoto'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      await this.sendMessage(token, chatId, caption.replace(/<[^>]+>/g, ''), extra);
-    }
+    await sendTelegramPhotoViaPool(token, chatId, photoUrl, caption, extra);
   }
 
   async answerCallbackQuery(

@@ -107,6 +107,71 @@ export default defineConfig({
         },
       },
       {
+        entry: 'electron/workers/log-writer-worker.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
+        entry: 'electron/workers/ftp-worker.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
+        entry: 'electron/workers/backup-worker.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
+        entry: 'electron/workers/livetv-worker.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
+        entry: 'electron/workers/telegram-send-worker.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
         entry: 'electron/preload.ts',
         onstart(args) {
           args.reload()

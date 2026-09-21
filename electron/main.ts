@@ -90,6 +90,8 @@ import {
   webPortal,
 } from './services/web-portal';
 import { uploadFinishedFile } from './services/ftp';
+import { uploadViaPool } from './services/ftp-pool';
+import { writeBackupJsonViaPool, readBackupJsonViaPool } from './services/backup-pool';
 import { vpnManager } from './services/vpn';
 import { liveTv, withLogoPreview } from './services/live-tv';
 import {
@@ -982,7 +984,7 @@ async function maybeFtpUpload(localPath: string | undefined, label: string): Pro
   if (!settings.ftpEnabled || !localPath) return;
   activityLog.info('ftp', `Upload start: ${label}`);
   try {
-    await uploadFinishedFile(settings, localPath);
+    await uploadViaPool(settings, localPath);
     activityLog.info('ftp', `Upload ok: ${label}`);
     notify(`FTP uploaded: ${label}`, 'ok');
   } catch (err) {
@@ -1186,17 +1188,10 @@ async function applyHuntIntents(
           activityLog.warn('hunt', `Skip intent: show ${showId} no longer in library`);
           continue;
         }
-        activityLog.info(
-          'search',
-          `Auto episode search: ${epLabel} — ${intent.resultCount} result(s)`,
-          {
-            sourcesHit: intent.sourcesHit,
-            triedSkipped: intent.triedSkipped,
-            error: intent.searchError || '',
-          }
-        );
-        activityLog.info('download', `Chose torrent: ${intent.choiceDescription}`, {
-          episode: epLabel,
+        activityLog.info('download', `Download start: ${epLabel}`, {
+          choice: intent.choiceDescription,
+          results: intent.resultCount,
+          triedSkipped: intent.triedSkipped,
         });
         await downloadEngine.start({
           magnet: intent.magnet,
@@ -1225,17 +1220,10 @@ async function applyHuntIntents(
           activityLog.warn('hunt', `Skip intent: movie ${movieId} no longer in library`);
           continue;
         }
-        activityLog.info(
-          'search',
-          `Auto movie search: ${movie.title} — ${intent.resultCount} result(s)`,
-          {
-            sourcesHit: intent.sourcesHit,
-            triedSkipped: intent.triedSkipped,
-            error: intent.searchError || '',
-          }
-        );
-        activityLog.info('download', `Chose torrent: ${intent.choiceDescription}`, {
-          movie: movie.title,
+        activityLog.info('download', `Download start: ${movie.title}`, {
+          choice: intent.choiceDescription,
+          results: intent.resultCount,
+          triedSkipped: intent.triedSkipped,
         });
         await downloadEngine.startMovie({
           magnet: intent.magnet,
@@ -1308,6 +1296,7 @@ async function autoDownloadForShows(
           label: p.label,
         });
       },
+      onLog: (line) => applyHuntLogs([line]),
     });
     activityLog.info(
       'hunt',
@@ -1379,7 +1368,7 @@ async function autoDownloadMovie(
   }
 ): Promise<boolean> {
   const settings = getSettings();
-  const quiet = !!opts?.quiet;
+  const quiet = false; // v2.4.0: user wants full per-item hunt spam
   const skips = opts?.skips;
   const bump = (key: keyof MovieHuntSkipCounts) => {
     if (skips) skips[key] += 1;
@@ -1532,6 +1521,7 @@ async function autoUpgradeMovies(): Promise<number> {
         label: p.label,
       });
     },
+    onLog: (line) => applyHuntLogs([line]),
   });
   activityLog.info(
     'hunt',
@@ -3631,7 +3621,7 @@ function registerIpc() {
     });
     if (canceled || !filePath) return { ok: false, canceled: true };
     const fs = await import('fs/promises');
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+    await writeBackupJsonViaPool(filePath, data);
     activityLog.info('backup', 'Exported backup', { path: filePath });
     return { ok: true, path: filePath };
   });
@@ -3644,10 +3634,9 @@ function registerIpc() {
     });
     if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
     const fs = await import('fs/promises');
-    const rawText = await fs.readFile(filePaths[0], 'utf8');
     let parsed: unknown;
     try {
-      parsed = JSON.parse(rawText);
+      parsed = await readBackupJsonViaPool(filePaths[0]);
     } catch {
       throw new Error('Backup file is not valid JSON');
     }

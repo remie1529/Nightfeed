@@ -1,5 +1,26 @@
 # Changelog
 
+
+## 2.4.0
+
+### Added
+- **Verbose hunt logging restored**: paused shows, ignored episodes, already-downloading, already-have / no-upgrade, status skips, each show scan line, pick reasons, and download starts all appear again in **See log**.
+- Hunt worker **streams** log lines to the activity log while hunting (not only a summary at the end).
+- **Log writer worker**: activity log file I/O runs on a dedicated worker with buffered async flushes so spam does not freeze the UI (falls back to main if the worker cannot start).
+- **FTP worker**: finished-file uploads run off main.
+- **Backup worker**: heavy JSON stringify/parse + read/write for export/import run off main.
+- **Live TV worker**: lineup / M3U / Xtream / XMLTV fetch+parse run off main; HDHomeRun server stays on main.
+- **Telegram send worker**: outbound notify/sendMessage/sendPhoto HTTP runs off main; bot receive/polling stays on main.
+
+### Changed
+- Hunt download kickoff still uses the torrent utility path; applying many intents yields between starts so the UI stays responsive.
+- App update check/download remains on Electron main (`electron-updater` requires it); logging unchanged.
+- VPN / OpenVPN / bind / split-tunnel connect logic **unchanged**; VPN status wiring stays on main.
+
+### Notes
+- Existing library / hunt / torrent-utility / search / metadata workers kept.
+- Activity log notes worker vs main-fallback once per subsystem.
+
 ## 2.3.6
 
 - **Fix**: Auto hunt after refresh no longer freezes the UI — decision/search/pick run on a dedicated `hunt-worker` (`worker_threads`), not Electron main yields

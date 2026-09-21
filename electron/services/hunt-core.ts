@@ -24,6 +24,7 @@ import {
   resolutionRank,
   searchEpisodeTorrents,
   searchMovieTorrents,
+  summarizeAutoRejects,
   type QualityRules,
 } from './search';
 
@@ -86,6 +87,8 @@ export type HuntShowsInput = {
   /** Keys matching engine hasEpisodeActivity (showId:season:episode). */
   activeEpisodeKeys: string[];
   onProgress?: (p: HuntProgress) => void;
+  /** Stream each log line immediately (worker posts to main → activityLog). */
+  onLog?: (line: HuntLogLine) => void;
 };
 
 export type HuntMoviesInput = {
@@ -96,6 +99,7 @@ export type HuntMoviesInput = {
   triedTorrents: Record<string, string[]>;
   activeMovieIds: number[];
   onProgress?: (p: HuntProgress) => void;
+  onLog?: (line: HuntLogLine) => void;
 };
 
 export type HuntResult = {
@@ -276,6 +280,20 @@ function overrideKey(showId: number, season: number, episode: number): string {
   return `${showId}:${season}:${episode}`;
 }
 
+
+function emitLog(
+  logs: HuntLogLine[],
+  onLog: ((line: HuntLogLine) => void) | undefined,
+  line: HuntLogLine
+): void {
+  logs.push(line);
+  try {
+    onLog?.(line);
+  } catch {
+    // never throw from logging
+  }
+}
+
 export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> {
   const settings = input.settings;
   const force = !!input.force;
@@ -285,15 +303,16 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
   const overrides = input.overrides || {};
   const triedMap = input.triedTorrents || {};
   const sourceIds = enabledTorrentSourceIds(settings);
+  const onLog = input.onLog;
+  const log = (line: HuntLogLine) => emitLog(logs, onLog, line);
 
-  logs.push({
+  log({
     level: 'info',
     category: 'hunt',
     message: `Auto hunt start: ${input.shows.length} show(s)${force ? ' (forced)' : ''}`,
     meta: { sources: sourceIds.join(',') || '(none)' },
   });
 
-  let pausedShows = 0;
   let totalNoCandidates = 0;
   let totalFailed = 0;
 
@@ -307,7 +326,11 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
     });
 
     if (!isMonitored(show) && !force) {
-      pausedShows += 1;
+      log({
+        level: 'info',
+        category: 'hunt',
+        message: `Skipped show: ${show.name} (monitoring paused)`,
+      });
       continue;
     }
 
@@ -322,12 +345,23 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
     for (const season of show.seasons || []) {
       for (const ep of season.episodes || []) {
         const ok = overrideKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
+        const epLabel = `${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
         if (ep.status === 'ignored' || overrides[ok] === 'ignored') {
           ignored += 1;
+          log({
+            level: 'info',
+            category: 'hunt',
+            message: `Skipped ${epLabel}: ignored`,
+          });
           continue;
         }
         if (active.has(ok)) {
           alreadyDl += 1;
+          log({
+            level: 'info',
+            category: 'hunt',
+            message: `Skipped ${epLabel}: already downloading`,
+          });
           continue;
         }
         if (ep.status === 'missing' || ep.status === 'aired') {
@@ -340,12 +374,25 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
             jobs.push({ ep, upgrade: true });
           } else {
             haveOk += 1;
+            log({
+              level: 'info',
+              category: 'hunt',
+              message: `Skipped ${epLabel}: already have / no upgrade needed`,
+              meta: { current: current || '', preferred },
+            });
           }
+          continue;
         }
+        // other statuses (unaired, etc.)
+        log({
+          level: 'info',
+          category: 'hunt',
+          message: `Skipped ${epLabel}: status ${ep.status}`,
+        });
       }
     }
 
-    logs.push({
+    log({
       level: 'info',
       category: 'hunt',
       message: `Scan show: ${show.name} — ${jobs.length} to check (${jobs.filter((j) => j.upgrade).length} upgrade), skipped ${ignored} ignored / ${alreadyDl} already downloading / ${haveOk} have preferred`,
@@ -355,9 +402,22 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
     for (const { ep, upgrade } of jobs) {
       const epLabel = `${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
       const ok = overrideKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
-      if (active.has(ok)) continue;
+      if (active.has(ok)) {
+        log({
+          level: 'info',
+          category: 'hunt',
+          message: `Skipped ${epLabel}: already downloading`,
+        });
+        continue;
+      }
 
       try {
+        log({
+          level: 'info',
+          category: 'hunt',
+          message: `Checking episode: ${epLabel} (${upgrade ? 'upgrade' : 'missing'})`,
+          meta: { preferred, sources: sourceIds.join(',') || '(none)' },
+        });
         const { results, error: searchErr } = await searchEpisodeTorrents(
           settings,
           show.name,
@@ -370,12 +430,30 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
         const triedList = triedListFor(triedMap, triedKey);
         const pool = filterResultsSkippingTried(results, triedList);
         const triedSkipped = (results?.length || 0) - pool.length;
+        log({
+          level: 'info',
+          category: 'search',
+          message: `Auto episode search: ${epLabel} — ${results?.length || 0} result(s)`,
+          meta: {
+            sourcesHit: sourcesInResults(results),
+            triedSkipped,
+            error: searchErr || '',
+          },
+        });
         const best = upgrade
           ? pickUpgradeDownload(pool, preferred, 'episode', rules)
           : pickAutoDownload(pool, preferred, 'episode', rules);
 
         if (!best?.magnet) {
           totalNoCandidates += 1;
+          log({
+            level: 'info',
+            category: 'hunt',
+            message: `Skipped ${epLabel}: no candidates — ${summarizeAutoRejects(pool, preferred, 'episode', rules, {
+              upgrade,
+              triedSkipped,
+            })}`,
+          });
           continue;
         }
 
@@ -386,6 +464,12 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
           triedSkipped,
           healthyCount: candidates.length,
           mode: upgrade ? 'upgrade' : 'auto',
+        });
+        log({
+          level: 'info',
+          category: 'download',
+          message: `Chose torrent: ${choiceDescription}`,
+          meta: { episode: epLabel },
         });
 
         intents.push({
@@ -412,11 +496,10 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
           sourcesHit: sourcesInResults(results),
           searchError: searchErr || undefined,
         });
-        // Avoid re-picking same ep if later logic re-scans within same pass.
         active.add(ok);
       } catch (err) {
         totalFailed += 1;
-        logs.push({
+        log({
           level: 'warn',
           category: 'hunt',
           message: `Episode check failed: ${epLabel}: ${err instanceof Error ? err.message : String(err)}`,
@@ -425,15 +508,7 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
     }
   }
 
-  if (pausedShows) {
-    logs.push({
-      level: 'info',
-      category: 'hunt',
-      message: `Skipped ${pausedShows} paused show(s)`,
-    });
-  }
-
-  logs.push({
+  log({
     level: 'info',
     category: 'hunt',
     message: `Auto hunt plan: ${intents.length} download intent(s)${
@@ -446,23 +521,6 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
   return { intents, logs };
 }
 
-type MovieSkipCounts = {
-  paused: number;
-  downloading: number;
-  have: number;
-  status: number;
-  noCandidates: number;
-};
-
-function summarizeMovieSkips(skips: MovieSkipCounts): string {
-  const parts: string[] = [];
-  if (skips.have) parts.push(`${skips.have} already-have`);
-  if (skips.paused) parts.push(`${skips.paused} paused`);
-  if (skips.downloading) parts.push(`${skips.downloading} already downloading`);
-  if (skips.status) parts.push(`${skips.status} other status`);
-  if (skips.noCandidates) parts.push(`${skips.noCandidates} no candidates`);
-  return parts.length ? parts.join(', ') : 'none';
-}
 
 export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult> {
   const settings = input.settings;
@@ -473,15 +531,10 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
   const active = new Set(input.activeMovieIds || []);
   const triedMap = input.triedTorrents || {};
   const sourceIds = enabledTorrentSourceIds(settings);
-  const skips: MovieSkipCounts = {
-    paused: 0,
-    downloading: 0,
-    have: 0,
-    status: 0,
-    noCandidates: 0,
-  };
+  const onLog = input.onLog;
+  const log = (line: HuntLogLine) => emitLog(logs, onLog, line);
 
-  logs.push({
+  log({
     level: 'info',
     category: 'hunt',
     message: `Movie upgrade hunt start: ${input.movies.length} movie(s)`,
@@ -498,11 +551,19 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
     });
 
     if (!isMonitored(movie) && !force) {
-      skips.paused += 1;
+      log({
+        level: 'info',
+        category: 'hunt',
+        message: `Skipped movie: ${movie.title} (monitoring paused)`,
+      });
       continue;
     }
     if (active.has(movie.tmdbId)) {
-      skips.downloading += 1;
+      log({
+        level: 'info',
+        category: 'hunt',
+        message: `Skipped movie: ${movie.title} (already downloading)`,
+      });
       continue;
     }
 
@@ -519,15 +580,29 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
       );
 
     if (movie.status === 'downloaded' && !upgrade) {
-      skips.have += 1;
+      log({
+        level: 'info',
+        category: 'hunt',
+        message: `Skipped movie: ${movie.title} (already have / no upgrade needed)`,
+      });
       continue;
     }
     if (movie.status !== 'missing' && movie.status !== 'downloaded' && !force) {
-      skips.status += 1;
+      log({
+        level: 'info',
+        category: 'hunt',
+        message: `Skipped movie: ${movie.title} (status ${movie.status})`,
+      });
       continue;
     }
 
     try {
+      log({
+        level: 'info',
+        category: 'hunt',
+        message: `Checking movie: ${movie.title}${movie.releaseYear ? ` (${movie.releaseYear})` : ''} (${upgrade ? 'upgrade' : 'missing'})`,
+        meta: { preferred, sources: sourceIds.join(',') || '(none)' },
+      });
       const res = await searchMovieTorrents(
         settings,
         movie.title,
@@ -538,12 +613,29 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
       const triedList = triedListFor(triedMap, triedKey);
       const pool = filterResultsSkippingTried(res.results, triedList);
       const triedSkipped = (res.results?.length || 0) - pool.length;
+      log({
+        level: 'info',
+        category: 'search',
+        message: `Auto movie search: ${movie.title} — ${res.results?.length || 0} result(s)`,
+        meta: {
+          sourcesHit: sourcesInResults(res.results),
+          triedSkipped,
+          error: res.error || '',
+        },
+      });
       const best = upgrade
         ? pickUpgradeDownload(pool, preferred, 'movie', rules)
         : pickAutoDownload(pool, preferred, 'movie', rules);
 
       if (!best?.magnet) {
-        skips.noCandidates += 1;
+        log({
+          level: 'info',
+          category: 'hunt',
+          message: `Skipped movie ${movie.title}: no candidates — ${summarizeAutoRejects(pool, preferred, 'movie', rules, {
+            upgrade,
+            triedSkipped,
+          })}`,
+        });
         continue;
       }
 
@@ -554,6 +646,12 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
         triedSkipped,
         healthyCount: candidates.length,
         mode: upgrade ? 'upgrade' : 'auto',
+      });
+      log({
+        level: 'info',
+        category: 'download',
+        message: `Chose torrent: ${choiceDescription}`,
+        meta: { movie: movie.title },
       });
 
       intents.push({
@@ -580,7 +678,7 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
       });
       active.add(movie.tmdbId);
     } catch (err) {
-      logs.push({
+      log({
         level: 'warn',
         category: 'hunt',
         message: `Movie upgrade check failed: ${movie.title}: ${err instanceof Error ? err.message : String(err)}`,
@@ -588,10 +686,10 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
     }
   }
 
-  logs.push({
+  log({
     level: 'info',
     category: 'hunt',
-    message: `Movie upgrade hunt plan: ${intents.length} intent(s); skipped ${summarizeMovieSkips(skips)}`,
+    message: `Movie upgrade hunt plan: ${intents.length} intent(s)`,
   });
 
   return { intents, logs };

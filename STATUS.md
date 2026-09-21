@@ -1,3 +1,22 @@
+# Nightfeed status
+
+**Current:** v2.4.0 — Verbose hunt logs + more workers off main.
+
+# Status v2.4.0
+
+## Fixed
+- Verbose per-item hunt activity lines visible again in See log (paused / ignored / already downloading / already-have / status / scan / pick / download start)
+- UI stays responsive during refresh + hunt + FTP + backup thanks to dedicated workers + buffered log writes
+
+## New
+- Log writer, FTP, backup, Live TV refresh, and Telegram outbound send workers (packaged via vite + asarUnpack)
+- Hunt worker streams log lines live to the activity log
+
+## Unchanged
+- VPN connect / OpenVPN / bind / split-tunnel logic; VPN status wiring on main
+- Library / hunt / torrent-utility / search / metadata workers kept
+- App updater stays on main (electron-updater)
+
 ## Nightfeed status
 
 **Current:** v2.3.6 — Dedicated auto-hunt worker (UI stays responsive during hunt).
