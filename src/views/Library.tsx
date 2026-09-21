@@ -20,6 +20,8 @@ export default function Library({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // used to ignore mid-refresh library:changed floods
+  // (ref updated below)
   const [refreshProgress, setRefreshProgress] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [missingOnly, setMissingOnly] = useState(false);
@@ -29,6 +31,7 @@ export default function Library({
   const loadGen = useRef(0);
   const hasShowsRef = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshingRef = useRef(false);
 
   const load = useCallback(async (opts?: { soft?: boolean }) => {
     const gen = ++loadGen.current;
@@ -63,7 +66,16 @@ export default function Library({
   }, [load, refreshToken]);
 
   useEffect(() => {
-    const off = window.torrentAPI.onLibraryChanged?.(() => scheduleLoad());
+    refreshingRef.current = refreshing;
+  }, [refreshing]);
+
+  useEffect(() => {
+    const off = window.torrentAPI.onLibraryChanged?.(() => {
+      // During refresh-all, main already streams progress; ignore change floods
+      // so we don't re-render all posters on every throttled emit.
+      if (refreshingRef.current) return;
+      scheduleLoad();
+    });
     return () => {
       off?.();
       if (debounceRef.current) clearTimeout(debounceRef.current);

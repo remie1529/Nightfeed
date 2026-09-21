@@ -86,8 +86,14 @@ export default function App() {
       const n = countActive(items as DownloadItem[]);
       setActiveDownloads((prev) => (prev === n ? prev : n));
     });
+    let libKeyTimer: ReturnType<typeof setTimeout> | null = null;
     const offLib = window.torrentAPI.onLibraryChanged(() => {
-      setLibraryKey((k) => k + 1);
+      // Debounce remounts during bulk refresh library:changed floods.
+      if (libKeyTimer) clearTimeout(libKeyTimer);
+      libKeyTimer = setTimeout(() => {
+        libKeyTimer = null;
+        setLibraryKey((k) => k + 1);
+      }, 800);
     });
     const offMovies = window.torrentAPI.onMoviesChanged?.(() => {
       setMoviesKey((k) => k + 1);
@@ -124,6 +130,7 @@ export default function App() {
     const pendingTimer = setInterval(refreshPending, 20000);
     return () => {
       offDl();
+      if (libKeyTimer) clearTimeout(libKeyTimer);
       offLib();
       offMovies?.();
       offToast();
