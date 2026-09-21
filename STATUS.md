@@ -1,6 +1,14 @@
 ## Nightfeed status
 
-**Current:** v2.3.5 — Dedicated library refresh/scan worker (UI stays responsive).
+**Current:** v2.3.6 — Dedicated auto-hunt worker (UI stays responsive during hunt).
+
+# Status v2.3.6
+
+## Fixed
+- Auto hunt / movie upgrade after Refresh all no longer freezes the window — work runs on `hunt-worker`, not main-process yields
+
+## Changed
+- Main only gates VPN, starts downloads from worker intents, and logs summaries; activity log notes worker vs fallback once
 
 # Status v2.3.5
 

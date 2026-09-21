@@ -21,6 +21,7 @@ import {
   saveDownloads,
   addTriedTorrents,
   getTriedTorrents,
+  getTriedTorrentsMap,
   triedEpisodeKey,
   triedMovieKey,
   getEpisodeOverride,
@@ -63,6 +64,13 @@ import {
   destroyLibraryPool,
   getLibraryPoolInfo,
 } from './services/library-pool';
+import {
+  huntShowsViaPool,
+  huntMoviesViaPool,
+  destroyHuntPool,
+  getHuntPoolInfo,
+} from './services/hunt-pool';
+import type { HuntDownloadIntent, HuntLogLine } from './services/hunt-core';
 import {
   applyMovieLocalStatus,
   fetchMovieDetail,
@@ -1102,6 +1110,164 @@ async function refreshOne(show: Show): Promise<Show> {
 
 type AutoDownloadNotify = { notifyChatId?: number; telegramRequestId?: string };
 
+function applyHuntLogs(logs: HuntLogLine[]): void {
+  for (const line of logs || []) {
+    const meta = line.meta;
+    if (line.level === 'warn') activityLog.warn(line.category as any, line.message, meta);
+    else activityLog.info(line.category as any, line.message, meta);
+  }
+}
+
+/** Episode keys with download activity (queued/downloading/paused/done) — matches hasEpisodeActivity. */
+function activeEpisodeActivityKeys(): string[] {
+  const keys: string[] = [];
+  for (const item of downloadEngine.list()) {
+    if (
+      item.showId != null &&
+      item.seasonNumber != null &&
+      item.episodeNumber != null &&
+      (item.status === 'downloading' ||
+        item.status === 'queued' ||
+        item.status === 'paused' ||
+        item.status === 'done')
+    ) {
+      keys.push(`${item.showId}:${item.seasonNumber}:${item.episodeNumber}`);
+    }
+  }
+  return keys;
+}
+
+function activeMovieActivityIds(): number[] {
+  const ids: number[] = [];
+  for (const item of downloadEngine.list()) {
+    if (
+      item.kind === 'movie' &&
+      item.movieId != null &&
+      (item.status === 'downloading' ||
+        item.status === 'queued' ||
+        item.status === 'paused' ||
+        item.status === 'done')
+    ) {
+      ids.push(item.movieId);
+    }
+  }
+  return ids;
+}
+
+async function applyHuntIntents(
+  intents: HuntDownloadIntent[],
+  notifyCtx?: AutoDownloadNotify
+): Promise<number> {
+  const settings = getSettings();
+  const delayMs = Math.max(0, (settings.autoDownloadDelayMinutes || 0) * 60 * 1000);
+  let started = 0;
+  const showById = new Map(getShows().map((s) => [s.tmdbId, s]));
+  const movieById = new Map(getMovies().map((m) => [m.tmdbId, m]));
+
+  for (const intent of intents) {
+    if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
+      activityLog.info('hunt', 'Hunt start held: VPN required but not connected', { vpnHold: true });
+      break;
+    }
+    try {
+      if (intent.kind === 'episode') {
+        const showId = intent.showId!;
+        const season = intent.seasonNumber!;
+        const episode = intent.episodeNumber!;
+        const epLabel =
+          intent.showName && season != null && episode != null
+            ? `${intent.showName} S${pad2(season)}E${pad2(episode)}`
+            : 'episode';
+        if (downloadEngine.hasEpisodeActivity(showId, season, episode)) {
+          continue;
+        }
+        const show = showById.get(showId);
+        if (!show) {
+          activityLog.warn('hunt', `Skip intent: show ${showId} no longer in library`);
+          continue;
+        }
+        activityLog.info(
+          'search',
+          `Auto episode search: ${epLabel} — ${intent.resultCount} result(s)`,
+          {
+            sourcesHit: intent.sourcesHit,
+            triedSkipped: intent.triedSkipped,
+            error: intent.searchError || '',
+          }
+        );
+        activityLog.info('download', `Chose torrent: ${intent.choiceDescription}`, {
+          episode: epLabel,
+        });
+        await downloadEngine.start({
+          magnet: intent.magnet,
+          show: showForDownload(show, season),
+          libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
+          seasonNumber: season,
+          episodeNumber: episode,
+          episodeTitle: intent.episodeTitle,
+          candidates: intent.candidates,
+          triedInfoHashes: intent.triedInfoHashes,
+          notifyChatId: notifyCtx?.notifyChatId,
+          telegramRequestId: notifyCtx?.telegramRequestId,
+          quality: intent.quality,
+        });
+        started += 1;
+        pushDownloads({ persist: 'now' });
+        notify(
+          `${intent.upgrade ? 'Upgrade' : 'Auto-download'}: ${show.name} S${pad2(season)}E${pad2(episode)}`,
+          'ok'
+        );
+      } else {
+        const movieId = intent.movieId!;
+        if (downloadEngine.hasMovieActivity(movieId)) continue;
+        const movie = movieById.get(movieId);
+        if (!movie) {
+          activityLog.warn('hunt', `Skip intent: movie ${movieId} no longer in library`);
+          continue;
+        }
+        activityLog.info(
+          'search',
+          `Auto movie search: ${movie.title} — ${intent.resultCount} result(s)`,
+          {
+            sourcesHit: intent.sourcesHit,
+            triedSkipped: intent.triedSkipped,
+            error: intent.searchError || '',
+          }
+        );
+        activityLog.info('download', `Chose torrent: ${intent.choiceDescription}`, {
+          movie: movie.title,
+        });
+        await downloadEngine.startMovie({
+          magnet: intent.magnet,
+          movie: movieForDownload(movie),
+          movieLibraryRoot: movieRoots(settings)[0] || settings.movieLibraryRoot,
+          candidates: intent.candidates,
+          triedInfoHashes: intent.triedInfoHashes,
+          notifyChatId: notifyCtx?.notifyChatId,
+          telegramRequestId: notifyCtx?.telegramRequestId,
+          quality: intent.quality,
+        });
+        upsertMovie(withMovieLocalStatus(movie));
+        pushDownloads({ persist: 'now' });
+        mainWindow?.webContents.send('movies:changed');
+        if (intent.upgrade) {
+          notify(`Upgrade: ${movie.title}`, 'ok');
+        }
+        started += 1;
+      }
+      if (delayMs > 0) await sleep(delayMs);
+      else await sleep(800);
+    } catch (err) {
+      activityLog.warn(
+        'hunt',
+        `Failed to start hunt download: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    await yieldMain();
+  }
+  return started;
+}
+
 async function autoDownloadForShows(
   shows: Show[],
   notifyCtx?: AutoDownloadNotify
@@ -1125,154 +1291,31 @@ async function autoDownloadForShows(
   }
   autoDownloadRunning = true;
   let started = 0;
-  const sourceIds = enabledTorrentSourceIds(settings);
-  activityLog.info(
-    'hunt',
-    `Auto hunt start: ${shows.length} show(s)${force ? ' (forced)' : ''}`,
-    { sources: sourceIds.join(',') || '(none)' }
-  );
   try {
-    const delayMs = Math.max(0, (settings.autoDownloadDelayMinutes || 0) * 60 * 1000);
-    for (const show of shows) {
-      // Per-show pause: skip hunting unless this is an explicit Telegram/web approval force.
-      if (!isMonitored(show) && !force) {
-        activityLog.info('hunt', `Skipped show: ${show.name} (monitoring paused)`);
-        continue;
-      }
-      const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
-      const rules = qualityRules('episode', preferred, show);
-      type EpJob = { ep: Episode; upgrade: boolean };
-      const jobs: EpJob[] = [];
-      let ignored = 0;
-      let alreadyDl = 0;
-      let haveOk = 0;
-      for (const season of show.seasons || []) {
-        for (const ep of season.episodes || []) {
-          if (
-            ep.status === 'ignored' ||
-            getEpisodeOverride(show.tmdbId, ep.seasonNumber, ep.episodeNumber) === 'ignored'
-          ) {
-            ignored += 1;
-            continue;
-          }
-          if (downloadEngine.hasEpisodeActivity(show.tmdbId, ep.seasonNumber, ep.episodeNumber)) {
-            alreadyDl += 1;
-            continue;
-          }
-          if (ep.status === 'missing' || ep.status === 'aired') {
-            jobs.push({ ep, upgrade: false });
-            continue;
-          }
-          // Keep hunting preferred when library copy is below preferred (e.g. grabbed at minimum).
-          if (ep.status === 'downloaded') {
-            const current = currentLibraryResolution(ep.localPath, ep.downloadedResolution);
-            if (needsPreferredUpgrade(current, preferred)) {
-              jobs.push({ ep, upgrade: true });
-            } else {
-              haveOk += 1;
-            }
-          }
-        }
-      }
-      activityLog.info(
-        'hunt',
-        `Scan show: ${show.name} — ${jobs.length} to check (${jobs.filter((j) => j.upgrade).length} upgrade), skipped ${ignored} ignored / ${alreadyDl} already downloading / ${haveOk} have preferred`,
-        { preferred, mazeId: show.tmdbId }
-      );
-      for (const { ep, upgrade } of jobs) {
-        const epLabel = `${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
-        if (downloadEngine.hasEpisodeActivity(show.tmdbId, ep.seasonNumber, ep.episodeNumber)) {
-          activityLog.info('hunt', `Skipped ${epLabel}: already downloading`);
-          continue;
-        }
-        try {
-          activityLog.info(
-            'hunt',
-            `Checking episode: ${epLabel} (${upgrade ? 'upgrade' : 'missing'})`,
-            { preferred, sources: sourceIds.join(',') || '(none)' }
-          );
-          const { results, error: searchErr } = await searchEpisodeTorrents(
-            settings,
-            show.name,
-            ep.seasonNumber,
-            ep.episodeNumber,
-            preferred,
-            { imdbId: show.imdbId, mazeId: show.tmdbId }
-          );
-          const triedList = loadTriedForEpisode(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
-          const pool = filterResultsSkippingTried(results, triedList);
-          const triedSkipped = (results?.length || 0) - pool.length;
-          activityLog.info(
-            'search',
-            `Auto episode search: ${epLabel} — ${results?.length || 0} result(s)`,
-            {
-              sourcesHit: sourcesInResults(results),
-              triedSkipped,
-              error: searchErr || '',
-            }
-          );
-          const best = upgrade
-            ? pickUpgradeDownload(pool, preferred, 'episode', rules)
-            : pickAutoDownload(pool, preferred, 'episode', rules);
-          if (!best?.magnet) {
-            activityLog.info(
-              'hunt',
-              `Skipped ${epLabel}: no candidates — ${summarizeAutoRejects(pool, preferred, 'episode', rules, {
-                upgrade,
-                triedSkipped,
-              })}`
-            );
-            continue;
-          }
-          const candidates = toHealthyPreferredCandidates(
-            pool,
-            preferred,
-            'episode',
-            show,
-            upgrade
-          );
-          activityLog.info(
-            'download',
-            `Chose torrent: ${describeTorrentChoice(best, {
-              preferred,
-              upgrade,
-              triedSkipped,
-              healthyCount: candidates.length,
-              mode: upgrade ? 'upgrade' : 'auto',
-            })}`,
-            { episode: epLabel }
-          );
-          await downloadEngine.start({
-            magnet: best.magnet,
-            show: showForDownload(show, ep.seasonNumber),
-            libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
-            seasonNumber: ep.seasonNumber,
-            episodeNumber: ep.episodeNumber,
-            episodeTitle: ep.name,
-            candidates,
-            triedInfoHashes: triedList,
-            notifyChatId: notifyCtx?.notifyChatId,
-            telegramRequestId: notifyCtx?.telegramRequestId,
-            quality: rules,
-          });
-          started += 1;
-          pushDownloads({ persist: 'now' });
-          notify(
-            `${upgrade ? 'Upgrade' : 'Auto-download'}: ${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`,
-            'ok'
-          );
-          if (delayMs > 0) await sleep(delayMs);
-          else await sleep(800);
-        } catch (err) {
-          activityLog.warn(
-            'hunt',
-            `Episode check failed: ${epLabel}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-        await yieldMain();
-      }
-      await yieldMain();
-    }
+    emitRefreshAllProgress({ phase: 'hunt', current: 0, total: shows.length });
+    const { intents, logs, usedWorker } = await huntShowsViaPool({
+      shows,
+      settings,
+      force,
+      overrides: getEpisodeOverrides(),
+      triedTorrents: getTriedTorrentsMap(),
+      activeEpisodeKeys: activeEpisodeActivityKeys(),
+      onProgress: (p) => {
+        emitRefreshAllProgress({
+          phase: 'hunt',
+          current: p.current,
+          total: p.total,
+          label: p.label,
+        });
+      },
+    });
+    activityLog.info(
+      'hunt',
+      usedWorker ? 'Auto hunt plan ready (hunt-worker)' : 'Auto hunt plan ready (main-fallback)',
+      { intents: intents.length }
+    );
+    applyHuntLogs(logs);
+    started = await applyHuntIntents(intents, notifyCtx);
   } finally {
     autoDownloadRunning = false;
   }
@@ -1473,43 +1516,33 @@ async function autoUpgradeMovies(): Promise<number> {
     });
     return 0;
   }
-  const movies = getMovies();
-  activityLog.info('hunt', `Movie upgrade hunt start: ${movies.length} movie(s)`);
-  let started = 0;
-  const skips = emptyMovieHuntSkips();
-  let i = 0;
-  for (const movie of movies) {
-    i += 1;
-    emitRefreshAllProgress({
-      phase: 'movies',
-      current: i,
-      total: movies.length,
-      label: movie.title,
-    });
-    try {
-      const ok = await autoDownloadMovie(movie, undefined, {
-        allowUpgrade: true,
-        quiet: true,
-        skips,
+  const movies = getMovies().map((m) => withMovieLocalStatus(m));
+  emitRefreshAllProgress({ phase: 'movies', current: 0, total: movies.length });
+  const { intents, logs, usedWorker } = await huntMoviesViaPool({
+    movies,
+    settings,
+    allowUpgrade: true,
+    triedTorrents: getTriedTorrentsMap(),
+    activeMovieIds: activeMovieActivityIds(),
+    onProgress: (p) => {
+      emitRefreshAllProgress({
+        phase: 'movies',
+        current: p.current,
+        total: p.total,
+        label: p.label,
       });
-      if (ok) {
-        started += 1;
-        await sleep(800);
-      } else {
-        await yieldMain();
-      }
-    } catch (err) {
-      activityLog.warn(
-        'hunt',
-        `Movie upgrade check failed: ${movie.title}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      await yieldMain();
-    }
-  }
+    },
+  });
   activityLog.info(
     'hunt',
-    `Movie upgrade hunt done: started ${started}; skipped ${summarizeMovieHuntSkips(skips)}`
+    usedWorker
+      ? 'Movie upgrade plan ready (hunt-worker)'
+      : 'Movie upgrade plan ready (main-fallback)',
+    { intents: intents.length }
   );
+  applyHuntLogs(logs);
+  const started = await applyHuntIntents(intents);
+  activityLog.info('hunt', `Movie upgrade hunt done: started ${started}`);
   return started;
 }
 
@@ -3722,10 +3755,14 @@ function registerIpc() {
     const search = getSearchPoolInfo();
     const torrent = getTorrentEngineInfo();
     const meta = getMetadataPoolInfo();
+    const library = getLibraryPoolInfo();
+    const hunt = getHuntPoolInfo();
     return {
       searchWorkers: search.size,
       searchUsingWorkers: search.usingWorkers,
       metadataWorker: meta.usingWorker,
+      libraryWorker: library.usingWorker,
+      huntWorker: hunt.usingWorker,
       cpus: search.cpus,
       torrentMode: torrent.mode,
       torrentDetail: torrent.detail,
@@ -4132,6 +4169,7 @@ app.on('window-all-closed', () => {
     void destroySearchPool();
     void destroyMetadataPool();
     void destroyLibraryPool();
+    void destroyHuntPool();
     app.quit();
   }
 });
