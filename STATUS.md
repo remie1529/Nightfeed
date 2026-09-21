@@ -1,5 +1,22 @@
 # Nightfeed status
 
+**Current:** v2.4.2 — TV (and movie) Kodi-compatible `.nfo` sidecars for Plex.
+
+# Status v2.4.2
+
+## New
+- `tvshow.nfo` + episode `.nfo` written when TV episodes land in the library; upserted on refresh
+- Optional `movie.nfo` / basename `.nfo` on movie finalize
+- Activity log notes NFO writes
+
+## Unchanged
+- Folder naming scheme
+- VPN / OpenVPN / bind / split-tunnel
+- Workers (library / hunt / torrent-utility / etc.)
+
+
+# Nightfeed status
+
 **Current:** v2.4.1 — Refresh→hunt UI freeze fix (streamed upserts + slim hunt DTOs).
 
 # Status v2.4.1

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.4.2
+
+### Added
+- **TV `.nfo` metadata** for Plex / Kodi local agents: writes `tvshow.nfo` in the show root and an episode `.nfo` beside each placed video (same basename as the `.mkv`/`.mp4`)
+- `tvshow.nfo` is upserted on successful episode place, when a season folder is created for a download, on single-show refresh, and during refresh-all (folder scan import too)
+- **Movies (nice-to-have):** `movie.nfo` plus basename `.nfo` beside the video on successful movie place
+- Kodi-shaped XML with title/plot/premiered/year, `uniqueid` for IMDb + TVMaze (show id field), optional poster/fanart URLs
+- Activity log: brief `NFO written:` lines per file on download complete; refresh-all reports `tvshow.nfo` count
+
+### Notes
+- Folder naming unchanged; VPN / workers unchanged
+- Includes `latest.yml` on the GitHub release for auto-update
+
+
 ## 2.4.1
 
 ### Fixed

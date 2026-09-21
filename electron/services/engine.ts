@@ -4,6 +4,7 @@ import fsp from 'fs/promises';
 import path from 'path';
 import { DownloadItem, Movie, Resolution, Show, TorrentCandidate } from '../types';
 import { buildEpisodePath, buildMoviePath, sanitizeName } from './paths';
+import { writeEpisodeNfos, writeMovieNfos, writeTvShowNfo } from './nfo';
 import type { QualityRules } from './search';
 import { resolutionRank } from './search';
 import { probeVideoFile } from './video-probe';
@@ -741,13 +742,36 @@ export class DownloadEngine extends EventEmitter {
         // if move fails, keep original path
       }
     }
+    let nfoWritten: string[] = [];
+    try {
+      let videoForNfo = dest;
+      try {
+        await fsp.access(dest);
+      } catch {
+        videoForNfo = src;
+      }
+      nfoWritten = await writeEpisodeNfos({
+        show: opts.show,
+        seasonNumber: opts.seasonNumber,
+        episodeNumber: opts.episodeNumber,
+        episodeTitle: opts.episodeTitle,
+        videoPath: videoForNfo,
+      });
+    } catch {
+      nfoWritten = [];
+    }
     await this.cleanupWorkDir(item.savePath);
     item.progress = 1;
     item.downloadSpeed = 0;
     item.status = 'done';
     item.savePath = dest;
-    const snapshot = { ...item, downloadedResolution: check.resolution || undefined } as DownloadItem & {
+    const snapshot = {
+      ...item,
+      downloadedResolution: check.resolution || undefined,
+      nfoWritten,
+    } as DownloadItem & {
       downloadedResolution?: Resolution;
+      nfoWritten?: string[];
     };
     this.emit('done', snapshot);
     setImmediate(() => this.remove(id));
@@ -788,13 +812,34 @@ export class DownloadEngine extends EventEmitter {
         // keep original
       }
     }
+    let nfoWritten: string[] = [];
+    try {
+      let videoForNfo = dest;
+      try {
+        await fsp.access(dest);
+      } catch {
+        videoForNfo = src;
+      }
+      nfoWritten = await writeMovieNfos({
+        movie: opts.movie,
+        videoPath: videoForNfo,
+        movieLibraryRoot: opts.movieLibraryRoot,
+      });
+    } catch {
+      nfoWritten = [];
+    }
     await this.cleanupWorkDir(item.savePath);
     item.progress = 1;
     item.downloadSpeed = 0;
     item.status = 'done';
     item.savePath = dest;
-    const snapshot = { ...item, downloadedResolution: check.resolution || undefined } as DownloadItem & {
+    const snapshot = {
+      ...item,
+      downloadedResolution: check.resolution || undefined,
+      nfoWritten,
+    } as DownloadItem & {
       downloadedResolution?: Resolution;
+      nfoWritten?: string[];
     };
     this.emit('done', snapshot);
     setImmediate(() => this.remove(id));
@@ -810,6 +855,8 @@ export class DownloadEngine extends EventEmitter {
       opts.episodeTitle,
       '.mkv'
     );
+    // Season dir exists now — upsert tvshow.nfo early (also rewritten on finalize).
+    void writeTvShowNfo(opts.show, path.dirname(provisional.seasonDir)).catch(() => undefined);
     const workDir = this.workDir(
       `${opts.show.tmdbId}-S${opts.seasonNumber}E${opts.episodeNumber}`,
       provisional.seasonDir
