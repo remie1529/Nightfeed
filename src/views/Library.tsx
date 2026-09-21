@@ -20,6 +20,7 @@ export default function Library({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [missingOnly, setMissingOnly] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
@@ -147,14 +148,46 @@ export default function Library({
 
   const refreshAll = async () => {
     setRefreshing(true);
+    setRefreshProgress('Starting…');
     setError(null);
+    const offProgress = window.torrentAPI.onRefreshAllProgress?.((p) => {
+      if (p.phase === 'done') {
+        setRefreshProgress(null);
+        return;
+      }
+      const phase =
+        p.phase === 'refresh' ? 'Refreshing' : p.phase === 'hunt' ? 'Hunting episodes' : 'Movie upgrades';
+      const label = p.label ? ` — ${p.label}` : '';
+      setRefreshProgress(`${phase} ${p.current}/${p.total}${label}`);
+    });
     try {
-      await window.torrentAPI.refreshAll();
+      await new Promise<void>((resolve, reject) => {
+        const offDone = window.torrentAPI.onRefreshAllDone?.((payload) => {
+          offDone?.();
+          if (payload?.ok === false) {
+            reject(new Error(payload.error || 'Refresh failed'));
+          } else {
+            resolve();
+          }
+        });
+        void window.torrentAPI.refreshAll().then((res) => {
+          // If invoke itself fails, reject; otherwise wait for done event.
+          if (res && res.ok === false) {
+            offDone?.();
+            reject(new Error('Refresh failed to start'));
+          }
+        }).catch((e) => {
+          offDone?.();
+          reject(e instanceof Error ? e : new Error(String(e)));
+        });
+      });
       await load({ soft: true });
       onRefreshDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      offProgress?.();
+      setRefreshProgress(null);
       setRefreshing(false);
     }
   };
@@ -184,8 +217,18 @@ export default function Library({
               onRefreshDone();
             }}
           />
-          <button onClick={refreshAll} disabled={refreshing || shows.length === 0}>
-            {refreshing ? 'Refreshing…' : 'Check new episodes'}
+          <button
+            onClick={refreshAll}
+            disabled={refreshing || shows.length === 0}
+            title={refreshProgress || undefined}
+          >
+            {refreshing
+              ? refreshProgress
+                ? refreshProgress.length > 42
+                  ? `${refreshProgress.slice(0, 40)}…`
+                  : refreshProgress
+                : 'Refreshing…'
+              : 'Check new episodes'}
           </button>
         </div>
       </div>
