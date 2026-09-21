@@ -248,6 +248,36 @@ export function saveShows(shows: Show[]): void {
   store.set('shows', shows);
 }
 
+
+/** Bulk refresh helpers: mutate in memory, persist every N shows / at end. */
+let bulkShows: Show[] | null = null;
+
+export function beginBulkShowWrite(): void {
+  bulkShows = getShows().slice();
+}
+
+export function upsertShowBulk(show: Show): void {
+  if (!bulkShows) {
+    upsertShow(show);
+    return;
+  }
+  const idx = bulkShows.findIndex((s) => s.tmdbId === show.tmdbId);
+  if (idx >= 0) bulkShows[idx] = show;
+  else bulkShows.push(show);
+}
+
+export function flushBulkShowWrite(): Show[] {
+  if (!bulkShows) return getShows();
+  saveShows(bulkShows);
+  const out = bulkShows;
+  bulkShows = null;
+  return out;
+}
+
+export function persistBulkShowWrite(): void {
+  if (bulkShows) saveShows(bulkShows);
+}
+
 export function upsertShow(show: Show): Show[] {
   const shows = getShows();
   const idx = shows.findIndex((s) => s.tmdbId === show.tmdbId);

@@ -4,18 +4,19 @@
  * Does not host WebTorrent — returns download intents for main to start.
  */
 import { parentPort, workerData } from 'worker_threads';
-import type { AppSettings, EpisodeOverrideStatus, Movie, Show } from '../types';
+import type { AppSettings, EpisodeOverrideStatus, Movie } from '../types';
 import {
   huntMoviesCore,
   huntShowsCore,
   type HuntDownloadIntent,
   type HuntLogLine,
+  type HuntShowDto,
 } from '../services/hunt-core';
 
 export type HuntWorkerShowsRequest = {
   id: number;
   op: 'huntShows';
-  shows: Show[];
+  shows: HuntShowDto[];
   settings: AppSettings;
   force?: boolean;
   overrides: Record<string, EpisodeOverrideStatus>;
@@ -45,57 +46,92 @@ if (!parentPort) {
   throw new Error('hunt-worker must be run as a worker_threads Worker');
 }
 
+function createLogBuffer(jobId: number) {
+  let buf: HuntLogLine[] = [];
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const flush = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (!buf.length) return;
+    const lines = buf;
+    buf = [];
+    parentPort!.postMessage({ type: 'logBatch', id: jobId, lines });
+  };
+  return {
+    push(line: HuntLogLine) {
+      buf.push(line);
+      if (buf.length >= 15) flush();
+      else if (!timer) timer = setTimeout(flush, 40);
+    },
+    flush,
+  };
+}
+
+
+
 parentPort.on('message', (msg: HuntWorkerRequest) => {
   void (async () => {
     try {
       if (msg.op === 'huntShows') {
-        const result = await huntShowsCore({
-          shows: msg.shows || [],
-          settings: msg.settings,
-          force: msg.force,
-          overrides: msg.overrides || {},
-          triedTorrents: msg.triedTorrents || {},
-          activeEpisodeKeys: msg.activeEpisodeKeys || [],
-          onProgress: (p) => {
-            parentPort!.postMessage({
-              type: 'progress',
-              id: msg.id,
-              phase: p.phase,
-              current: p.current,
-              total: p.total,
-              label: p.label,
-            });
-          },
-          onLog: (line) => {
-            parentPort!.postMessage({ type: 'log', id: msg.id, line });
-          },
-        });
-        parentPort!.postMessage({ id: msg.id, ok: true, result });
+        const logBuf = createLogBuffer(msg.id);
+        try {
+          const result = await huntShowsCore({
+            shows: msg.shows || [],
+            settings: msg.settings,
+            force: msg.force,
+            overrides: msg.overrides || {},
+            triedTorrents: msg.triedTorrents || {},
+            activeEpisodeKeys: msg.activeEpisodeKeys || [],
+            onProgress: (p) => {
+              parentPort!.postMessage({
+                type: 'progress',
+                id: msg.id,
+                phase: p.phase,
+                current: p.current,
+                total: p.total,
+                label: p.label,
+              });
+            },
+            onLog: (line) => logBuf.push(line),
+          });
+          logBuf.flush();
+          parentPort!.postMessage({ id: msg.id, ok: true, result });
+        } catch (err) {
+          logBuf.flush();
+          throw err;
+        }
         return;
       }
       if (msg.op === 'huntMovies') {
-        const result = await huntMoviesCore({
-          movies: msg.movies || [],
-          settings: msg.settings,
-          allowUpgrade: msg.allowUpgrade,
-          force: msg.force,
-          triedTorrents: msg.triedTorrents || {},
-          activeMovieIds: msg.activeMovieIds || [],
-          onProgress: (p) => {
-            parentPort!.postMessage({
-              type: 'progress',
-              id: msg.id,
-              phase: p.phase,
-              current: p.current,
-              total: p.total,
-              label: p.label,
-            });
-          },
-          onLog: (line) => {
-            parentPort!.postMessage({ type: 'log', id: msg.id, line });
-          },
-        });
-        parentPort!.postMessage({ id: msg.id, ok: true, result });
+        const logBuf = createLogBuffer(msg.id);
+        try {
+          const result = await huntMoviesCore({
+            movies: msg.movies || [],
+            settings: msg.settings,
+            allowUpgrade: msg.allowUpgrade,
+            force: msg.force,
+            triedTorrents: msg.triedTorrents || {},
+            activeMovieIds: msg.activeMovieIds || [],
+            onProgress: (p) => {
+              parentPort!.postMessage({
+                type: 'progress',
+                id: msg.id,
+                phase: p.phase,
+                current: p.current,
+                total: p.total,
+                label: p.label,
+              });
+            },
+            onLog: (line) => logBuf.push(line),
+          });
+          logBuf.flush();
+          parentPort!.postMessage({ id: msg.id, ok: true, result });
+        } catch (err) {
+          logBuf.flush();
+          throw err;
+        }
         return;
       }
       parentPort!.postMessage({

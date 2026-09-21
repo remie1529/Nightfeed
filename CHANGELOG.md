@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.4.1
+
+### Fixed
+- **Refresh all → hunt UI freeze** on large libraries (300+ shows): library worker now **streams** finished shows in small batches instead of returning one giant structured-clone of every show tree
+- Main **upserts with yields** between batches and **throttles `library:changed`** (~500ms) during bulk refresh, with one final emit at the end
+- Hunt receives **compact hunt DTOs** (ids + candidate episodes only) — no second full-library postMessage clone
+- Hunt verbose logs stay detailed but are **batched** to main (logBatch) so sync IPC does not flood the UI thread
+- Library / App renderer **ignore or debounce** mid-refresh `library:changed` floods so poster grids are not fully re-rendered on every emit
+- Bulk refresh persists the store every few shows instead of rewriting the entire library file after each upsert
+
+### Notes
+- No VPN / OpenVPN / bind / split-tunnel changes
+- Includes `latest.yml` on the GitHub release for auto-update
+
 
 ## 2.4.0
 

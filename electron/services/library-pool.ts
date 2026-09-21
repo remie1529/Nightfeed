@@ -28,6 +28,8 @@ type Pending = {
   reject: (e: Error) => void;
   onProgress?: (p: LibraryRefreshProgress) => void;
   onWarn?: (message: string) => void;
+  onShows?: (shows: Show[]) => void | Promise<void>;
+  showChain?: Promise<void>;
 };
 
 let worker: Worker | null = null;
@@ -88,8 +90,26 @@ async function ensureWorker(): Promise<void> {
           if (msg.message) p?.onWarn?.(String(msg.message));
           return;
         }
+        if (msg?.type === 'shows') {
+          const p = pending.get(msg.id);
+          if (p?.onShows && Array.isArray(msg.shows)) {
+            const batch = msg.shows as Show[];
+            p.showChain = (p.showChain || Promise.resolve())
+              .then(() => p.onShows!(batch))
+              .catch((err) => {
+                console.error('[library-pool] onShows handler failed', err);
+              });
+          }
+          return;
+        }
         if (typeof msg?.id === 'number') {
-          settle(msg.id, !!msg.ok, msg.result, msg.error);
+          const p = pending.get(msg.id);
+          const finish = () => settle(msg.id, !!msg.ok, msg.result, msg.error);
+          if (p?.showChain) {
+            p.showChain.then(finish).catch(finish);
+          } else {
+            finish();
+          }
         }
       });
       w.on('error', (err) => {
@@ -142,7 +162,8 @@ async function ensureWorker(): Promise<void> {
 function runOnWorker(
   payload: Record<string, unknown>,
   onProgress?: (p: LibraryRefreshProgress) => void,
-  onWarn?: (message: string) => void
+  onWarn?: (message: string) => void,
+  onShows?: (shows: Show[]) => void | Promise<void>
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (!worker || !ready) {
@@ -150,7 +171,14 @@ function runOnWorker(
       return;
     }
     const id = nextId++;
-    pending.set(id, { resolve, reject, onProgress, onWarn });
+    pending.set(id, {
+      resolve,
+      reject,
+      onProgress,
+      onWarn,
+      onShows,
+      showChain: Promise.resolve(),
+    });
     worker.postMessage({ ...payload, id });
   });
 }
@@ -164,9 +192,11 @@ export type RefreshAllInput = {
   resolutions: Record<string, Resolution>;
   onProgress?: (p: LibraryRefreshProgress) => void;
   onWarn?: (message: string) => void;
+  /** Called with small batches of refreshed shows as the worker finishes them. */
+  onShows?: (shows: Show[]) => void | Promise<void>;
 };
 
-export type RefreshAllResult = { shows: Show[]; failed: number; usedWorker: boolean };
+export type RefreshAllResult = { shows: Show[]; failed: number; usedWorker: boolean; streamed?: boolean };
 
 async function refreshAllInProcess(input: RefreshAllInput): Promise<RefreshAllResult> {
   const downloading = new Set(input.downloadingKeys || []);
@@ -177,6 +207,7 @@ async function refreshAllInProcess(input: RefreshAllInput): Promise<RefreshAllRe
   const updated: Show[] = [];
   let failed = 0;
   const total = input.shows.length;
+  const stream = !!input.onShows;
   for (let i = 0; i < input.shows.length; i++) {
     const show = input.shows[i];
     input.onProgress?.({
@@ -185,27 +216,30 @@ async function refreshAllInProcess(input: RefreshAllInput): Promise<RefreshAllRe
       total,
       label: show.name,
     });
+    let detailed: Show = show;
     try {
-      updated.push(
-        await fetchShowDetail(
-          show.tmdbId,
-          input.libraryRoot,
-          show,
-          downloading,
-          input.extraRoots,
-          meta
-        )
+      detailed = await fetchShowDetail(
+        show.tmdbId,
+        input.libraryRoot,
+        show,
+        downloading,
+        input.extraRoots,
+        meta
       );
     } catch (err) {
       failed += 1;
       input.onWarn?.(
         `Refresh failed: ${show.name}: ${err instanceof Error ? err.message : String(err)}`
       );
-      updated.push(show);
+    }
+    if (stream) {
+      await input.onShows!([detailed]);
+    } else {
+      updated.push(detailed);
     }
     await new Promise<void>((r) => setTimeout(r, 0));
   }
-  return { shows: updated, failed, usedWorker: false };
+  return { shows: updated, failed, usedWorker: false, streamed: stream };
 }
 
 export async function refreshAllViaPool(input: RefreshAllInput): Promise<RefreshAllResult> {
@@ -215,10 +249,17 @@ export async function refreshAllViaPool(input: RefreshAllInput): Promise<Refresh
     return refreshAllInProcess(input);
   }
   try {
+    // Slim outbound clone: worker only needs shell fields (seasons rebuilt from TVMaze).
+    const slimShows = input.shows.map((s) => ({
+      ...s,
+      seasons: [] as Show['seasons'],
+      overview: '',
+    }));
+    const stream = !!input.onShows;
     const result = (await runOnWorker(
       {
         op: 'refreshAll',
-        shows: input.shows,
+        shows: slimShows,
         libraryRoot: input.libraryRoot,
         extraRoots: input.extraRoots,
         downloadingKeys: input.downloadingKeys,
@@ -226,9 +267,15 @@ export async function refreshAllViaPool(input: RefreshAllInput): Promise<Refresh
         resolutions: input.resolutions,
       },
       input.onProgress,
-      input.onWarn
-    )) as { shows: Show[]; failed: number };
-    return { shows: result.shows, failed: result.failed || 0, usedWorker: true };
+      input.onWarn,
+      input.onShows
+    )) as { shows?: Show[]; failed: number; count?: number };
+    return {
+      shows: stream ? [] : result.shows || [],
+      failed: result.failed || 0,
+      usedWorker: true,
+      streamed: stream,
+    };
   } catch (err) {
     console.error('[library-pool] refreshAll worker failed, falling back', err);
     useWorker = false;

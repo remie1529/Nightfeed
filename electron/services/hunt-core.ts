@@ -7,6 +7,7 @@ import type {
   AppSettings,
   Episode,
   EpisodeOverrideStatus,
+  EpisodeStatus,
   Movie,
   Resolution,
   SearchResult,
@@ -34,6 +35,62 @@ function triedEpisodeKey(showId: number, season: number, episode: number): strin
 
 function triedMovieKey(movieId: number): string {
   return `movie:${movieId}`;
+}
+
+
+/** Slim show payload for hunt worker postMessage — no season trees / overviews. */
+export type HuntEpisodeDto = {
+  seasonNumber: number;
+  episodeNumber: number;
+  name: string;
+  status: EpisodeStatus;
+  localPath?: string;
+  downloadedResolution?: Resolution;
+};
+
+export type HuntShowDto = {
+  tmdbId: number;
+  name: string;
+  imdbId?: string | null;
+  preferredResolution?: Resolution;
+  minimumResolution?: Resolution;
+  minSizeMb720p?: number;
+  minSizeMb1080p?: number;
+  minSizeMb2160p?: number;
+  monitored?: boolean;
+  /** Candidates only: missing/aired + downloaded (for upgrade checks). */
+  episodes: HuntEpisodeDto[];
+};
+
+/** Build a compact hunt DTO from a full Show tree. */
+export function toHuntShowDto(show: Show): HuntShowDto {
+  const episodes: HuntEpisodeDto[] = [];
+  for (const season of show.seasons || []) {
+    for (const ep of season.episodes || []) {
+      const st = ep.status;
+      if (st !== 'missing' && st !== 'aired' && st !== 'downloaded') continue;
+      episodes.push({
+        seasonNumber: ep.seasonNumber,
+        episodeNumber: ep.episodeNumber,
+        name: ep.name,
+        status: st,
+        localPath: ep.localPath,
+        downloadedResolution: ep.downloadedResolution,
+      });
+    }
+  }
+  return {
+    tmdbId: show.tmdbId,
+    name: show.name,
+    imdbId: show.imdbId,
+    preferredResolution: show.preferredResolution,
+    minimumResolution: show.minimumResolution,
+    minSizeMb720p: show.minSizeMb720p,
+    minSizeMb1080p: show.minSizeMb1080p,
+    minSizeMb2160p: show.minSizeMb2160p,
+    monitored: show.monitored,
+    episodes,
+  };
 }
 
 export type HuntProgress = {
@@ -79,7 +136,7 @@ export type HuntDownloadIntent = {
 };
 
 export type HuntShowsInput = {
-  shows: Show[];
+  shows: HuntShowDto[];
   settings: AppSettings;
   force?: boolean;
   overrides: Record<string, EpisodeOverrideStatus>;
@@ -140,7 +197,13 @@ export function buildQualityRules(
   settings: AppSettings,
   kind: 'episode' | 'movie',
   preferredOverride?: Resolution | null,
-  show?: Show | null
+  show?: Pick<
+    Show,
+    | 'minimumResolution'
+    | 'minSizeMb720p'
+    | 'minSizeMb1080p'
+    | 'minSizeMb2160p'
+  > | HuntShowDto | null
 ): QualityRules {
   const preferred =
     (preferredOverride ||
@@ -336,60 +399,57 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
 
     const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
     const rules = buildQualityRules(settings, 'episode', preferred, show);
-    type EpJob = { ep: Episode; upgrade: boolean };
+    type EpJob = { ep: HuntEpisodeDto; upgrade: boolean };
     const jobs: EpJob[] = [];
     let ignored = 0;
     let alreadyDl = 0;
     let haveOk = 0;
 
-    for (const season of show.seasons || []) {
-      for (const ep of season.episodes || []) {
-        const ok = overrideKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
-        const epLabel = `${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
-        if (ep.status === 'ignored' || overrides[ok] === 'ignored') {
-          ignored += 1;
-          log({
-            level: 'info',
-            category: 'hunt',
-            message: `Skipped ${epLabel}: ignored`,
-          });
-          continue;
-        }
-        if (active.has(ok)) {
-          alreadyDl += 1;
-          log({
-            level: 'info',
-            category: 'hunt',
-            message: `Skipped ${epLabel}: already downloading`,
-          });
-          continue;
-        }
-        if (ep.status === 'missing' || ep.status === 'aired') {
-          jobs.push({ ep, upgrade: false });
-          continue;
-        }
-        if (ep.status === 'downloaded') {
-          const current = currentLibraryResolution(ep.localPath, ep.downloadedResolution);
-          if (needsPreferredUpgrade(current, preferred)) {
-            jobs.push({ ep, upgrade: true });
-          } else {
-            haveOk += 1;
-            log({
-              level: 'info',
-              category: 'hunt',
-              message: `Skipped ${epLabel}: already have / no upgrade needed`,
-              meta: { current: current || '', preferred },
-            });
-          }
-          continue;
-        }
-        // other statuses (unaired, etc.)
+    for (const ep of show.episodes || []) {
+      const ok = overrideKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
+      const epLabel = `${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
+      if (ep.status === 'ignored' || overrides[ok] === 'ignored') {
+        ignored += 1;
         log({
           level: 'info',
           category: 'hunt',
-          message: `Skipped ${epLabel}: status ${ep.status}`,
+          message: `Skipped ${epLabel}: ignored`,
         });
+        continue;
       }
+      if (active.has(ok)) {
+        alreadyDl += 1;
+        log({
+          level: 'info',
+          category: 'hunt',
+          message: `Skipped ${epLabel}: already downloading`,
+        });
+        continue;
+      }
+      if (ep.status === 'missing' || ep.status === 'aired') {
+        jobs.push({ ep, upgrade: false });
+        continue;
+      }
+      if (ep.status === 'downloaded') {
+        const current = currentLibraryResolution(ep.localPath, ep.downloadedResolution);
+        if (needsPreferredUpgrade(current, preferred)) {
+          jobs.push({ ep, upgrade: true });
+        } else {
+          haveOk += 1;
+          log({
+            level: 'info',
+            category: 'hunt',
+            message: `Skipped ${epLabel}: already have / no upgrade needed`,
+            meta: { current: current || '', preferred },
+          });
+        }
+        continue;
+      }
+      log({
+        level: 'info',
+        category: 'hunt',
+        message: `Skipped ${epLabel}: status ${ep.status}`,
+      });
     }
 
     log({

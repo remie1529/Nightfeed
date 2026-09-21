@@ -82,6 +82,13 @@ async function ensureWorker(): Promise<void> {
           if (msg.line) pend?.onLog?.(msg.line as HuntLogLine);
           return;
         }
+        if (msg?.type === 'logBatch') {
+          const pend = pending.get(msg.id);
+          if (Array.isArray(msg.lines)) {
+            for (const line of msg.lines) pend?.onLog?.(line as HuntLogLine);
+          }
+          return;
+        }
         if (typeof msg?.id === 'number') {
           settle(msg.id, !!msg.ok, msg.result, msg.error);
         }

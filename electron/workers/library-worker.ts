@@ -66,14 +66,25 @@ function metaFrom(msg: {
 }
 
 async function runRefreshAll(msg: LibraryWorkerRefreshRequest): Promise<{
-  shows: Show[];
   failed: number;
+  count: number;
 }> {
   const downloading = new Set(msg.downloadingKeys || []);
   const meta = metaFrom(msg);
-  const updated: Show[] = [];
   let failed = 0;
   const total = msg.shows.length;
+  // Stream each finished show to main — never return one mega-array (structured-clone freeze).
+  const BATCH = 3;
+  let batch: Show[] = [];
+  const flushBatch = () => {
+    if (!batch.length) return;
+    parentPort!.postMessage({
+      type: 'shows',
+      id: msg.id,
+      shows: batch,
+    });
+    batch = [];
+  };
   for (let i = 0; i < msg.shows.length; i++) {
     const show = msg.shows[i];
     parentPort!.postMessage({
@@ -84,8 +95,9 @@ async function runRefreshAll(msg: LibraryWorkerRefreshRequest): Promise<{
       total,
       label: show.name,
     });
+    let detailed: Show = show;
     try {
-      const detailed = await fetchShowDetail(
+      detailed = await fetchShowDetail(
         show.tmdbId,
         msg.libraryRoot,
         show,
@@ -93,7 +105,6 @@ async function runRefreshAll(msg: LibraryWorkerRefreshRequest): Promise<{
         msg.extraRoots,
         meta
       );
-      updated.push(detailed);
     } catch (err) {
       failed += 1;
       parentPort!.postMessage({
@@ -101,10 +112,12 @@ async function runRefreshAll(msg: LibraryWorkerRefreshRequest): Promise<{
         id: msg.id,
         message: `Refresh failed: ${show.name}: ${err instanceof Error ? err.message : String(err)}`,
       });
-      updated.push(show);
     }
+    batch.push(detailed);
+    if (batch.length >= BATCH) flushBatch();
   }
-  return { shows: updated, failed };
+  flushBatch();
+  return { failed, count: total };
 }
 
 async function runFetchShows(msg: LibraryWorkerFetchShowsRequest): Promise<{

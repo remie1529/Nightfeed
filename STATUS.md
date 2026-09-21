@@ -1,5 +1,21 @@
 # Nightfeed status
 
+**Current:** v2.4.1 — Refresh→hunt UI freeze fix (streamed upserts + slim hunt DTOs).
+
+# Status v2.4.1
+
+## Fixed
+- Refresh all with 300+ shows no longer freezes when results hit main / hunt starts
+- Library worker streams show batches; main yields between upserts; `library:changed` throttled
+- Hunt worker gets slim DTOs; log lines batched; renderer ignores mid-refresh change floods
+
+## Unchanged
+- VPN connect / OpenVPN / bind / split-tunnel logic
+- Verbose hunt log content (still detailed; delivery is async/batched)
+
+
+# Nightfeed status
+
 **Current:** v2.4.0 — Verbose hunt logs + more workers off main.
 
 # Status v2.4.0

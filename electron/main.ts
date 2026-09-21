@@ -34,6 +34,10 @@ import {
   setSettings,
   upsertMovie,
   upsertShow,
+  beginBulkShowWrite,
+  upsertShowBulk,
+  flushBulkShowWrite,
+  persistBulkShowWrite,
   upsertTelegramRequest,
   getLiveTvLineup,
   setLiveTvLineup,
@@ -70,7 +74,12 @@ import {
   destroyHuntPool,
   getHuntPoolInfo,
 } from './services/hunt-pool';
-import type { HuntDownloadIntent, HuntLogLine } from './services/hunt-core';
+import {
+  toHuntShowDto,
+  type HuntDownloadIntent,
+  type HuntLogLine,
+  type HuntShowDto,
+} from './services/hunt-core';
 import {
   applyMovieLocalStatus,
   fetchMovieDetail,
@@ -1257,7 +1266,7 @@ async function applyHuntIntents(
 }
 
 async function autoDownloadForShows(
-  shows: Show[],
+  shows: Array<Show | HuntShowDto>,
   notifyCtx?: AutoDownloadNotify
 ): Promise<number> {
   const settings = getSettings();
@@ -1281,8 +1290,24 @@ async function autoDownloadForShows(
   let started = 0;
   try {
     emitRefreshAllProgress({ phase: 'hunt', current: 0, total: shows.length });
+    const slimShows: HuntShowDto[] = shows.map((s) => {
+      const maybe = s as HuntShowDto & Partial<Show>;
+      if (Array.isArray(maybe.episodes) && !Array.isArray(maybe.seasons)) {
+        return maybe as HuntShowDto;
+      }
+      return toHuntShowDto(s as Show);
+    });
+    let logBuf: HuntLogLine[] = [];
+    let logLines = 0;
+    const flushLogs = async () => {
+      if (!logBuf.length) return;
+      applyHuntLogs(logBuf);
+      logBuf = [];
+      logLines += 1;
+      if (logLines % 4 === 0) await yieldMain();
+    };
     const { intents, logs, usedWorker } = await huntShowsViaPool({
-      shows,
+      shows: slimShows,
       settings,
       force,
       overrides: getEpisodeOverrides(),
@@ -1296,8 +1321,12 @@ async function autoDownloadForShows(
           label: p.label,
         });
       },
-      onLog: (line) => applyHuntLogs([line]),
+      onLog: (line) => {
+        logBuf.push(line);
+        if (logBuf.length >= 20) void flushLogs();
+      },
     });
+    await flushLogs();
     activityLog.info(
       'hunt',
       usedWorker ? 'Auto hunt plan ready (hunt-worker)' : 'Auto hunt plan ready (main-fallback)',
@@ -1543,7 +1572,33 @@ async function runRefreshAllShows(): Promise<Show[]> {
   activityLog.info('library', `Refresh all start: ${shows.length} show(s)`);
   emitRefreshAllProgress({ phase: 'refresh', current: 0, total: shows.length });
 
-  const { shows: refreshed, failed, usedWorker } = await refreshAllViaPool({
+  const huntDtos: ReturnType<typeof toHuntShowDto>[] = [];
+  let upserted = 0;
+  let lastEmitAt = 0;
+  const EMIT_MS = 500;
+  const PERSIST_EVERY = 5;
+
+  beginBulkShowWrite();
+
+  const handleBatch = async (batch: Show[]) => {
+    for (const show of batch) {
+      upsertShowBulk(show);
+      huntDtos.push(toHuntShowDto(show));
+      upserted += 1;
+      if (upserted % PERSIST_EVERY === 0) {
+        persistBulkShowWrite();
+        await yieldMain();
+      }
+    }
+    const now = Date.now();
+    if (now - lastEmitAt >= EMIT_MS) {
+      lastEmitAt = now;
+      emitLibraryChanged();
+      await yieldMain();
+    }
+  };
+
+  const { failed, usedWorker } = await refreshAllViaPool({
     shows,
     libraryRoot: settings.libraryRoot,
     extraRoots: tvRoots(settings),
@@ -1559,41 +1614,38 @@ async function runRefreshAllShows(): Promise<Show[]> {
       });
     },
     onWarn: (message) => activityLog.warn('library', message),
+    onShows: handleBatch,
   });
 
-  const updated: Show[] = [];
-  for (const show of refreshed) {
-    upsertShow(show);
-    updated.push(show);
-  }
-  // Tiny yield so library:changed / progress paint before hunt starts.
+  flushBulkShowWrite();
+  emitLibraryChanged(true);
   await yieldMain();
-  emitLibraryChanged();
-  emitRefreshAllProgress({ phase: 'hunt', current: 0, total: updated.length });
-  const huntStarted = await autoDownloadForShows(updated);
+
+  emitRefreshAllProgress({ phase: 'hunt', current: 0, total: huntDtos.length });
+  const huntStarted = await autoDownloadForShows(huntDtos);
   const movieStarted = await autoUpgradeMovies();
   const ms = Date.now() - t0;
   const sec = (ms / 1000).toFixed(1);
   activityLog.info(
     'library',
-    `Refresh all finished (${updated.length} show(s), ${failed} failed) in ${sec}s — hunt started ${huntStarted}, movie upgrades ${movieStarted}`,
+    `Refresh all finished (${upserted} show(s), ${failed} failed) in ${sec}s — hunt started ${huntStarted}, movie upgrades ${movieStarted}`,
     { worker: usedWorker ? 'library-worker' : 'main-fallback' }
   );
   emitRefreshAllProgress({
     phase: 'done',
-    current: updated.length,
-    total: updated.length,
+    current: upserted,
+    total: upserted,
   });
   mainWindow?.webContents.send('library:refreshAllDone', {
     ok: true,
-    showCount: updated.length,
+    showCount: upserted,
     failed,
     huntStarted,
     movieStarted,
     durationMs: ms,
     usedWorker,
   });
-  return updated;
+  return getShows();
 }
 
 async function refreshAllShows(): Promise<Show[]> {
