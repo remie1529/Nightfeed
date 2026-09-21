@@ -111,6 +111,7 @@ import {
   writeSessionLock,
 } from './services/crash-watchdog';
 import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
+import { ensureTvShowNfo } from './services/nfo';
 import { activityLog, summarizeSettingsKeys } from './services/activity-log';
 import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
@@ -1017,6 +1018,34 @@ function withLocalStatuses(show: Show): Show {
   );
 }
 
+/** Upsert Kodi/Plex tvshow.nfo for a show folder when it exists. */
+async function upsertShowNfo(show: Show, opts?: { log?: boolean }): Promise<string | null> {
+  const s = getSettings();
+  try {
+    const p = await ensureTvShowNfo(show, s.libraryRoot, tvRoots(s));
+    if (p && opts?.log !== false) {
+      activityLog.info('library', `NFO written: tvshow.nfo (${show.name})`, { path: p });
+    }
+    return p;
+  } catch (err) {
+    if (opts?.log !== false) {
+      const msg = err instanceof Error ? err.message : String(err);
+      activityLog.warn('library', `NFO failed: ${show.name}`, { error: msg });
+    }
+    return null;
+  }
+}
+
+function logNfoWritten(
+  paths: string[] | undefined,
+  label: string
+): void {
+  for (const p of paths || []) {
+    if (!p) continue;
+    activityLog.info('library', `NFO written: ${path.basename(p)} (${label})`, { path: p });
+  }
+}
+
 let libraryChangedTimer: NodeJS.Timeout | null = null;
 /** Coalesce rapid library:changed during mass import / bulk ops. */
 function emitLibraryChanged(immediate = false) {
@@ -1116,6 +1145,7 @@ async function refreshOne(show: Show): Promise<Show> {
     episodeMetaMaps()
   );
   upsertShow(detailed);
+  await upsertShowNfo(detailed);
   return detailed;
 }
 
@@ -1574,6 +1604,7 @@ async function runRefreshAllShows(): Promise<Show[]> {
 
   const huntDtos: ReturnType<typeof toHuntShowDto>[] = [];
   let upserted = 0;
+  let nfoUpserted = 0;
   let lastEmitAt = 0;
   const EMIT_MS = 500;
   const PERSIST_EVERY = 5;
@@ -1585,6 +1616,8 @@ async function runRefreshAllShows(): Promise<Show[]> {
       upsertShowBulk(show);
       huntDtos.push(toHuntShowDto(show));
       upserted += 1;
+      const nfoPath = await upsertShowNfo(show, { log: false });
+      if (nfoPath) nfoUpserted += 1;
       if (upserted % PERSIST_EVERY === 0) {
         persistBulkShowWrite();
         await yieldMain();
@@ -1628,7 +1661,7 @@ async function runRefreshAllShows(): Promise<Show[]> {
   const sec = (ms / 1000).toFixed(1);
   activityLog.info(
     'library',
-    `Refresh all finished (${upserted} show(s), ${failed} failed) in ${sec}s — hunt started ${huntStarted}, movie upgrades ${movieStarted}`,
+    `Refresh all finished (${upserted} show(s), ${failed} failed) in ${sec}s — hunt started ${huntStarted}, movie upgrades ${movieStarted}, tvshow.nfo ${nfoUpserted}`,
     { worker: usedWorker ? 'library-worker' : 'main-fallback' }
   );
   emitRefreshAllProgress({
@@ -1877,6 +1910,7 @@ async function importShowFromScan(mazeId: number, folderPath: string): Promise<S
       const refreshed = await refreshOne(updated);
       return refreshed;
     }
+    await upsertShowNfo(existing, { log: false });
     return withLocalStatuses(existing);
   }
   const shell = {
@@ -1903,6 +1937,7 @@ async function importShowFromScan(mazeId: number, folderPath: string): Promise<S
   show = { ...show, libraryPath: folderPath || show.libraryPath };
   show = withLocalStatuses(show);
   upsertShow(show);
+  await upsertShowNfo(show);
   return show;
 }
 
@@ -2056,6 +2091,7 @@ async function addShowWithPolicy(mazeId: number, policy: AddShowPolicy = 'manual
     episodeMetaMaps()
   );
   upsertShow(show);
+  await upsertShowNfo(show, { log: false });
 
   if (policy === 'future') {
     const entries = ignoreAiredEpisodes(show);
@@ -4099,6 +4135,16 @@ app.whenReady().then(async () => {
         kind: item.kind || '',
       });
       notify(`Finished: ${item.name}`, 'ok');
+    }
+    {
+      const nfoPaths = (item as DownloadItem & { nfoWritten?: string[] })?.nfoWritten;
+      const label =
+        item?.kind === 'movie'
+          ? item.showName || item.name || 'movie'
+          : item
+            ? `${item.showName} S${pad2(item.seasonNumber)}E${pad2(item.episodeNumber)}`
+            : 'download';
+      logNfoWritten(nfoPaths, label);
     }
     {
       const poster =

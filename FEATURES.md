@@ -2,7 +2,7 @@
 
 Dark chrome, gold accents — a desktop TV & movie manager with embedded torrents, requests, VPN split tunnel, and a local web portal.
 
-**v2.3.5** · Electron · React · WebTorrent · TVMaze · IMDb
+**v2.4.2** · Electron · React · WebTorrent · TVMaze · IMDb
 
 **Made in cooperation with Grok AI.**
 
@@ -18,6 +18,7 @@ Dark chrome, gold accents — a desktop TV & movie manager with embedded torrent
 |------|----------------|
 | **Library** | Track shows via TVMaze (no API key), per-show monitor pause, multi-select bulk actions, missing-episodes filter, season bulk status, folder scan import |
 | **Calendar** | Week view of episode air dates; click through to the show |
+| **NFO metadata** | Kodi-compatible `tvshow.nfo` + episode `.nfo` (movies: `movie.nfo`) so Plex knows the show |
 | **Movies** | Separate movie library, per-movie monitor pause, multi-select bulk actions, IMDb metadata scrape (no API key) |
 | **Downloads** | Embedded WebTorrent (`utilityProcess`), queue of 3 active, pause/resume/cancel |
 | **Requests** | In-app approve/deny + Telegram + web portal |
