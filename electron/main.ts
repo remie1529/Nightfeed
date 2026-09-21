@@ -169,6 +169,8 @@ function signalUiReady(): void {
 }
 let refreshTimer: NodeJS.Timeout | null = null;
 let autoDownloadRunning = false;
+/** Dedupes concurrent manual/scheduled refresh-all runs. */
+let refreshAllInFlight: Promise<Show[]> | null = null;
 
 const updateState: UpdateStatus = {
   checking: false,
@@ -575,6 +577,11 @@ function applyLoginItem(enabled: boolean) {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Yield the main event loop so IPC / UI stay responsive during long refresh/hunt jobs. */
+function yieldMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function pad2(n: number): string {
@@ -1241,6 +1248,7 @@ async function autoDownloadForShows(
           );
         }
       }
+      await yieldMain();
     }
   } finally {
     autoDownloadRunning = false;
@@ -1270,25 +1278,64 @@ async function addMovieById(tmdbId: number): Promise<Movie> {
   return withMovieLocalStatus(movie);
 }
 
+type MovieHuntSkipCounts = {
+  paused: number;
+  vpn: number;
+  downloading: number;
+  have: number;
+  status: number;
+  noCandidates: number;
+};
+
+function emptyMovieHuntSkips(): MovieHuntSkipCounts {
+  return { paused: 0, vpn: 0, downloading: 0, have: 0, status: 0, noCandidates: 0 };
+}
+
+function summarizeMovieHuntSkips(skips: MovieHuntSkipCounts): string {
+  const parts: string[] = [];
+  if (skips.have) parts.push(`${skips.have} already-have`);
+  if (skips.paused) parts.push(`${skips.paused} paused`);
+  if (skips.downloading) parts.push(`${skips.downloading} already downloading`);
+  if (skips.status) parts.push(`${skips.status} other status`);
+  if (skips.vpn) parts.push(`${skips.vpn} VPN hold`);
+  if (skips.noCandidates) parts.push(`${skips.noCandidates} no candidates`);
+  return parts.length ? parts.join(', ') : 'none';
+}
+
 async function autoDownloadMovie(
   movie: Movie,
   notifyCtx?: AutoDownloadNotify,
-  opts?: { allowUpgrade?: boolean }
+  opts?: {
+    allowUpgrade?: boolean;
+    /** When true, skip INFO lines for routine skips (caller summarizes). */
+    quiet?: boolean;
+    skips?: MovieHuntSkipCounts;
+  }
 ): Promise<boolean> {
   const settings = getSettings();
+  const quiet = !!opts?.quiet;
+  const skips = opts?.skips;
+  const bump = (key: keyof MovieHuntSkipCounts) => {
+    if (skips) skips[key] += 1;
+  };
   const force = !!(notifyCtx?.notifyChatId || notifyCtx?.telegramRequestId);
   if (!isMonitored(movie) && !force) {
-    activityLog.info('hunt', `Skipped movie: ${movie.title} (monitoring paused)`);
+    bump('paused');
+    if (!quiet) activityLog.info('hunt', `Skipped movie: ${movie.title} (monitoring paused)`);
     return false;
   }
   if (settings.vpnEnabled && settings.vpnRequireForTorrents && !vpnManager.isConnected()) {
-    activityLog.info('hunt', `Auto movie hunt held: ${movie.title} (VPN required but not connected)`, {
-      vpnHold: true,
-    });
+    bump('vpn');
+    if (!quiet) {
+      activityLog.info('hunt', `Auto movie hunt held: ${movie.title} (VPN required but not connected)`, {
+        vpnHold: true,
+      });
+    }
     return false;
   }
   if (downloadEngine.hasMovieActivity(movie.tmdbId)) {
-    activityLog.info('hunt', `Skipped movie: ${movie.title} (already downloading)`);
+    bump('downloading');
+    if (!quiet) activityLog.info('hunt', `Skipped movie: ${movie.title} (already downloading)`);
     return false;
   }
   const preferred = (movie.preferredResolution ||
@@ -1304,11 +1351,15 @@ async function autoDownloadMovie(
     );
   // Missing/forced downloads always; upgrades only when allowUpgrade.
   if (live.status === 'downloaded' && !upgrade) {
-    activityLog.info('hunt', `Skipped movie: ${movie.title} (already have / no upgrade needed)`);
+    bump('have');
+    if (!quiet) {
+      activityLog.info('hunt', `Skipped movie: ${movie.title} (already have / no upgrade needed)`);
+    }
     return false;
   }
   if (live.status !== 'missing' && live.status !== 'downloaded' && !notifyCtx) {
-    activityLog.info('hunt', `Skipped movie: ${movie.title} (status ${live.status})`);
+    bump('status');
+    if (!quiet) activityLog.info('hunt', `Skipped movie: ${movie.title} (status ${live.status})`);
     return false;
   }
   const sourceIds = enabledTorrentSourceIds(settings);
@@ -1340,6 +1391,7 @@ async function autoDownloadMovie(
     ? pickUpgradeDownload(pool, preferred, 'movie', rules)
     : pickAutoDownload(pool, preferred, 'movie', rules);
   if (!best?.magnet) {
+    bump('noCandidates');
     activityLog.info(
       'hunt',
       `Skipped movie ${movie.title}: no candidates — ${summarizeAutoRejects(pool, preferred, 'movie', rules, {
@@ -1380,6 +1432,15 @@ async function autoDownloadMovie(
   return true;
 }
 
+function emitRefreshAllProgress(payload: {
+  phase: 'refresh' | 'hunt' | 'movies' | 'done';
+  current: number;
+  total: number;
+  label?: string;
+}) {
+  mainWindow?.webContents.send('library:refreshAllProgress', payload);
+}
+
 async function autoUpgradeMovies(): Promise<number> {
   const settings = getSettings();
   if (!settings.autoDownload) return 0;
@@ -1392,22 +1453,104 @@ async function autoUpgradeMovies(): Promise<number> {
   const movies = getMovies();
   activityLog.info('hunt', `Movie upgrade hunt start: ${movies.length} movie(s)`);
   let started = 0;
+  const skips = emptyMovieHuntSkips();
+  let i = 0;
   for (const movie of movies) {
+    i += 1;
+    emitRefreshAllProgress({
+      phase: 'movies',
+      current: i,
+      total: movies.length,
+      label: movie.title,
+    });
     try {
-      const ok = await autoDownloadMovie(movie, undefined, { allowUpgrade: true });
+      const ok = await autoDownloadMovie(movie, undefined, {
+        allowUpgrade: true,
+        quiet: true,
+        skips,
+      });
       if (ok) {
         started += 1;
         await sleep(800);
+      } else {
+        await yieldMain();
       }
     } catch (err) {
       activityLog.warn(
         'hunt',
         `Movie upgrade check failed: ${movie.title}: ${err instanceof Error ? err.message : String(err)}`
       );
+      await yieldMain();
     }
   }
-  activityLog.info('hunt', `Movie upgrade hunt done: started ${started}`);
+  activityLog.info(
+    'hunt',
+    `Movie upgrade hunt done: started ${started}; skipped ${summarizeMovieHuntSkips(skips)}`
+  );
   return started;
+}
+
+async function runRefreshAllShows(): Promise<Show[]> {
+  const t0 = Date.now();
+  const shows = getShows();
+  activityLog.info('library', `Refresh all start: ${shows.length} show(s)`);
+  emitRefreshAllProgress({ phase: 'refresh', current: 0, total: shows.length });
+  const updated: Show[] = [];
+  let failed = 0;
+  let i = 0;
+  for (const show of shows) {
+    i += 1;
+    emitRefreshAllProgress({
+      phase: 'refresh',
+      current: i,
+      total: shows.length,
+      label: show.name,
+    });
+    try {
+      updated.push(await refreshOne(show));
+    } catch (err) {
+      failed += 1;
+      activityLog.warn(
+        'library',
+        `Refresh failed: ${show.name}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      updated.push(show);
+    }
+    // Yield every show so Settings/Downloads IPC and Chromium painting stay responsive.
+    await yieldMain();
+  }
+  emitLibraryChanged();
+  emitRefreshAllProgress({ phase: 'hunt', current: 0, total: updated.length });
+  const huntStarted = await autoDownloadForShows(updated);
+  const movieStarted = await autoUpgradeMovies();
+  const ms = Date.now() - t0;
+  const sec = (ms / 1000).toFixed(1);
+  activityLog.info(
+    'library',
+    `Refresh all finished (${updated.length} show(s), ${failed} failed) in ${sec}s — hunt started ${huntStarted}, movie upgrades ${movieStarted}`
+  );
+  emitRefreshAllProgress({
+    phase: 'done',
+    current: updated.length,
+    total: updated.length,
+  });
+  mainWindow?.webContents.send('library:refreshAllDone', {
+    ok: true,
+    showCount: updated.length,
+    failed,
+    huntStarted,
+    movieStarted,
+    durationMs: ms,
+  });
+  return updated;
+}
+
+async function refreshAllShows(): Promise<Show[]> {
+  if (refreshAllInFlight) return refreshAllInFlight;
+  refreshAllInFlight = runRefreshAllShows().finally(() => {
+    refreshAllInFlight = null;
+  });
+  return refreshAllInFlight;
 }
 
 function newTelegramRequestId(): string {
@@ -1528,29 +1671,6 @@ function applySettingsSideEffects(next: AppSettings): void {
     void vpnManager.disconnect();
   }
   pushVpnStatus(next);
-}
-
-
-async function refreshAllShows(): Promise<Show[]> {
-  activityLog.info('library', 'Scheduled/manual refresh all + auto hunt');
-  const updated: Show[] = [];
-  for (const show of getShows()) {
-    try {
-      updated.push(await refreshOne(show));
-    } catch (err) {
-      activityLog.warn(
-        'library',
-        `Refresh failed: ${show.name}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      updated.push(show);
-    }
-    await new Promise<void>((r) => setImmediate(r));
-  }
-  emitLibraryChanged();
-  await autoDownloadForShows(updated);
-  await autoUpgradeMovies();
-  activityLog.info('library', `Refresh all finished (${updated.length} show(s))`);
-  return updated;
 }
 
 function scheduleRefresh() {
@@ -2918,8 +3038,17 @@ function registerIpc() {
   });
 
   ipcMain.handle('library:refreshAll', async () => {
-    activityLog.info('library', 'Refresh all shows');
-    return refreshAllShows();
+    activityLog.info('library', 'Refresh all shows (manual)');
+    const alreadyRunning = !!refreshAllInFlight;
+    // Return quickly — work continues on main with yields; progress/done via events.
+    // Telegram / scheduled callers still await refreshAllShows() directly.
+    const work = refreshAllShows();
+    void work.catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      activityLog.warn('library', `Refresh all failed: ${msg}`);
+      mainWindow?.webContents.send('library:refreshAllDone', { ok: false, error: msg });
+    });
+    return { ok: true, started: !alreadyRunning, alreadyRunning };
   });
 
   ipcMain.handle('library:calendar', (_e, from: string, to: string) => listCalendarEpisodes(from, to));

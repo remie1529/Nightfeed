@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.4
+
+- **Fix**: Full library **Refresh all** no longer freezes the UI on large libraries (300+ shows)
+- Still runs on **Electron main** (not utilityProcess / search workers) — needs store, download engine, and VPN checks — but yields the event loop between every show and every movie hunt job so Settings / Downloads stay navigable
+- `library:refreshAll` returns immediately and streams progress / done events; activity log records start + finish with duration and counts
+- Movie upgrade hunt: stop INFO-spamming every “already have / no upgrade needed”; one summary line (e.g. skipped 9 already-have). Started downloads and real failures unchanged
+- Monitored / ignored / upgrade rules unchanged; no VPN changes
+
 ## 2.3.3
 
 - **Fix**: Episode **Ignored** now overrides everything — including when a file is already on disk or a download is active

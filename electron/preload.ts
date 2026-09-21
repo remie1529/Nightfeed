@@ -20,7 +20,12 @@ const api = {
   updateShow: (mazeId: number, partial: Record<string, unknown>) =>
     ipcRenderer.invoke('library:update', mazeId, partial),
   refreshShow: (mazeId: number) => ipcRenderer.invoke('library:refresh', mazeId),
-  refreshAll: () => ipcRenderer.invoke('library:refreshAll'),
+  refreshAll: () =>
+    ipcRenderer.invoke('library:refreshAll') as Promise<{
+      ok: boolean;
+      started?: boolean;
+      alreadyRunning?: boolean;
+    }>,
   scanLibraryPreview: (scope: 'tv' | 'movies' | 'both') =>
     ipcRenderer.invoke('library:scanPreview', scope),
   scanLibraryImport: (items: Array<{
@@ -132,6 +137,54 @@ const api = {
     const listener = () => cb();
     ipcRenderer.on('library:changed', listener);
     return () => ipcRenderer.removeListener('library:changed', listener);
+  },
+
+  onRefreshAllProgress: (
+    cb: (payload: {
+      phase: 'refresh' | 'hunt' | 'movies' | 'done';
+      current: number;
+      total: number;
+      label?: string;
+    }) => void
+  ) => {
+    const listener = (
+      _: unknown,
+      payload: {
+        phase: 'refresh' | 'hunt' | 'movies' | 'done';
+        current: number;
+        total: number;
+        label?: string;
+      }
+    ) => cb(payload);
+    ipcRenderer.on('library:refreshAllProgress', listener);
+    return () => ipcRenderer.removeListener('library:refreshAllProgress', listener);
+  },
+
+  onRefreshAllDone: (
+    cb: (payload: {
+      ok: boolean;
+      showCount?: number;
+      failed?: number;
+      huntStarted?: number;
+      movieStarted?: number;
+      durationMs?: number;
+      error?: string;
+    }) => void
+  ) => {
+    const listener = (
+      _: unknown,
+      payload: {
+        ok: boolean;
+        showCount?: number;
+        failed?: number;
+        huntStarted?: number;
+        movieStarted?: number;
+        durationMs?: number;
+        error?: string;
+      }
+    ) => cb(payload);
+    ipcRenderer.on('library:refreshAllDone', listener);
+    return () => ipcRenderer.removeListener('library:refreshAllDone', listener);
   },
 
   onScanProgress: (

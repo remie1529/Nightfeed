@@ -1,6 +1,15 @@
 ## Nightfeed status
 
-**Current:** v2.3.3 — Ignored overrides on-disk / active downloads; auto paths skip.
+**Current:** v2.3.4 — Refresh-all yields on main; movie hunt skip summary.
+
+# Status v2.3.4
+
+## Fixed
+- Full library refresh + movie upgrade hunt no longer freezes the UI on large libraries
+- Activity log no longer INFO-logs every movie “already have” skip during upgrade hunt (summarized)
+
+## Changed
+- Refresh-all stays on Electron main (not a utilityProcess) but yields between jobs; IPC returns quickly with progress events
 
 # Status v2.3.3
 
