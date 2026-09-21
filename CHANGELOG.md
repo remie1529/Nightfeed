@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.5
+
+- **Fix**: Library **Refresh all** / hunt no longer freezes the UI — heavy TVMaze fetch + local episode indexing run on a dedicated `library-worker` (`worker_threads`), not Electron main or the GUI
+- Main only orchestrates: start job, receive progress/results, upsert store, then auto-download/hunt (chunked with yields so Downloads/Settings stay clickable)
+- Folder **Scan & import** preview + TV metadata fetch use the same worker; falls back to main only if the worker fails to start (one activity-log line, no spam)
+- Packaged `library-worker.js` via vite + `asarUnpack` (same pattern as metadata/search workers)
+- Monitored / ignored / upgrade rules unchanged; WebTorrent stays in `torrent-utility`; no VPN changes
+
 ## 2.3.4
 
 - **Fix**: Full library **Refresh all** no longer freezes the UI on large libraries (300+ shows)

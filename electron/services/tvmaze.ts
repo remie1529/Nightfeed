@@ -1,8 +1,17 @@
 import { Episode, EpisodeOverrideStatus, EpisodeStatus, Resolution, Season, Show } from '../types';
 import { indexLocalEpisodes } from './paths';
-import { episodeKey, getEpisodeOverrides, getEpisodeResolutions } from './store';
 import { detectResolution } from './search';
 import path from 'path';
+
+/** Same key shape as store.episodeKey — kept local so this module can run in a worker. */
+export function episodeKey(showId: number, season: number, episode: number): string {
+  return `${showId}:${season}:${episode}`;
+}
+
+export type EpisodeMetaMaps = {
+  overrides: Record<string, EpisodeOverrideStatus>;
+  resolutions: Record<string, Resolution>;
+};
 
 export { searchShows, type MazeSearchItem } from './tvmaze-search';
 
@@ -123,7 +132,8 @@ export async function fetchShowDetail(
   libraryRoot: string,
   existing?: Show,
   downloadingKeys: Set<string> = new Set(),
-  extraRoots?: string[]
+  extraRoots?: string[],
+  meta: EpisodeMetaMaps = { overrides: {}, resolutions: {} }
 ): Promise<Show> {
   const [detail, seasonsMeta, episodes] = await Promise.all([
     mazeFetch<MazeShow>(`/shows/${mazeId}`),
@@ -139,7 +149,7 @@ export async function fetchShowDetail(
   shell.status = detail.status || '';
   shell.imdbId = detail.externals?.imdb || existing?.imdbId || null;
 
-  const overrides = getEpisodeOverrides();
+  const overrides = meta.overrides || {};
 
   const bySeason = new Map<number, MazeEpisode[]>();
   for (const ep of episodes) {
@@ -156,7 +166,7 @@ export async function fetchShowDetail(
   ]);
 
   const localIndex = indexLocalEpisodes(shell, libraryRoot, extraRoots);
-  const resolutions = getEpisodeResolutions();
+  const resolutions = meta.resolutions || {};
 
   const seasons: Season[] = [...seasonNumbers]
     .sort((a, b) => a - b)
@@ -208,10 +218,11 @@ export function applyLocalStatuses(
   show: Show,
   libraryRoot: string,
   downloadingKeys: Set<string>,
-  extraRoots?: string[]
+  extraRoots?: string[],
+  meta: EpisodeMetaMaps = { overrides: {}, resolutions: {} }
 ): Show {
-  const overrides = getEpisodeOverrides();
-  const resolutions = getEpisodeResolutions();
+  const overrides = meta.overrides || {};
+  const resolutions = meta.resolutions || {};
   // One-pass FS index for the whole show (not per-episode readdir).
   const localIndex = indexLocalEpisodes(show, libraryRoot, extraRoots);
   const seasons = show.seasons.map((season) => ({
