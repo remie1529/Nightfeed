@@ -396,6 +396,8 @@ export interface SearchResult {
   source: string;
   resolution?: Resolution | null;
   infoHash?: string;
+  /** ISO date or datetime when the torrent was published/uploaded; undefined if unknown. */
+  publishedAt?: string | null;
 }
 
 export interface DownloadHistoryItem {

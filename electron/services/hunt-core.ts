@@ -44,6 +44,7 @@ export type HuntEpisodeDto = {
   episodeNumber: number;
   name: string;
   status: EpisodeStatus;
+  airDate?: string | null;
   localPath?: string;
   downloadedResolution?: Resolution;
 };
@@ -74,6 +75,7 @@ export function toHuntShowDto(show: Show): HuntShowDto {
         episodeNumber: ep.episodeNumber,
         name: ep.name,
         status: st,
+        airDate: ep.airDate,
         localPath: ep.localPath,
         downloadedResolution: ep.downloadedResolution,
       });
@@ -427,6 +429,16 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
         continue;
       }
       if (ep.status === 'missing' || ep.status === 'aired') {
+        const airDay = (ep.airDate || '').slice(0, 10);
+        const today = new Date().toISOString().slice(0, 10);
+        if (airDay && airDay > today) {
+          log({
+            level: 'info',
+            category: 'hunt',
+            message: `Skipped ${show.name} S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}: not aired yet (${airDay})`,
+          });
+          continue;
+        }
         jobs.push({ ep, upgrade: false });
         continue;
       }
@@ -478,13 +490,13 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
           message: `Checking episode: ${epLabel} (${upgrade ? 'upgrade' : 'missing'})`,
           meta: { preferred, sources: sourceIds.join(',') || '(none)' },
         });
-        const { results, error: searchErr } = await searchEpisodeTorrents(
+        const { results, error: searchErr, dateFiltered } = await searchEpisodeTorrents(
           settings,
           show.name,
           ep.seasonNumber,
           ep.episodeNumber,
           preferred,
-          { imdbId: show.imdbId, mazeId: show.tmdbId }
+          { imdbId: show.imdbId, mazeId: show.tmdbId, airDate: ep.airDate }
         );
         const triedKey = triedEpisodeKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
         const triedList = triedListFor(triedMap, triedKey);
@@ -497,6 +509,7 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
           meta: {
             sourcesHit: sourcesInResults(results),
             triedSkipped,
+            dateFiltered: dateFiltered || 0,
             error: searchErr || '',
           },
         });

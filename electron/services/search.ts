@@ -11,6 +11,65 @@ export function buildQuery(showName: string, season: number, episode: number): s
 /** Auto-download / retry skip torrents at or below this — 0–5 seeders almost never complete. */
 export const MIN_AUTO_SEEDERS = 8;
 
+/** Parse torrent publish/upload timestamps from APIs/RSS into an ISO string. */
+export function parsePublishedAt(raw: unknown): string | undefined {
+  if (raw == null || raw === '') return undefined;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return undefined;
+    const ms = raw < 1e12 ? raw * 1000 : raw;
+    const d = new Date(ms);
+    if (!Number.isFinite(d.getTime())) return undefined;
+    return d.toISOString();
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+      return parsePublishedAt(Number(trimmed));
+    }
+    const d = new Date(trimmed);
+    if (!Number.isFinite(d.getTime())) return undefined;
+    return d.toISOString();
+  }
+  return undefined;
+}
+
+/** Calendar day YYYY-MM-DD in UTC (prefers leading date when present). */
+export function utcDay(isoOrDate: string | null | undefined): string | null {
+  if (!isoOrDate) return null;
+  const trimmed = String(isoOrDate).trim();
+  const m = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(trimmed);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Keep torrents published on/after the episode air date (UTC calendar day).
+ * Results without publishedAt are kept so undated sources still work.
+ */
+export function filterResultsByAirDate(
+  results: SearchResult[],
+  airDate: string | null | undefined
+): { kept: SearchResult[]; removed: number } {
+  const airDay = utcDay(airDate);
+  if (!airDay) return { kept: results, removed: 0 };
+  const kept: SearchResult[] = [];
+  let removed = 0;
+  for (const r of results) {
+    if (!r.publishedAt) {
+      kept.push(r);
+      continue;
+    }
+    const pubDay = utcDay(r.publishedAt);
+    if (!pubDay || pubDay >= airDay) kept.push(r);
+    else removed += 1;
+  }
+  return { kept, removed };
+}
+
+
 
 export function resolutionRank(res: Resolution | null | undefined): number {
   if (res === '2160p') return 3;
@@ -512,6 +571,7 @@ interface ApibayItem {
   leechers: string;
   seeders: string;
   size: string;
+  added?: string | number;
 }
 
 function mapApibayItems(data: ApibayItem[], query: string): SearchResult[] {
@@ -530,6 +590,7 @@ function mapApibayItems(data: ApibayItem[], query: string): SearchResult[] {
       source: 'apibay',
       resolution: detectResolution(item.name || ''),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.added),
     };
   });
 }
@@ -568,6 +629,7 @@ async function searchKnaben(query: string): Promise<SearchResult[]> {
       bytes?: number;
       seeders?: number;
       peers?: number;
+      date?: string | number;
     }>;
   };
   const results: SearchResult[] = [];
@@ -588,6 +650,7 @@ async function searchKnaben(query: string): Promise<SearchResult[]> {
       source: 'knaben',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(hit.date),
     });
   }
   return results;
@@ -607,6 +670,8 @@ async function searchYourBittorrent(query: string, category = 'television'): Pro
       size_bytes?: number;
       seeds?: number;
       peers?: number;
+      added?: number | string;
+      added_iso?: string;
     }>;
   };
   const results: SearchResult[] = [];
@@ -627,6 +692,7 @@ async function searchYourBittorrent(query: string, category = 'television'): Pro
       source: 'yourbittorrent',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.added_iso || item.added),
     });
   }
   return results;
@@ -643,6 +709,7 @@ async function searchTorrentsCsv(query: string): Promise<SearchResult[]> {
       size_bytes?: number;
       seeders?: number;
       leechers?: number;
+      created_unix?: number | string;
     }>;
   };
   const results: SearchResult[] = [];
@@ -659,6 +726,7 @@ async function searchTorrentsCsv(query: string): Promise<SearchResult[]> {
       source: 'torrentscsv',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.created_unix),
     });
   }
   return results;
@@ -686,6 +754,7 @@ async function searchEztv(
       peers?: number;
       season?: string | number;
       episode?: string | number;
+      date_released_unix?: number | string;
     }>;
   };
   const results: SearchResult[] = [];
@@ -716,6 +785,7 @@ async function searchEztv(
       source: 'eztv',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.date_released_unix),
     });
   }
   return results;
@@ -732,6 +802,7 @@ async function searchAnimeTosho(query: string): Promise<SearchResult[]> {
     total_size?: number;
     seeders?: number;
     leechers?: number;
+    timestamp?: number | string;
   }>;
   if (!Array.isArray(data)) return [];
   const results: SearchResult[] = [];
@@ -752,6 +823,7 @@ async function searchAnimeTosho(query: string): Promise<SearchResult[]> {
       source: 'animetosho',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.timestamp),
     });
   }
   return results;
@@ -812,6 +884,7 @@ async function searchNyaa(query: string): Promise<SearchResult[]> {
       source: 'nyaa',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -847,6 +920,7 @@ async function searchLimeTorrents(query: string): Promise<SearchResult[]> {
       source: 'limetorrents',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -880,6 +954,8 @@ async function searchYts(query: string): Promise<SearchResult[]> {
           size_bytes?: number;
           seeds?: number;
           peers?: number;
+          date_uploaded_unix?: number | string;
+          date_uploaded?: string;
         }>;
       }>;
     };
@@ -902,6 +978,7 @@ async function searchYts(query: string): Promise<SearchResult[]> {
         source: 'yts',
         resolution: detectResolution(title) || detectResolution(quality),
         infoHash: hash,
+        publishedAt: parsePublishedAt(t.date_uploaded_unix ?? t.date_uploaded),
       });
     }
   }
@@ -918,6 +995,7 @@ async function searchTheRarBg(query: string): Promise<SearchResult[]> {
       se?: number;
       le?: number;
       h?: string;
+      a?: number | string;
     }>;
   } | null = null;
   let lastErr = '';
@@ -950,6 +1028,7 @@ async function searchTheRarBg(query: string): Promise<SearchResult[]> {
       source: 'therarbg',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.a),
     });
   }
   return results;
@@ -984,6 +1063,7 @@ async function searchTorrentDownloads(query: string): Promise<SearchResult[]> {
       source: 'torrentdownloads',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1022,6 +1102,7 @@ async function searchTokyoTosho(query: string): Promise<SearchResult[]> {
       source: 'tokyotosho',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1042,6 +1123,9 @@ async function searchSolidTorrents(query: string): Promise<SearchResult[]> {
       size?: number;
       seeders?: number;
       leechers?: number;
+      created_at?: string | number;
+      imported?: string | number;
+      timestamp?: number | string;
     }>;
   } | null = null;
   let lastErr = '';
@@ -1073,6 +1157,7 @@ async function searchSolidTorrents(query: string): Promise<SearchResult[]> {
       source: 'solidtorrents',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.created_at ?? item.imported ?? item.timestamp),
     });
   }
   return results;
@@ -1111,6 +1196,7 @@ async function searchTorrentDownload(query: string): Promise<SearchResult[]> {
       source: 'torrentdownload',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1207,6 +1293,9 @@ async function searchBangumi(query: string): Promise<SearchResult[]> {
       size?: string | number;
       seeders?: number;
       leechers?: number;
+      publish_time?: string | number;
+      created?: string | number;
+      update_time?: string | number;
     }>;
   };
   const results: SearchResult[] = [];
@@ -1231,6 +1320,7 @@ async function searchBangumi(query: string): Promise<SearchResult[]> {
       source: 'bangumi',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(item.publish_time ?? item.created ?? item.update_time),
     });
   }
   return results;
@@ -1267,6 +1357,7 @@ async function searchMikan(query: string): Promise<SearchResult[]> {
       source: 'mikan',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1305,6 +1396,7 @@ async function searchDmhy(query: string): Promise<SearchResult[]> {
       source: 'dmhy',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1360,6 +1452,7 @@ async function searchAcgnx(query: string): Promise<SearchResult[]> {
       source: 'acgnx',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1441,6 +1534,7 @@ async function searchSukebei(query: string): Promise<SearchResult[]> {
       source: 'sukebei',
       resolution: detectResolution(title),
       infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1466,6 +1560,7 @@ async function searchJackett(settings: AppSettings, query: string, category = 50
       Peers: number;
       Tracker?: string;
       InfoHash?: string;
+      PublishDate?: string;
     }>;
   };
   const results: SearchResult[] = [];
@@ -1482,6 +1577,7 @@ async function searchJackett(settings: AppSettings, query: string, category = 50
       source: item.Tracker || 'jackett',
       resolution: detectResolution(item.Title || ''),
       infoHash,
+      publishedAt: parsePublishedAt(item.PublishDate),
     });
   }
   return results;
@@ -1506,7 +1602,12 @@ export function mergeByInfoHash(groups: SearchResult[][]): SearchResult[] {
       }
       const prev = map.get(key);
       if (!prev || (r.seeders || 0) > (prev.seeders || 0)) {
-        map.set(key, r);
+        map.set(key, {
+          ...r,
+          publishedAt: r.publishedAt || prev?.publishedAt,
+        });
+      } else if (!prev.publishedAt && r.publishedAt) {
+        map.set(key, { ...prev, publishedAt: r.publishedAt });
       }
     }
   }
@@ -1550,6 +1651,8 @@ export function enabledTorrentSources(settings: AppSettings): TorrentSourceId[] 
 export interface SearchEpisodeOpts {
   imdbId?: string | null;
   mazeId?: number;
+  /** Episode air date (YYYY-MM-DD or ISO); used to drop pre-air torrent uploads. */
+  airDate?: string | null;
 }
 
 export async function searchEpisodeTorrents(
@@ -1559,8 +1662,17 @@ export async function searchEpisodeTorrents(
   episode: number,
   preferred: Resolution,
   opts: SearchEpisodeOpts = {}
-): Promise<{ results: SearchResult[]; query: string; error?: string }> {
+): Promise<{ results: SearchResult[]; query: string; error?: string; dateFiltered?: number }> {
   const query = buildQuery(showName, season, episode);
+  const airDay = utcDay(opts.airDate);
+  const today = new Date().toISOString().slice(0, 10);
+  if (airDay && airDay > today) {
+    return {
+      results: [],
+      query,
+      error: `Episode has not aired yet (${airDay})`,
+    };
+  }
   const sources = enabledTorrentSources(settings).filter((id) => id !== 'yts');
   const errors: string[] = [];
   const groups: SearchResult[][] = [];
@@ -1644,15 +1756,17 @@ export async function searchEpisodeTorrents(
       !isMultiEpisodePack(r.title || '')
   );
   // Never fall back to unfiltered merge — wrong episodes must not appear in Find / auto-download.
-  const ranked = rankResults(episodeOnly, preferred, showName, settings.minSeeders ?? MIN_AUTO_SEEDERS);
+  const { kept: dated, removed: dateFiltered } = filterResultsByAirDate(episodeOnly, opts.airDate);
+  const ranked = rankResults(dated, preferred, showName, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const parts: string[] = [];
   if (errors.length > 0) parts.push(errors.join(' | '));
-  if (!episodeOnly.length) {
+  if (dateFiltered > 0) parts.push(`Dropped ${dateFiltered} pre-air torrent(s)`);
+  if (!dated.length) {
     parts.push(`No torrents matching ${episodeTag(season, episode)}`);
   }
   const error = parts.length > 0 ? parts.join(' | ') : undefined;
 
-  return { results: ranked, query, error };
+  return { results: ranked, query, error, dateFiltered: dateFiltered || undefined };
 }
 
 export function buildMovieQuery(title: string, year?: number | null): string {

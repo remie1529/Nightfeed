@@ -1,5 +1,21 @@
 # Nightfeed status
 
+**Current:** v2.4.3 — TV episode torrents filtered to air date onward when publish date is known.
+
+# Status v2.4.3
+
+## New
+- Episode Find + auto-hunt drop torrents uploaded before the episode air date (when `publishedAt` is known)
+- Undated torrent results still allowed so sources without dates keep working
+- Hunt reinforces skip of not-yet-aired episodes
+
+## Unchanged
+- VPN / OpenVPN / bind / split-tunnel
+- Folder naming; NFO metadata from 2.4.2
+
+
+# Nightfeed status
+
 **Current:** v2.4.2 — TV (and movie) Kodi-compatible `.nfo` sidecars for Plex.
 
 # Status v2.4.2
