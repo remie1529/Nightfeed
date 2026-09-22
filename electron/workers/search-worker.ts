@@ -20,7 +20,7 @@ export type SearchWorkerRequest =
       season: number;
       episode: number;
       preferred: Resolution;
-      opts?: { imdbId?: string | null; mazeId?: number };
+      opts?: { imdbId?: string | null; mazeId?: number; airDate?: string | null };
     }
   | {
       id: number;
@@ -41,7 +41,7 @@ export type SearchWorkerResponse =
   | {
       id: number;
       ok: true;
-      result: { results: SearchResult[]; query: string; error?: string };
+      result: { results: SearchResult[]; query: string; error?: string; dateFiltered?: number };
     }
   | {
       id: number;

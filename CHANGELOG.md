@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.4.3
+
+### Added
+- **TV episode air-date torrent filter**: Find and auto-hunt keep only torrents published on/after the episode air date when the upload date is known (UTC calendar day)
+- `SearchResult.publishedAt` parsed from sources that expose it (RSS `pubDate`, API `added`/`created`/`date`/`PublishDate`, etc.); undated results are still shown
+- Hunt skips episodes that have not aired yet (reinforces existing upcoming status skip)
+- Activity log notes when pre-air torrents are dropped
+- Settings hint: episode torrents before air date are ignored when the date is known
+
+### Notes
+- No VPN / OpenVPN / bind / split-tunnel changes
+- Includes `latest.yml` on the GitHub release for auto-update
+
+
 ## 2.4.2
 
 ### Added

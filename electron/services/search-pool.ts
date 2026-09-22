@@ -19,7 +19,7 @@ const POOL_SIZE = Math.max(1, Math.min(4, os.cpus()?.length || 1));
 const WORKER_PATH = resolveDistElectronAsset('search-worker.js');
 
 type Pending = {
-  resolve: (v: { results: SearchResult[]; query: string; error?: string }) => void;
+  resolve: (v: { results: SearchResult[]; query: string; error?: string; dateFiltered?: number }) => void;
   reject: (e: Error) => void;
 };
 
@@ -35,7 +35,7 @@ const pending = new Map<number, Pending>();
 let initPromise: Promise<void> | null = null;
 let useWorkers = true;
 
-function settle(id: number, ok: boolean, result?: { results: SearchResult[]; query: string; error?: string }, error?: string) {
+function settle(id: number, ok: boolean, result?: { results: SearchResult[]; query: string; error?: string; dateFiltered?: number }, error?: string) {
   const p = pending.get(id);
   if (!p) return;
   pending.delete(id);
@@ -120,7 +120,7 @@ function pump(): void {
   }
 }
 
-function runOnPool(message: Record<string, unknown>): Promise<{ results: SearchResult[]; query: string; error?: string }> {
+function runOnPool(message: Record<string, unknown>): Promise<{ results: SearchResult[]; query: string; error?: string; dateFiltered?: number }> {
   return new Promise((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });
@@ -146,7 +146,7 @@ export async function searchEpisodeTorrents(
   episode: number,
   preferred: Resolution,
   opts: SearchEpisodeOpts = {}
-): Promise<{ results: SearchResult[]; query: string; error?: string }> {
+): Promise<{ results: SearchResult[]; query: string; error?: string; dateFiltered?: number }> {
   await ensurePool();
   if (!useWorkers || pool.length === 0) {
     return searchEpisodeDirect(settings, showName, season, episode, preferred, opts);

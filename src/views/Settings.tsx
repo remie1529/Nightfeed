@@ -647,6 +647,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
           <div className="hint">
             Auto-download and best-torrent pick skip releases below this seeder count (default 8).
             Ranking prefers your resolution first, then higher seeders.
+            Episode torrents published before the air date are ignored when the upload date is known.
           </div>
         </div>
 

@@ -881,13 +881,24 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
         const show = getShows().find((s) => s.tmdbId === item.showId);
         if (show) {
           const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
+          let airDate: string | null | undefined;
+          for (const seasonObj of show.seasons || []) {
+            const ep = (seasonObj.episodes || []).find(
+              (e) =>
+                e.seasonNumber === item.seasonNumber && e.episodeNumber === item.episodeNumber
+            );
+            if (ep) {
+              airDate = ep.airDate;
+              break;
+            }
+          }
           const res = await searchEpisodeTorrents(
             settings,
             show.name,
             item.seasonNumber,
             item.episodeNumber,
             preferred,
-            { imdbId: show.imdbId, mazeId: show.tmdbId }
+            { imdbId: show.imdbId, mazeId: show.tmdbId, airDate }
           );
           candidates = toHealthyPreferredCandidates(
             filterResultsSkippingTried(res.results, tried),
@@ -3371,15 +3382,36 @@ function registerIpc() {
       preferred,
       sources: sources.join(',') || '(none)',
     });
+    let airDate: string | null | undefined;
+    for (const seasonObj of show.seasons || []) {
+      const ep = (seasonObj.episodes || []).find(
+        (e) => e.seasonNumber === season && e.episodeNumber === episode
+      );
+      if (ep) {
+        airDate = ep.airDate;
+        break;
+      }
+    }
     const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred, {
       imdbId: show.imdbId,
       mazeId: show.tmdbId,
+      airDate,
     });
     activityLog.info(
       'search',
       `Episode search done: ${show.name} S${pad2(season)}E${pad2(episode)} — ${res.results?.length || 0} result(s)`,
-      { sourcesHit: sourcesInResults(res.results), error: res.error || '' }
+      {
+        sourcesHit: sourcesInResults(res.results),
+        dateFiltered: res.dateFiltered || 0,
+        error: res.error || '',
+      }
     );
+    if (res.dateFiltered && res.dateFiltered > 0) {
+      activityLog.info(
+        'search',
+        `Dropped ${res.dateFiltered} pre-air torrent(s) for ${show.name} S${pad2(season)}E${pad2(episode)}`
+      );
+    }
     // Partial source errors are returned in res.error but must not wipe other results
     if (res.error && !res.results.length) {
       notify(res.error, 'warn');
