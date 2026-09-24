@@ -18,7 +18,7 @@ export default function MovieDetail({
   const [refreshing, setRefreshing] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchError, setSearchError] = useState<string | null>(null);
+
   const [searching, setSearching] = useState(false);
   const [starting, setStarting] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(false);
@@ -53,7 +53,6 @@ export default function MovieDetail({
   const openSearch = async () => {
     setShowSearch(true);
     setResults([]);
-    setSearchError(null);
     setSearchQuery('');
     setSearching(true);
     try {
@@ -64,10 +63,8 @@ export default function MovieDetail({
       };
       setResults(res.results || []);
       setSearchQuery(res.query || '');
-      if (res.error) setSearchError(res.error);
-      else if (!res.results?.length) setSearchError('No results found for this movie.');
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : String(e));
+    } catch {
+      setResults([]);
     } finally {
       setSearching(false);
     }
@@ -75,7 +72,6 @@ export default function MovieDetail({
 
   const startDownload = async (result: SearchResult) => {
     setStarting(result.magnet);
-    setSearchError(null);
     try {
       await window.torrentAPI.startMovieDownload({
         tmdbId,
@@ -88,8 +84,8 @@ export default function MovieDetail({
       });
       setShowSearch(false);
       await refresh();
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : String(e));
+    } catch {
+      // Download failures are written to the Log by the main process.
     } finally {
       setStarting(null);
     }
@@ -267,7 +263,6 @@ export default function MovieDetail({
                   Query: <span className="mono">{searchQuery}</span>
                 </p>
               )}
-              {searchError && <div className="error-banner">{searchError}</div>}
               {searching ? (
                 <p style={{ color: 'var(--text-dim)' }}>Searching indexers…</p>
               ) : (
@@ -314,7 +309,7 @@ export default function MovieDetail({
                           </td>
                         </tr>
                       ))}
-                      {!results.length && !searchError && (
+                      {!results.length && (
                         <tr>
                           <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>
                             No results

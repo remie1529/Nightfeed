@@ -57,9 +57,17 @@ exports.default = async function afterPack(context) {
   }
 
   console.log('[after-pack-icon] embedding icon into', exePath);
-  execFileSync('wine', [rceditPath, exePath, '--set-icon', icoPath], {
-    stdio: 'inherit',
-    env: { ...process.env, WINEDEBUG: '-all' },
-  });
-  console.log('[after-pack-icon] done');
+  try {
+    if (process.platform === 'win32') {
+      execFileSync(rceditPath, [exePath, '--set-icon', icoPath], { stdio: 'inherit' });
+    } else {
+      execFileSync('wine', [rceditPath, exePath, '--set-icon', icoPath], {
+        stdio: 'inherit',
+        env: { ...process.env, WINEDEBUG: '-all' },
+      });
+    }
+    console.log('[after-pack-icon] done');
+  } catch (err) {
+    console.warn('[after-pack-icon] skipped:', err && err.message ? err.message : err);
+  }
 };

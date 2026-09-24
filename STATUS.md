@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.3 — TV episode torrents filtered to air date onward when publish date is known.
+**Current:** v2.4.4 — Torrent Find window hides search notes; they stay in the Log.
+
+# Status v2.4.4
+
+## Changed
+- Find / Get other no longer shows the red search banner
+- README logo image removed
 
 # Status v2.4.3
 

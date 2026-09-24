@@ -1,7 +1,5 @@
 # Nightfeed
 
-![Nightfeed](build/icon.png)
-
 Desktop TV show & movie manager with embedded torrent downloads.
 
 **Electron · React · WebTorrent · TVMaze · IMDb**
