@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.4
+
+### Changed
+- Find / Get other torrent window no longer shows search notes (for example “Dropped N pre-air torrent(s)”). Those stay in the activity Log.
+- GitHub README no longer shows the large logo above the description
+
 ## 2.4.3
 
 ### Added

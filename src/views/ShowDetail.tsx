@@ -39,7 +39,7 @@ export default function ShowDetail({
   const [searchEp, setSearchEp] = useState<Episode | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchError, setSearchError] = useState<string | null>(null);
+
   const [searching, setSearching] = useState(false);
   const [starting, setStarting] = useState<string | null>(null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
@@ -132,7 +132,6 @@ export default function ShowDetail({
   const openSearch = async (ep: Episode) => {
     setSearchEp(ep);
     setResults([]);
-    setSearchError(null);
     setSearchQuery('');
     setSearching(true);
     try {
@@ -143,10 +142,8 @@ export default function ShowDetail({
       )) as { results: SearchResult[]; query: string; error?: string };
       setResults(res.results || []);
       setSearchQuery(res.query || '');
-      if (res.error) setSearchError(res.error);
-      else if (!res.results?.length) setSearchError('No results found for this episode.');
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : String(e));
+    } catch {
+      setResults([]);
     } finally {
       setSearching(false);
     }
@@ -155,7 +152,6 @@ export default function ShowDetail({
   const startDownload = async (result: SearchResult) => {
     if (!searchEp) return;
     setStarting(result.magnet);
-    setSearchError(null);
     try {
       await window.torrentAPI.startDownload({
         tmdbId,
@@ -171,8 +167,8 @@ export default function ShowDetail({
       });
       setSearchEp(null);
       await refresh();
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : String(e));
+    } catch {
+      // Download failures are written to the Log by the main process.
     } finally {
       setStarting(null);
     }
@@ -467,7 +463,6 @@ export default function ShowDetail({
                   Query: <span className="mono">{searchQuery}</span>
                 </p>
               )}
-              {searchError && <div className="error-banner">{searchError}</div>}
               {searching ? (
                 <p style={{ color: 'var(--text-dim)' }}>Searching indexers…</p>
               ) : (
@@ -514,7 +509,7 @@ export default function ShowDetail({
                           </td>
                         </tr>
                       ))}
-                      {!results.length && !searchError && (
+                      {!results.length && (
                         <tr>
                           <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>
                             No results
