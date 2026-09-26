@@ -279,7 +279,7 @@ export default function LiveTvView() {
       <div className="settings-section">Custom channels</div>
       <div className="hint" style={{ marginBottom: 10 }}>
         These play files already in your TV and movie libraries. The guide lists the movie or episode that is on.
-        Nightfeed downloads ffmpeg automatically the first time a custom channel plays. Enable the channel, then refresh the Plex DVR guide.
+        Nightfeed downloads ffmpeg automatically the first time a custom channel plays, and encodes video on the GPU (NVIDIA, Intel, or AMD) when that PC has one. Enable the channel, then refresh the Plex DVR guide.
       </div>
       <div className="toolbar" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
         <input

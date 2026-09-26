@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.6 — Nightfeed installs ffmpeg itself for custom Live TV channels.
+**Current:** v2.4.7 — Custom Live TV channels use GPU transcoding when available.
+
+# Status v2.4.7
+
+## Changed
+- Library channels encode with h264_nvenc, h264_qsv, or h264_amf; CPU fallback if the GPU encoder will not start
 
 # Status v2.4.6
 
