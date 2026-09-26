@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.7
+
+### Changed
+- Custom Live TV channels transcode video on the GPU when ffmpeg has NVENC (NVIDIA), Quick Sync (Intel), or AMF (AMD). Audio is AAC. If the GPU encoder fails to start, that channel falls back to the CPU.
+
 ## 2.4.6
 
 ### Changed

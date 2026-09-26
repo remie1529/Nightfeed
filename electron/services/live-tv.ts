@@ -14,6 +14,7 @@ import { app, nativeImage } from 'electron';
 import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus } from '../types';
 import { getLiveTvLineup, getLiveTvXmltvCache, getSettings, setLiveTvLineup, setLiveTvXmltvCache } from './store';
 import { currentLibrarySlot, libraryScheduleNow } from './library-channel';
+import { activityLog } from './activity-log';
 import { refreshLiveTvViaPool } from './livetv-pool';
 
 const insecureHttps = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
@@ -142,6 +143,44 @@ function ensureFfmpeg(explicit?: string): Promise<string | null> {
     ffmpegInstall = null;
   });
   return ffmpegInstall;
+}
+
+type HwEncoder = { name: 'h264_nvenc' | 'h264_qsv' | 'h264_amf' | 'libx264'; hwaccel: string | null };
+let cachedHw: { ff: string; enc: HwEncoder } | null = null;
+let hwLogged = false;
+
+function detectHwEncoder(ff: string): HwEncoder {
+  if (cachedHw && cachedHw.ff === ff) return cachedHw.enc;
+  let text = '';
+  try {
+    text = execFileSync(ff, ['-hide_banner', '-encoders'], { encoding: 'utf8', timeout: 8000 });
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    text = `${e.stdout || ''}\n${e.stderr || ''}`;
+  }
+  let enc: HwEncoder = { name: 'libx264', hwaccel: null };
+  if (/\bh264_nvenc\b/.test(text)) enc = { name: 'h264_nvenc', hwaccel: 'cuda' };
+  else if (/\bh264_qsv\b/.test(text)) enc = { name: 'h264_qsv', hwaccel: 'qsv' };
+  else if (/\bh264_amf\b/.test(text)) enc = { name: 'h264_amf', hwaccel: 'd3d11va' };
+  cachedHw = { ff, enc };
+  if (!hwLogged) {
+    hwLogged = true;
+    activityLog.info('livetv', `Library channel video encoder: ${enc.name}`);
+  }
+  return enc;
+}
+
+function videoEncodeArgs(enc: HwEncoder): string[] {
+  if (enc.name === 'h264_nvenc') {
+    return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll', '-rc', 'vbr', '-cq', '23', '-b:v', '0'];
+  }
+  if (enc.name === 'h264_qsv') {
+    return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-global_quality', '23'];
+  }
+  if (enc.name === 'h264_amf') {
+    return ['-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', '22', '-qp_p', '22'];
+  }
+  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23'];
 }
 
 function findFile(dir: string, name: string): string | null {
@@ -1145,35 +1184,59 @@ class LiveTvServer {
       res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
     }
     const days = Math.max(1, settings.liveTvFakeEpgDays || 2);
+    let stop = false;
     const playFile = (file: string, offsetSec: number) =>
       new Promise<void>((resolve) => {
         if (!isAlive()) {
           resolve();
           return;
         }
-        const proc = spawn(
-          ff,
-          [
-            '-hide_banner',
-            '-loglevel',
-            'error',
-            '-ss',
-            String(Math.max(0, Math.floor(offsetSec))),
-            '-i',
-            file,
-            '-c',
-            'copy',
-            '-f',
-            'mpegts',
-            'pipe:1',
-          ],
-          { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
+        const enc = detectHwEncoder(ff);
+        const args = ['-hide_banner', '-loglevel', 'error'];
+        if (enc.hwaccel === 'qsv') args.push('-hwaccel', 'qsv');
+        args.push(
+          '-ss',
+          String(Math.max(0, Math.floor(offsetSec))),
+          '-i',
+          file,
+          '-map',
+          '0:v:0',
+          '-map',
+          '0:a:0?',
+          ...videoEncodeArgs(enc),
+          '-c:a',
+          'aac',
+          '-ac',
+          '2',
+          '-b:a',
+          '160k',
+          '-f',
+          'mpegts',
+          'pipe:1'
         );
+        const proc = spawn(ff, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
         setChild(proc);
-        proc.stdout.pipe(res, { end: false });
-        const done = () => resolve();
+        let bytes = 0;
+        let errBuf = '';
+        proc.stderr?.on('data', (d: Buffer) => {
+          errBuf = (errBuf + d.toString('utf8')).slice(-500);
+        });
+        proc.stdout.on('data', (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (!res.writableEnded) res.write(chunk);
+        });
+        const done = (code: number | null) => {
+          if (code && bytes < 8000 && enc.name !== 'libx264') {
+            cachedHw = { ff, enc: { name: 'libx264', hwaccel: null } };
+            activityLog.warn('livetv', `Hardware encoder ${enc.name} failed, using CPU`, { error: errBuf });
+          } else if (code && bytes < 8000) {
+            stop = true;
+            this.lastStreamError = `${ch.name}: transcode failed ${errBuf || `exit ${code}`}`;
+          }
+          resolve();
+        };
         proc.on('exit', done);
-        proc.on('error', done);
+        proc.on('error', () => done(1));
         req.once('close', () => {
           try {
             proc.kill();
@@ -1183,7 +1246,7 @@ class LiveTvServer {
         });
       });
     let guard = 0;
-    while (isAlive() && guard < 400) {
+    while (isAlive() && !stop && guard < 400) {
       guard += 1;
       const slot = currentLibrarySlot(ch, days);
       if (!slot) {
