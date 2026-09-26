@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.6
+
+### Changed
+- Custom Live TV channels install ffmpeg automatically into Nightfeed’s app data the first time one plays (if it is not already on the PC)
+
 ## 2.4.5
 
 ### Added

@@ -62,6 +62,8 @@ export function pickLanIpv4(): string | null {
 }
 
 function detectFfmpeg(explicit?: string): string | null {
+  const bundled = path.join(app.getPath('userData'), 'ffmpeg', 'ffmpeg.exe');
+  if (fs.existsSync(bundled)) return bundled;
   if (explicit && fs.existsSync(explicit)) return explicit;
   for (const p of FFMPEG_CANDIDATES) {
     if (p && fs.existsSync(p)) return p;
@@ -72,6 +74,91 @@ function detectFfmpeg(explicit?: string): string | null {
     if (first && fs.existsSync(first)) return first;
   } catch {
     // ignore
+  }
+  return null;
+}
+
+const FFMPEG_ZIP = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
+let ffmpegInstall: Promise<string | null> | null = null;
+
+function downloadToFile(url: string, dest: string, hops = 0): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (hops > 6) {
+      reject(new Error('Too many redirects while downloading ffmpeg'));
+      return;
+    }
+    const lib = url.startsWith('https:') ? https : http;
+    const req = lib.get(url, { headers: { 'User-Agent': 'Nightfeed' } }, (res) => {
+      const code = res.statusCode || 0;
+      if (code >= 300 && code < 400 && res.headers.location) {
+        res.resume();
+        downloadToFile(new URL(res.headers.location, url).toString(), dest, hops + 1).then(resolve, reject);
+        return;
+      }
+      if (code !== 200) {
+        res.resume();
+        reject(new Error(`ffmpeg download failed (HTTP ${code})`));
+        return;
+      }
+      const file = fs.createWriteStream(dest);
+      res.pipe(file);
+      file.on('finish', () => file.close(() => resolve()));
+      file.on('error', reject);
+    });
+    req.on('error', reject);
+  });
+}
+
+/** Download a Windows ffmpeg build into %AppData%\\Nightfeed\\ffmpeg if none is installed. */
+function ensureFfmpeg(explicit?: string): Promise<string | null> {
+  const found = detectFfmpeg(explicit);
+  if (found) return Promise.resolve(found);
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  if (ffmpegInstall) return ffmpegInstall;
+  ffmpegInstall = (async () => {
+    const dir = path.join(app.getPath('userData'), 'ffmpeg');
+    const zip = path.join(dir, 'ffmpeg-essentials.zip');
+    const extract = path.join(dir, 'extract');
+    fs.mkdirSync(dir, { recursive: true });
+    await downloadToFile(FFMPEG_ZIP, zip);
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-Command',
+        `Expand-Archive -LiteralPath '${zip.replace(/'/g, "''")}' -DestinationPath '${extract.replace(/'/g, "''")}' -Force`,
+      ],
+      { windowsHide: true, timeout: 180000 }
+    );
+    const exe = findFile(extract, 'ffmpeg.exe');
+    if (!exe) throw new Error('ffmpeg.exe was not in the download');
+    const dest = path.join(dir, 'ffmpeg.exe');
+    fs.copyFileSync(exe, dest);
+    return fs.existsSync(dest) ? dest : null;
+  })().catch((err) => {
+    console.error('[live-tv] ffmpeg install failed', err);
+    return null;
+  }).finally(() => {
+    ffmpegInstall = null;
+  });
+  return ffmpegInstall;
+}
+
+function findFile(dir: string, name: string): string | null {
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      const hit = findFile(full, name);
+      if (hit) return hit;
+    } else if (ent.name.toLowerCase() === name.toLowerCase()) {
+      return full;
+    }
   }
   return null;
 }
@@ -519,6 +606,11 @@ class LiveTvServer {
 
   sync(settings: AppSettings): void {
     this.ffmpegPath = detectFfmpeg(settings.liveTvFfmpegPath);
+    if (settings.liveTvEnabled && !this.ffmpegPath) {
+      void ensureFfmpeg(settings.liveTvFfmpegPath).then((p) => {
+        if (p) this.ffmpegPath = p;
+      });
+    }
     if (!settings.liveTvEnabled) {
       this.stop();
       return;
@@ -1041,9 +1133,12 @@ class LiveTvServer {
     isAlive: () => boolean,
     setChild: (proc: ChildProcessWithoutNullStreams | null) => void
   ): Promise<void> {
-    const ff = this.ffmpegPath;
+    this.lastStreamError = this.ffmpegPath ? null : `${ch.name}: installing ffmpeg…`;
+    const ff = this.ffmpegPath || (await ensureFfmpeg(settings.liveTvFfmpegPath));
+    if (ff) this.ffmpegPath = ff;
+    this.lastStreamError = null;
     if (!ff) {
-      this.failStream(res, cleanup, ch.name, new Error('ffmpeg is required for library channels'));
+      this.failStream(res, cleanup, ch.name, new Error('Could not install ffmpeg'));
       return;
     }
     if (!res.headersSent) {
