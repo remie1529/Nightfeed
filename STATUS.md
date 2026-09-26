@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.4 — Torrent Find window hides search notes; they stay in the Log.
+**Current:** v2.4.5 — Custom Live TV channels from the library, with a real guide.
+
+# Status v2.4.5
+
+## New
+- Create one or more Live TV channels: random/latest movies, episodes, mix, or one show
+- EPG shows what is playing
 
 # Status v2.4.4
 

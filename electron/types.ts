@@ -232,6 +232,18 @@ export interface LiveTvChannel {
   epgCustom?: boolean;
   /** Always emit a fake repeating guide for this channel. */
   fakeEpg?: boolean;
+  /** iptv = provider playlist. library = play local movies/episodes. */
+  kind?: 'iptv' | 'library';
+  libraryMode?:
+    | 'random-movies'
+    | 'random-episodes'
+    | 'random-mix'
+    | 'latest-movies'
+    | 'latest-episodes'
+    | 'latest-mix'
+    | 'show';
+  /** When libraryMode is show, which TVMaze show id to play. */
+  showTmdbId?: number | null;
 }
 
 export interface LiveTvEpgOption {

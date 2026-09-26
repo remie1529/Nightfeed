@@ -48,7 +48,7 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 - **UNC paths** — Windows network library roots supported
 - **Multiple library roots** — several TV/movie folders, drag to reorder; top is default for new titles
 - **OpenVPN** — Nightfeed starts Community `openvpn.exe` (not the GUI), auto-connect, torrent-only split tunnel, kill switch
-- **Live TV** — optional HDHomeRun tuner + XMLTV for Plex (M3U, Xtream Codes, or a direct stream)
+- **Live TV** — optional HDHomeRun tuner + XMLTV for Plex, plus custom channels from your library
 - **Reliability** — startup loading screen until backend ready; optional crash-restart via Task Scheduler; collapsible full-width Settings
 
 ---

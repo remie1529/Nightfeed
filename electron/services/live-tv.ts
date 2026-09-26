@@ -13,6 +13,7 @@ import { PassThrough } from 'stream';
 import { app, nativeImage } from 'electron';
 import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus } from '../types';
 import { getLiveTvLineup, getLiveTvXmltvCache, getSettings, setLiveTvLineup, setLiveTvXmltvCache } from './store';
+import { currentLibrarySlot, libraryScheduleNow } from './library-channel';
 import { refreshLiveTvViaPool } from './livetv-pool';
 
 const insecureHttps = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
@@ -322,21 +323,25 @@ function xtreamBase(host: string, port: number): string {
 
 function mergeLineup(incoming: LiveTvChannel[], existing: LiveTvChannel[]): LiveTvChannel[] {
   const prev = new Map(existing.map((c) => [c.id, c]));
-  return incoming.map((c, i) => {
-    const old = prev.get(c.id);
-    if (!old) return { ...c, number: c.number || i + 1, enabled: false };
-    return {
-      ...c,
-      enabled: old.enabled,
-      number: old.number || c.number || i + 1,
-      name: old.name && old.name !== c.name ? old.name : c.name,
-      logo: old.logoCustom && old.logo ? old.logo : c.logo,
-      tvgId: old.epgCustom && old.tvgId ? old.tvgId : c.tvgId,
-      logoCustom: !!old.logoCustom,
-      epgCustom: !!old.epgCustom,
-      fakeEpg: !!old.fakeEpg,
-    };
-  });
+  const iptv = incoming
+    .filter((c) => c.kind !== 'library')
+    .map((c, i) => {
+      const old = prev.get(c.id);
+      if (!old) return { ...c, number: c.number || i + 1, enabled: false };
+      return {
+        ...c,
+        enabled: old.enabled,
+        number: old.number || c.number || i + 1,
+        name: old.name && old.name !== c.name ? old.name : c.name,
+        logo: old.logoCustom && old.logo ? old.logo : c.logo,
+        tvgId: old.epgCustom && old.tvgId ? old.tvgId : c.tvgId,
+        logoCustom: !!old.logoCustom,
+        epgCustom: !!old.epgCustom,
+        fakeEpg: !!old.fakeEpg,
+      };
+    });
+  const custom = existing.filter((c) => c.kind === 'library');
+  return [...custom, ...iptv];
 }
 
 function xmlEsc(s: string): string {
@@ -762,10 +767,26 @@ class LiveTvServer {
           icon ? `<icon src="${xmlEsc(icon)}" />` : ''
         }</channel>`
       );
+      if (ch.kind === 'library') {
+        const slots = libraryScheduleNow(ch, days);
+        if (!slots.length) {
+          prXml.push(fakeProgrammesXml(cid, `${ch.name} — nothing downloaded yet`, minutes, days));
+        } else {
+          prXml.push(
+            slots
+              .map(
+                (slot) =>
+                  `<programme start="${xmltvTs(new Date(slot.start))}" stop="${xmltvTs(new Date(slot.end))}" channel="${xmlEsc(cid)}"><title>${xmlEsc(slot.title)}</title><desc>${xmlEsc(slot.desc)}</desc></programme>`
+              )
+              .join('\n')
+          );
+        }
+      } else {
       const mapped = ch.tvgId ? this.xmltvByChannel.get(ch.tvgId) : '';
       const useFake = !!ch.fakeEpg || (fakeMissing && !mapped);
       if (useFake) prXml.push(fakeProgrammesXml(cid, ch.name, minutes, days));
       else if (mapped) prXml.push(mapped);
+      }
     }
     return `<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="Nightfeed">\n${chXml.join(
       '\n'
@@ -1011,6 +1032,75 @@ class LiveTvServer {
     cleanup();
   }
 
+  private async pipeLibraryChannel(
+    ch: LiveTvChannel,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    cleanup: () => void,
+    settings: AppSettings,
+    isAlive: () => boolean,
+    setChild: (proc: ChildProcessWithoutNullStreams | null) => void
+  ): Promise<void> {
+    const ff = this.ffmpegPath;
+    if (!ff) {
+      this.failStream(res, cleanup, ch.name, new Error('ffmpeg is required for library channels'));
+      return;
+    }
+    if (!res.headersSent) {
+      res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
+    }
+    const days = Math.max(1, settings.liveTvFakeEpgDays || 2);
+    const playFile = (file: string, offsetSec: number) =>
+      new Promise<void>((resolve) => {
+        if (!isAlive()) {
+          resolve();
+          return;
+        }
+        const proc = spawn(
+          ff,
+          [
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-ss',
+            String(Math.max(0, Math.floor(offsetSec))),
+            '-i',
+            file,
+            '-c',
+            'copy',
+            '-f',
+            'mpegts',
+            'pipe:1',
+          ],
+          { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
+        );
+        setChild(proc);
+        proc.stdout.pipe(res, { end: false });
+        const done = () => resolve();
+        proc.on('exit', done);
+        proc.on('error', done);
+        req.once('close', () => {
+          try {
+            proc.kill();
+          } catch {
+            // ignore
+          }
+        });
+      });
+    let guard = 0;
+    while (isAlive() && guard < 400) {
+      guard += 1;
+      const slot = currentLibrarySlot(ch, days);
+      if (!slot) {
+        this.lastStreamError = `${ch.name}: no downloaded movies or episodes for this channel`;
+        break;
+      }
+      const offset = Math.max(0, (Date.now() - slot.start) / 1000);
+      await playFile(slot.path, offset);
+    }
+    cleanup();
+  }
+
   private streamChannel(
     number: number,
     req: http.IncomingMessage,
@@ -1052,6 +1142,12 @@ class LiveTvServer {
 
     const mode = settings.liveTvBufferMode;
     const ff = this.ffmpegPath;
+    if (ch.kind === 'library') {
+      void this.pipeLibraryChannel(ch, req, res, cleanup, settings, () => alive, (proc) => {
+        child = proc;
+      });
+      return;
+    }
     const url = parsed.url;
     const hls = /\.m3u8(\?|$)/i.test(url);
 
