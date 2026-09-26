@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.5 — Custom Live TV channels from the library, with a real guide.
+**Current:** v2.4.6 — Nightfeed installs ffmpeg itself for custom Live TV channels.
+
+# Status v2.4.6
+
+## Changed
+- First play of a library channel downloads ffmpeg into %AppData%\\Nightfeed\\ffmpeg
 
 # Status v2.4.5
 
