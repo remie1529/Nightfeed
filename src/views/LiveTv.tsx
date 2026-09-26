@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus } from '../lib/types';
+import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus, ShowListItem } from '../lib/types';
+
+const LIBRARY_MODES: Array<{ id: NonNullable<LiveTvChannel['libraryMode']>; label: string }> = [
+  { id: 'random-movies', label: 'Random movies' },
+  { id: 'random-episodes', label: 'Random episodes' },
+  { id: 'random-mix', label: 'Random movies and episodes' },
+  { id: 'latest-movies', label: 'Latest movies' },
+  { id: 'latest-episodes', label: 'Latest episodes' },
+  { id: 'latest-mix', label: 'Latest movies and episodes' },
+  { id: 'show', label: 'One show, in order' },
+];
 
 export default function LiveTvView() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -11,6 +21,10 @@ export default function LiveTvView() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [epgOptions, setEpgOptions] = useState<LiveTvEpgOption[]>([]);
+  const [libShows, setLibShows] = useState<ShowListItem[]>([]);
+  const [customName, setCustomName] = useState('Nightfeed Mix');
+  const [customMode, setCustomMode] = useState<NonNullable<LiveTvChannel['libraryMode']>>('random-mix');
+  const [customShow, setCustomShow] = useState<number | ''>('');
 
   const load = useCallback(async () => {
     const [s, st, ch, epg] = await Promise.all([
@@ -23,6 +37,8 @@ export default function LiveTvView() {
     setStatus((st || null) as LiveTvStatus | null);
     setChannels(Array.isArray(ch) ? (ch as LiveTvChannel[]) : []);
     setEpgOptions(Array.isArray(epg) ? (epg as LiveTvEpgOption[]) : []);
+    const shows = await window.torrentAPI.getShows?.();
+    setLibShows(Array.isArray(shows) ? (shows as ShowListItem[]) : []);
   }, []);
 
   useEffect(() => {
@@ -67,9 +83,12 @@ export default function LiveTvView() {
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [channels]);
 
+  const customChannels = useMemo(() => channels.filter((c) => c.kind === 'library'), [channels]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return channels.filter((c) => {
+      if (c.kind === 'library') return false;
       if (group && c.group !== group) return false;
       if (q && !`${c.name} ${c.group} ${c.tvgId}`.toLowerCase().includes(q)) return false;
       return true;
@@ -257,8 +276,118 @@ export default function LiveTvView() {
         </>
       )}
 
+      <div className="settings-section">Custom channels</div>
+      <div className="hint" style={{ marginBottom: 10 }}>
+        These play files already in your TV and movie libraries. The guide lists the movie or episode that is on.
+        ffmpeg is required. Enable the channel, then refresh the Plex DVR guide.
+      </div>
+      <div className="toolbar" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
+        <input
+          style={{ maxWidth: 220 }}
+          placeholder="Channel name"
+          value={customName}
+          onChange={(e) => setCustomName(e.target.value)}
+        />
+        <select
+          value={customMode}
+          onChange={(e) => setCustomMode(e.target.value as NonNullable<LiveTvChannel['libraryMode']>)}
+          style={{ maxWidth: 280 }}
+        >
+          {LIBRARY_MODES.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        {customMode === 'show' && (
+          <select
+            value={customShow === '' ? '' : String(customShow)}
+            onChange={(e) => setCustomShow(e.target.value ? Number(e.target.value) : '')}
+            style={{ maxWidth: 260 }}
+          >
+            <option value="">Choose a show…</option>
+            {libShows.map((sh) => (
+              <option key={sh.tmdbId} value={sh.tmdbId}>
+                {sh.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <button
+          type="button"
+          className="primary"
+          onClick={() => {
+            const id = `lib-${Date.now().toString(36)}`;
+            const number = channels.reduce((max, c) => Math.max(max, c.number || 0), 0) + 1;
+            const ch: LiveTvChannel = {
+              id,
+              name: customName.trim() || 'Nightfeed',
+              number,
+              group: 'Nightfeed',
+              logo: '',
+              tvgId: `nf-${id}`,
+              url: `nightfeed://library/${id}`,
+              enabled: true,
+              kind: 'library',
+              libraryMode: customMode,
+              showTmdbId: customMode === 'show' && customShow !== '' ? Number(customShow) : null,
+              epgCustom: true,
+            };
+            void persist([ch, ...channels]);
+          }}
+        >
+          Add channel
+        </button>
+      </div>
+      {customChannels.length > 0 && (
+        <div className="table-wrap" style={{ marginBottom: 16 }}>
+          <table className="dense">
+            <thead>
+              <tr>
+                <th style={{ width: 52 }}>On</th>
+                <th>Name</th>
+                <th>Plays</th>
+                <th style={{ width: 90 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {customChannels.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={c.enabled}
+                      onChange={(e) =>
+                        void persist(
+                          channels.map((x) => (x.id === c.id ? { ...x, enabled: e.target.checked } : x))
+                        )
+                      }
+                    />
+                  </td>
+                  <td>{c.name}</td>
+                  <td style={{ color: 'var(--text-dim)' }}>
+                    {LIBRARY_MODES.find((m) => m.id === c.libraryMode)?.label || c.libraryMode}
+                    {c.libraryMode === 'show'
+                      ? ` — ${libShows.find((s) => s.tmdbId === c.showTmdbId)?.name || 'show'}`
+                      : ''}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      onClick={() => void persist(channels.filter((x) => x.id !== c.id))}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="settings-section">
-        Channels ({enabledCount} enabled / {channels.length})
+        IPTV channels ({enabledCount} enabled / {channels.length})
       </div>
       <div className="toolbar" style={{ marginBottom: 10 }}>
         <input

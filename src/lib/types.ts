@@ -177,6 +177,16 @@ export interface LiveTvChannel {
   logoCustom?: boolean;
   epgCustom?: boolean;
   fakeEpg?: boolean;
+  kind?: 'iptv' | 'library';
+  libraryMode?:
+    | 'random-movies'
+    | 'random-episodes'
+    | 'random-mix'
+    | 'latest-movies'
+    | 'latest-episodes'
+    | 'latest-mix'
+    | 'show';
+  showTmdbId?: number | null;
   /** UI-only data URL; not persisted. */
   logoPreview?: string;
 }

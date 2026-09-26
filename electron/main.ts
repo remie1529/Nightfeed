@@ -3835,6 +3835,9 @@ function registerIpc() {
         logoCustom: !!c.logoCustom,
         epgCustom: !!c.epgCustom,
         fakeEpg: !!c.fakeEpg,
+        kind: c.kind === 'library' ? 'library' : 'iptv',
+        libraryMode: c.libraryMode,
+        showTmdbId: c.showTmdbId != null ? Number(c.showTmdbId) : null,
       }))
     );
     return getLiveTvLineup();

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.5
+
+### Added
+- Live TV custom channels that play your downloaded library: random or latest movies, episodes, a mix, or one show in order
+- The XMLTV guide lists the actual title on that channel (show, episode, or movie)
+
+### Notes
+- ffmpeg is required for these channels
+- Includes `latest.yml` on the GitHub release for auto-update
+
 ## 2.4.4
 
 ### Changed
