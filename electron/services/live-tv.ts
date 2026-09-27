@@ -111,9 +111,36 @@ function downloadToFile(url: string, dest: string, hops = 0): Promise<void> {
 }
 
 /** Download a Windows ffmpeg build into %AppData%\\Nightfeed\\ffmpeg if none is installed. */
+function ensureBundledProbe(dir: string): void {
+  const dest = path.join(dir, 'ffprobe.exe');
+  if (fs.existsSync(dest)) return;
+  const zip = path.join(dir, 'ffmpeg-essentials.zip');
+  if (!fs.existsSync(zip)) return;
+  const extract = path.join(dir, 'extract');
+  try {
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-Command',
+        `Expand-Archive -LiteralPath '${zip.replace(/'/g, "''")}' -DestinationPath '${extract.replace(/'/g, "''")}' -Force`,
+      ],
+      { windowsHide: true, timeout: 180000 }
+    );
+    const probe = findFile(extract, 'ffprobe.exe');
+    if (probe) fs.copyFileSync(probe, dest);
+  } catch {
+    // probe stays missing; playback still works
+  }
+}
+
 function ensureFfmpeg(explicit?: string): Promise<string | null> {
   const found = detectFfmpeg(explicit);
-  if (found) return Promise.resolve(found);
+  if (found) {
+    const dir = path.join(app.getPath('userData'), 'ffmpeg');
+    if (found === path.join(dir, 'ffmpeg.exe')) ensureBundledProbe(dir);
+    return Promise.resolve(found);
+  }
   if (process.platform !== 'win32') return Promise.resolve(null);
   if (ffmpegInstall) return ffmpegInstall;
   ffmpegInstall = (async () => {
@@ -135,6 +162,8 @@ function ensureFfmpeg(explicit?: string): Promise<string | null> {
     if (!exe) throw new Error('ffmpeg.exe was not in the download');
     const dest = path.join(dir, 'ffmpeg.exe');
     fs.copyFileSync(exe, dest);
+    const probe = findFile(extract, 'ffprobe.exe');
+    if (probe) fs.copyFileSync(probe, path.join(dir, 'ffprobe.exe'));
     return fs.existsSync(dest) ? dest : null;
   })().catch((err) => {
     console.error('[live-tv] ffmpeg install failed', err);
@@ -145,12 +174,12 @@ function ensureFfmpeg(explicit?: string): Promise<string | null> {
   return ffmpegInstall;
 }
 
-type HwEncoder = { name: 'h264_nvenc' | 'h264_qsv' | 'h264_amf' | 'libx264'; hwaccel: string | null };
-let cachedHw: { ff: string; enc: HwEncoder } | null = null;
+type HwName = 'h264_nvenc' | 'h264_qsv' | 'h264_amf' | 'libx264';
+let cachedHwName: { ff: string; name: HwName } | null = null;
 let hwLogged = false;
 
-function detectHwEncoder(ff: string): HwEncoder {
-  if (cachedHw && cachedHw.ff === ff) return cachedHw.enc;
+function detectHwName(ff: string): HwName {
+  if (cachedHwName && cachedHwName.ff === ff) return cachedHwName.name;
   let text = '';
   try {
     text = execFileSync(ff, ['-hide_banner', '-encoders'], { encoding: 'utf8', timeout: 8000 });
@@ -158,29 +187,67 @@ function detectHwEncoder(ff: string): HwEncoder {
     const e = err as { stdout?: string; stderr?: string };
     text = `${e.stdout || ''}\n${e.stderr || ''}`;
   }
-  let enc: HwEncoder = { name: 'libx264', hwaccel: null };
-  if (/\bh264_nvenc\b/.test(text)) enc = { name: 'h264_nvenc', hwaccel: 'cuda' };
-  else if (/\bh264_qsv\b/.test(text)) enc = { name: 'h264_qsv', hwaccel: 'qsv' };
-  else if (/\bh264_amf\b/.test(text)) enc = { name: 'h264_amf', hwaccel: 'd3d11va' };
-  cachedHw = { ff, enc };
+  let name: HwName = 'libx264';
+  if (/\bh264_nvenc\b/.test(text)) name = 'h264_nvenc';
+  else if (/\bh264_qsv\b/.test(text)) name = 'h264_qsv';
+  else if (/\bh264_amf\b/.test(text)) name = 'h264_amf';
+  cachedHwName = { ff, name };
   if (!hwLogged) {
     hwLogged = true;
-    activityLog.info('livetv', `Library channel video encoder: ${enc.name}`);
+    activityLog.info('livetv', `Library channel video encoder: ${name}`);
   }
-  return enc;
+  return name;
 }
 
-function videoEncodeArgs(enc: HwEncoder): string[] {
-  if (enc.name === 'h264_nvenc') {
-    return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll', '-rc', 'vbr', '-cq', '23', '-b:v', '0'];
+function probeCodecs(ff: string, file: string): { video: string; audio: string } {
+  const probe = path.join(path.dirname(ff), 'ffprobe.exe');
+  if (!fs.existsSync(probe)) return { video: '', audio: '' };
+  try {
+    const out = execFileSync(
+      probe,
+      ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name', '-of', 'csv=p=0', file],
+      { encoding: 'utf8', timeout: 8000, windowsHide: true }
+    );
+    let video = '';
+    let audio = '';
+    for (const line of String(out).split(/\r?\n/)) {
+      const [type, name] = line.split(',');
+      if (type === 'video' && !video) video = (name || '').trim();
+      if (type === 'audio' && !audio) audio = (name || '').trim();
+    }
+    return { video, audio };
+  } catch {
+    return { video: '', audio: '' };
   }
-  if (enc.name === 'h264_qsv') {
-    return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-global_quality', '23'];
+}
+
+const MPEGTS_AUDIO = new Set(['aac', 'ac3', 'eac3', 'mp2', 'mp3']);
+
+/** H.264 files can be remuxed. Anything else is decoded and encoded on the GPU. */
+function libraryFfmpegArgs(ff: string, file: string, offsetSec: number, mode: 'copy' | 'hw' | 'cpu'): string[] {
+  const ss = String(Math.max(0, Math.floor(offsetSec)));
+  if (mode === 'copy') {
+    return ['-hide_banner', '-loglevel', 'error', '-ss', ss, '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-f', 'mpegts', 'pipe:1'];
   }
-  if (enc.name === 'h264_amf') {
-    return ['-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', '22', '-qp_p', '22'];
+  const hw = detectHwName(ff);
+  const args = ['-hide_banner', '-loglevel', 'error'];
+  if (mode === 'hw') {
+    if (hw === 'h264_nvenc') args.push('-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-extra_hw_frames', '8');
+    else if (hw === 'h264_qsv') args.push('-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv');
+    else if (hw === 'h264_amf') args.push('-hwaccel', 'd3d11va');
   }
-  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23'];
+  args.push('-ss', ss, '-i', file, '-map', '0:v:0', '-map', '0:a:0?');
+  if (mode === 'cpu' || hw === 'libx264') {
+    args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-threads', '2');
+  } else if (hw === 'h264_nvenc') {
+    args.push('-c:v', 'h264_nvenc', '-preset', 'p1', '-tune', 'll', '-rc', 'vbr', '-cq', '28', '-b:v', '0');
+  } else if (hw === 'h264_qsv') {
+    args.push('-c:v', 'h264_qsv', '-preset', 'veryfast', '-look_ahead', '0', '-global_quality', '26');
+  } else {
+    args.push('-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', '24', '-qp_p', '24');
+  }
+  args.push('-c:a', 'aac', '-ac', '2', '-b:a', '128k', '-f', 'mpegts', 'pipe:1');
+  return args;
 }
 
 function findFile(dir: string, name: string): string | null {
@@ -1191,59 +1258,52 @@ class LiveTvServer {
           resolve();
           return;
         }
-        const enc = detectHwEncoder(ff);
-        const args = ['-hide_banner', '-loglevel', 'error'];
-        if (enc.hwaccel === 'qsv') args.push('-hwaccel', 'qsv');
-        args.push(
-          '-ss',
-          String(Math.max(0, Math.floor(offsetSec))),
-          '-i',
-          file,
-          '-map',
-          '0:v:0',
-          '-map',
-          '0:a:0?',
-          ...videoEncodeArgs(enc),
-          '-c:a',
-          'aac',
-          '-ac',
-          '2',
-          '-b:a',
-          '160k',
-          '-f',
-          'mpegts',
-          'pipe:1'
-        );
-        const proc = spawn(ff, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-        setChild(proc);
-        let bytes = 0;
-        let errBuf = '';
-        proc.stderr?.on('data', (d: Buffer) => {
-          errBuf = (errBuf + d.toString('utf8')).slice(-500);
-        });
-        proc.stdout.on('data', (chunk: Buffer) => {
-          bytes += chunk.length;
-          if (!res.writableEnded) res.write(chunk);
-        });
-        const done = (code: number | null) => {
-          if (code && bytes < 8000 && enc.name !== 'libx264') {
-            cachedHw = { ff, enc: { name: 'libx264', hwaccel: null } };
-            activityLog.warn('livetv', `Hardware encoder ${enc.name} failed, using CPU`, { error: errBuf });
-          } else if (code && bytes < 8000) {
-            stop = true;
-            this.lastStreamError = `${ch.name}: transcode failed ${errBuf || `exit ${code}`}`;
+        const codecs = probeCodecs(ff, file);
+        const copyOk = codecs.video === 'h264' && (!codecs.audio || MPEGTS_AUDIO.has(codecs.audio));
+        const modes: Array<'copy' | 'hw' | 'cpu'> = copyOk ? ['copy'] : ['hw', 'cpu'];
+        const run = (mode: 'copy' | 'hw' | 'cpu') =>
+          new Promise<{ code: number | null; bytes: number; err: string }>((done) => {
+            const proc = spawn(ff, libraryFfmpegArgs(ff, file, offsetSec, mode), {
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            setChild(proc);
+            let bytes = 0;
+            let errBuf = '';
+            proc.stderr?.on('data', (d: Buffer) => {
+              errBuf = (errBuf + d.toString('utf8')).slice(-500);
+            });
+            proc.stdout.on('data', (chunk: Buffer) => {
+              bytes += chunk.length;
+              if (!res.writableEnded) res.write(chunk);
+            });
+            proc.on('exit', (code) => done({ code, bytes, err: errBuf }));
+            proc.on('error', () => done({ code: 1, bytes, err: errBuf }));
+            req.once('close', () => {
+              try {
+                proc.kill();
+              } catch {
+                // ignore
+              }
+            });
+          });
+        void (async () => {
+          for (let i = 0; i < modes.length; i++) {
+            if (!isAlive()) break;
+            const mode = modes[i];
+            const result = await run(mode);
+            if (!result.code || result.bytes >= 8000 || !isAlive()) break;
+            if (i === modes.length - 1) {
+              stop = true;
+              this.lastStreamError = `${ch.name}: playback failed ${result.err || 'ffmpeg'}`.trim();
+            } else {
+              activityLog.warn('livetv', `GPU playback failed for ${path.basename(file)}, retrying`, {
+                error: result.err,
+              });
+            }
           }
           resolve();
-        };
-        proc.on('exit', done);
-        proc.on('error', () => done(1));
-        req.once('close', () => {
-          try {
-            proc.kill();
-          } catch {
-            // ignore
-          }
-        });
+        })();
       });
     let guard = 0;
     while (isAlive() && !stop && guard < 400) {
