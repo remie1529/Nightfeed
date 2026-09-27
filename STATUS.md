@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.7 — Custom Live TV channels use GPU transcoding when available.
+**Current:** v2.4.8 — Custom Live TV channels stay off the CPU.
+
+# Status v2.4.8
+
+## Changed
+- H.264 library files are copied, not re-encoded
+- Other codecs use GPU decode and encode
 
 # Status v2.4.7
 

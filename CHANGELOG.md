@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.8
+
+### Changed
+- Custom Live TV channels no longer transcode every file on the CPU
+- H.264 movies and episodes are remuxed (`-c copy`)
+- HEVC and other codecs are decoded and encoded on the GPU (CUDA, Quick Sync, or AMF). CPU encode is only a last resort, and it is capped at 2 threads
+
 ## 2.4.7
 
 ### Changed
