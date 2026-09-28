@@ -1862,8 +1862,22 @@ export async function searchMovieTorrents(
 
   const merged = mergeByInfoHash(groups);
   const cleaned = merged.filter((r) => !/\b(trailer|teaser)\b/i.test(r.title || ''));
-  const ranked = rankResults(cleaned.length ? cleaned : merged, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
+  const yearPool = typeof year === 'number' && year > 0
+    ? cleaned.filter((r) => titleMatchesMovieYear(r.title || '', year))
+    : cleaned;
+  const yearFiltered = cleaned.length - yearPool.length;
+  const ranked = rankResults(yearPool, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
-  return { results: ranked, query, error };
+  return { results: ranked, query, error, yearFiltered: yearFiltered || undefined };
+}
+
+/** Keep a torrent only when its title year is the movie's release year. */
+function titleMatchesMovieYear(title: string, year: number): boolean {
+  const years: number[] = [];
+  const re = /\b(?:19|20)\d{2}\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(title))) years.push(Number(m[0]));
+  if (!years.length) return false;
+  return years.every((y) => y === year);
 }

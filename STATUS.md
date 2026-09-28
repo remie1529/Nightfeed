@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.8 — Custom Live TV channels stay off the CPU.
+**Current:** v2.4.9 — Movie torrents: newest first, same release year only.
+
+# Status v2.4.9
+
+## Changed
+- Movie Find sorts by upload date, newest on top
+- Titles that are not the movie’s release year are removed
 
 # Status v2.4.8
 

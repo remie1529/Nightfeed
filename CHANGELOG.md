@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.9
+
+### Changed
+- Movie Find list is sorted by torrent upload date, newest first
+- Torrents whose title year is missing or not the movie’s release year are dropped (logged, not shown in the Find window)
+
 ## 2.4.8
 
 ### Changed
