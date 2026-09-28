@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.10
+
+### Fixed
+- Custom Live TV channels are stored separately and survive playlist refresh and app updates
+- The guide and the player use the same clock: a title stays on until its scheduled end, so the EPG matches what is playing
+
 ## 2.4.9
 
 ### Changed

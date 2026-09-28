@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.9 — Movie torrents: newest first, same release year only.
+**Current:** v2.4.10 — Custom Live TV channels persist, and the guide matches playback.
+
+# Status v2.4.10
+
+## Fixed
+- Library channels are kept on playlist refresh and across updates
+- Playback follows the guide slot instead of jumping to the next file early
 
 # Status v2.4.9
 

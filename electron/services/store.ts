@@ -34,6 +34,8 @@ export interface AppData {
   downloadHistory: DownloadHistoryItem[];
   lastDailyBriefingDate: string;
   liveTvLineup: LiveTvChannel[];
+  /** Custom library channels, stored separately so a playlist refresh cannot drop them. */
+  liveTvCustomChannels: LiveTvChannel[];
   liveTvXmltvCache: string;
 }
 
@@ -53,6 +55,7 @@ const defaults: AppData = {
   downloadHistory: [],
   lastDailyBriefingDate: '',
   liveTvLineup: [],
+  liveTvCustomChannels: [],
   liveTvXmltvCache: '',
 };
 
@@ -474,13 +477,31 @@ export function setLastDailyBriefingDate(day: string): void {
   store.set('lastDailyBriefingDate', day);
 }
 
+function isLibraryChannel(c: LiveTvChannel): boolean {
+  return c?.kind === 'library' || String(c?.url || '').startsWith('nightfeed://library/');
+}
+
 export function getLiveTvLineup(): LiveTvChannel[] {
   const raw = store.get('liveTvLineup');
-  return Array.isArray(raw) ? raw : [];
+  const lineup = Array.isArray(raw) ? raw : [];
+  const saved = store.get('liveTvCustomChannels');
+  const custom = Array.isArray(saved) ? saved : [];
+  const ids = new Set(lineup.map((c) => c.id));
+  const extra = custom.filter((c) => c && c.id && !ids.has(c.id) && isLibraryChannel(c));
+  return [...lineup, ...extra].map((c) =>
+    isLibraryChannel(c) ? { ...c, kind: 'library' as const } : c
+  );
 }
 
 export function setLiveTvLineup(channels: LiveTvChannel[]): void {
-  store.set('liveTvLineup', channels);
+  const list = (Array.isArray(channels) ? channels : []).map((c) =>
+    isLibraryChannel(c) ? { ...c, kind: 'library' as const } : c
+  );
+  store.set('liveTvLineup', list);
+  store.set(
+    'liveTvCustomChannels',
+    list.filter((c) => isLibraryChannel(c))
+  );
 }
 
 export function getLiveTvXmltvCache(): string {

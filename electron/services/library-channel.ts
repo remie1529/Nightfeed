@@ -126,9 +126,11 @@ function pickItems(ch: LiveTvChannel): { items: MediaItem[]; latest: boolean } {
 export function buildLibrarySchedule(ch: LiveTvChannel, from: Date, days: number): LibrarySlot[] {
   const { items, latest } = pickItems(ch);
   if (!items.length) return [];
+  const dayKey = `${from.getFullYear()}-${from.getMonth() + 1}-${from.getDate()}`;
+  const sig = items.map((i) => i.path).sort().join('\n');
   const ordered = latest
     ? [...items].sort((a, b) => b.sortKey.localeCompare(a.sortKey) || a.title.localeCompare(b.title))
-    : shuffle(items, `${ch.id}|${from.getFullYear()}-${from.getMonth()}-${from.getDate()}|${items.length}`);
+    : shuffle(items, `${ch.id}|${ch.libraryMode || ''}|${dayKey}|${sig}`);
   const span = Math.max(1, Math.min(7, days)) * 24 * 60 * 60 * 1000;
   const start0 = from.getTime();
   const endLimit = start0 + span;
@@ -154,8 +156,9 @@ export function buildLibrarySchedule(ch: LiveTvChannel, from: Date, days: number
 }
 
 export function libraryScheduleNow(ch: LiveTvChannel, days: number): LibrarySlot[] {
+  // Anchor at local midnight so the guide and the player share one clock.
   const from = new Date();
-  from.setMinutes(0, 0, 0);
+  from.setHours(0, 0, 0, 0);
   return buildLibrarySchedule(ch, from, days);
 }
 
