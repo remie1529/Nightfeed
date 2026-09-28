@@ -3663,8 +3663,14 @@ function registerIpc() {
     activityLog.info(
       'search',
       `Movie search done: ${movie.title} — ${res.results?.length || 0} result(s)`,
-      { sourcesHit: sourcesInResults(res.results), error: res.error || '' }
+      { sourcesHit: sourcesInResults(res.results), error: res.error || '', yearFiltered: res.yearFiltered || 0 }
     );
+    if (res.yearFiltered && res.yearFiltered > 0) {
+      activityLog.info(
+        'search',
+        `Dropped ${res.yearFiltered} torrent(s) that are not ${movie.releaseYear}: ${movie.title}`
+      );
+    }
     if (res.error && !res.results.length) {
       notify(res.error, 'warn');
     }

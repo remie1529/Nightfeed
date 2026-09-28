@@ -61,7 +61,13 @@ export default function MovieDetail({
         query: string;
         error?: string;
       };
-      setResults(res.results || []);
+      const list = [...(res.results || [])].sort((a, b) => {
+        const at = a.publishedAt ? Date.parse(a.publishedAt) : 0;
+        const bt = b.publishedAt ? Date.parse(b.publishedAt) : 0;
+        if (bt !== at) return bt - at;
+        return (b.seeders || 0) - (a.seeders || 0);
+      });
+      setResults(list);
       setSearchQuery(res.query || '');
     } catch {
       setResults([]);
