@@ -224,10 +224,17 @@ function probeCodecs(ff: string, file: string): { video: string; audio: string }
 const MPEGTS_AUDIO = new Set(['aac', 'ac3', 'eac3', 'mp2', 'mp3']);
 
 /** H.264 files can be remuxed. Anything else is decoded and encoded on the GPU. */
-function libraryFfmpegArgs(ff: string, file: string, offsetSec: number, mode: 'copy' | 'hw' | 'cpu'): string[] {
+function libraryFfmpegArgs(
+  ff: string,
+  file: string,
+  offsetSec: number,
+  mode: 'copy' | 'hw' | 'cpu',
+  limitSec?: number
+): string[] {
   const ss = String(Math.max(0, Math.floor(offsetSec)));
+  const limit = limitSec && limitSec > 0 ? ['-t', String(Math.max(1, Math.floor(limitSec)))] : [];
   if (mode === 'copy') {
-    return ['-hide_banner', '-loglevel', 'error', '-ss', ss, '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-f', 'mpegts', 'pipe:1'];
+    return ['-hide_banner', '-loglevel', 'error', '-ss', ss, '-i', file, ...limit, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-f', 'mpegts', 'pipe:1'];
   }
   const hw = detectHwName(ff);
   const args = ['-hide_banner', '-loglevel', 'error'];
@@ -236,7 +243,7 @@ function libraryFfmpegArgs(ff: string, file: string, offsetSec: number, mode: 'c
     else if (hw === 'h264_qsv') args.push('-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv');
     else if (hw === 'h264_amf') args.push('-hwaccel', 'd3d11va');
   }
-  args.push('-ss', ss, '-i', file, '-map', '0:v:0', '-map', '0:a:0?');
+  args.push('-ss', ss, '-i', file, ...limit, '-map', '0:v:0', '-map', '0:a:0?');
   if (mode === 'cpu' || hw === 'libx264') {
     args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-threads', '2');
   } else if (hw === 'h264_nvenc') {
@@ -1252,7 +1259,7 @@ class LiveTvServer {
     }
     const days = Math.max(1, settings.liveTvFakeEpgDays || 2);
     let stop = false;
-    const playFile = (file: string, offsetSec: number) =>
+    const playFile = (file: string, offsetSec: number, limitSec: number) =>
       new Promise<void>((resolve) => {
         if (!isAlive()) {
           resolve();
@@ -1261,9 +1268,10 @@ class LiveTvServer {
         const codecs = probeCodecs(ff, file);
         const copyOk = codecs.video === 'h264' && (!codecs.audio || MPEGTS_AUDIO.has(codecs.audio));
         const modes: Array<'copy' | 'hw' | 'cpu'> = copyOk ? ['copy'] : ['hw', 'cpu'];
+        const limited = Math.max(1, Math.floor(limitSec));
         const run = (mode: 'copy' | 'hw' | 'cpu') =>
           new Promise<{ code: number | null; bytes: number; err: string }>((done) => {
-            const proc = spawn(ff, libraryFfmpegArgs(ff, file, offsetSec, mode), {
+            const proc = spawn(ff, libraryFfmpegArgs(ff, file, offsetSec, mode, limited), {
               windowsHide: true,
               stdio: ['ignore', 'pipe', 'pipe'],
             });
@@ -1314,7 +1322,12 @@ class LiveTvServer {
         break;
       }
       const offset = Math.max(0, (Date.now() - slot.start) / 1000);
-      await playFile(slot.path, offset);
+      const remain = Math.max(1, (slot.end - Date.now()) / 1000);
+      await playFile(slot.path, offset, remain);
+      const waitMs = slot.end - Date.now();
+      if (waitMs > 400 && isAlive()) {
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
     }
     cleanup();
   }

@@ -151,23 +151,31 @@ function xtreamBase(host: string, port: number): string {
   }
 }
 
+function isLibraryChannel(c: LiveTvChannel): boolean {
+  return c?.kind === 'library' || String(c?.url || '').startsWith('nightfeed://library/');
+}
+
 function mergeLineup(incoming: LiveTvChannel[], existing: LiveTvChannel[]): LiveTvChannel[] {
   const prev = new Map(existing.map((c) => [c.id, c]));
-  return incoming.map((c, i) => {
-    const old = prev.get(c.id);
-    if (!old) return { ...c, number: c.number || i + 1, enabled: false };
-    return {
-      ...c,
-      enabled: old.enabled,
-      number: old.number || c.number || i + 1,
-      name: old.name && old.name !== c.name ? old.name : c.name,
-      logo: old.logoCustom && old.logo ? old.logo : c.logo,
-      tvgId: old.epgCustom && old.tvgId ? old.tvgId : c.tvgId,
-      logoCustom: !!old.logoCustom,
-      epgCustom: !!old.epgCustom,
-      fakeEpg: !!old.fakeEpg,
-    };
-  });
+  const iptv = incoming
+    .filter((c) => !isLibraryChannel(c))
+    .map((c, i) => {
+      const old = prev.get(c.id);
+      if (!old || isLibraryChannel(old)) return { ...c, number: c.number || i + 1, enabled: false };
+      return {
+        ...c,
+        enabled: old.enabled,
+        number: old.number || c.number || i + 1,
+        name: old.name && old.name !== c.name ? old.name : c.name,
+        logo: old.logoCustom && old.logo ? old.logo : c.logo,
+        tvgId: old.epgCustom && old.tvgId ? old.tvgId : c.tvgId,
+        logoCustom: !!old.logoCustom,
+        epgCustom: !!old.epgCustom,
+        fakeEpg: !!old.fakeEpg,
+      };
+    });
+  const custom = existing.filter((c) => isLibraryChannel(c)).map((c) => ({ ...c, kind: 'library' as const }));
+  return [...custom, ...iptv];
 }
 
 async function fetchXtream(s: AppSettings, ua: string): Promise<LiveTvChannel[]> {
