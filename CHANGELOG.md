@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.14
+
+### Added
+- Upcoming posters and titles open the metadata screen even when the show or movie is not in the library yet
+- Add from that screen. A series still keeps only episodes that have not aired
+
 ## 2.4.13
 
 ### Changed

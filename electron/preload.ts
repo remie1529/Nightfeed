@@ -18,6 +18,7 @@ const api = {
   getCalendar: (from: string, to: string) => ipcRenderer.invoke('library:calendar', from, to),
   getUpcoming: () => ipcRenderer.invoke('library:upcoming'),
   getShow: (mazeId: number) => ipcRenderer.invoke('library:get', mazeId),
+  previewShow: (mazeId: number) => ipcRenderer.invoke('library:preview', mazeId),
   updateShow: (mazeId: number, partial: Record<string, unknown>) =>
     ipcRenderer.invoke('library:update', mazeId, partial),
   refreshShow: (mazeId: number) => ipcRenderer.invoke('library:refresh', mazeId),
@@ -67,6 +68,7 @@ const api = {
   searchMovies: (query: string) => ipcRenderer.invoke('tmdb:searchMovies', query),
   getMovies: () => ipcRenderer.invoke('movies:list'),
   getMovie: (tmdbId: number) => ipcRenderer.invoke('movies:get', tmdbId),
+  previewMovie: (tmdbId: number) => ipcRenderer.invoke('movies:preview', tmdbId),
   addMovie: (tmdbId: number) => ipcRenderer.invoke('movies:add', tmdbId),
   removeMovie: (tmdbId: number) => ipcRenderer.invoke('movies:remove', tmdbId),
   bulkUpdateMovies: (tmdbIds: number[], partial: Record<string, unknown>) =>

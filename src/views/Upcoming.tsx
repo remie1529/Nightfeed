@@ -53,16 +53,12 @@ function UpcomingShelf({
             .join(' · ');
           return (
             <article key={key} className="upcoming-card">
-              {item.inLibrary ? (
-                <button type="button" className="upcoming-poster-btn" onClick={() => onOpen(item)}>
-                  <Poster path={item.posterUrl} alt="" width={148} height={222} />
-                </button>
-              ) : (
+              <button type="button" className="upcoming-poster-btn" onClick={() => onOpen(item)}>
                 <Poster path={item.posterUrl} alt="" width={148} height={222} />
-              )}
-              <div className="upcoming-card-title" title={item.title}>
+              </button>
+              <button type="button" className="upcoming-card-title" title={item.title} onClick={() => onOpen(item)}>
                 {item.title}
-              </div>
+              </button>
               <div className="upcoming-card-meta" title={meta}>
                 {meta}
               </div>
@@ -176,7 +172,6 @@ export default function Upcoming({
   };
 
   const open = (item: UpcomingItem) => {
-    if (!item.inLibrary) return;
     if (item.kind === 'show') onOpenShow(item.id);
     else onOpenMovie(item.id);
   };
