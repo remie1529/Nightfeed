@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.13
+
+### Changed
+- Upcoming is horizontal poster rows: English series, English movies, then other languages
+- Each row scrolls sideways, with back and forward buttons
+
 ## 2.4.12
 
 ### Added
