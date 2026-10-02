@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Poster from '../components/Poster';
 import StatusBadge from '../components/StatusBadge';
+import TrailerButton from '../components/TrailerButton';
 import { formatBytes } from '../lib/format';
 import type { Movie, MovieStatus, Resolution, SearchResult } from '../lib/types';
 
@@ -171,6 +172,7 @@ export default function MovieDetail({
       <div className="toolbar" style={{ marginBottom: '1rem' }}>
         <button className="ghost" onClick={onBack}>← {backLabel}</button>
         <div style={{ flex: 1 }} />
+        <TrailerButton imdbId={movie.imdbId} />
         <button onClick={refresh} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>

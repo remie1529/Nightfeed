@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Poster from '../components/Poster';
 import StatusBadge from '../components/StatusBadge';
+import TrailerButton from '../components/TrailerButton';
 import { epCode, formatBytes } from '../lib/format';
 import type {
   Episode,
@@ -216,6 +217,7 @@ export default function ShowDetail({
       <div className="toolbar" style={{ marginBottom: '1rem' }}>
         <button className="ghost" onClick={onBack}>← {backLabel}</button>
         <div style={{ flex: 1 }} />
+        <TrailerButton imdbId={show.imdbId} />
         <button onClick={refresh} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh metadata'}
         </button>

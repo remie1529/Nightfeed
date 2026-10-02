@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.14 — Upcoming posters open metadata even when the title is not in the library.
+**Current:** v2.4.15 — Trailer button plays inside the show and movie screens.
+
+# Status v2.4.15
+
+## Added
+- Trailer button on show and movie metadata
+- Playback stays inside Nightfeed
 
 # Status v2.4.14
 

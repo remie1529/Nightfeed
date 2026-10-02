@@ -83,6 +83,7 @@ import {
 import {
   applyMovieLocalStatus,
   fetchMovieDetail,
+  fetchTrailer,
 } from './services/imdb';
 import { downloadEngine, ensureTorrentEngine, getTorrentEngineInfo, getLastUtilityFailure } from './services/engine-bridge';
 import { isIgnorableTorrentSocketError } from './services/engine';
@@ -3590,6 +3591,19 @@ function registerIpc() {
       downloadingMovieIds(),
       movieRoots(settings)
     );
+  });
+
+  ipcMain.handle('media:trailer', async (_e, imdbId: string) => {
+    const raw = String(imdbId || '').trim();
+    if (!/^(?:tt)?\d+$/i.test(raw)) return { url: null as string | null };
+    try {
+      const url = await fetchTrailer(raw);
+      return { url };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      activityLog.warn('library', `Trailer lookup failed: ${msg}`);
+      throw err;
+    }
   });
 
   ipcMain.handle('movies:add', async (_e, tmdbId: number) => {

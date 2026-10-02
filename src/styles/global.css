@@ -637,6 +637,28 @@ table.dense tr:hover td {
 
 .modal .body { padding: 1rem 1.15rem 1.35rem; }
 
+.modal.trailer-modal {
+  width: min(960px, calc(100vw - 3rem));
+  background: #0c0c0c;
+}
+
+.modal.trailer-modal .body {
+  padding: 0;
+}
+
+.trailer-video {
+  width: 100%;
+  max-height: min(72vh, 540px);
+  background: #000;
+  display: block;
+}
+
+.trailer-status {
+  margin: 0;
+  padding: 1.25rem 1.15rem;
+  color: var(--text-dim);
+}
+
 /* Get / Get other torrent picker: title wraps; Res/Size/Seeds/Download stay on one line. */
 .modal.torrent-pick {
   width: min(900px, calc(100vw - 3rem));

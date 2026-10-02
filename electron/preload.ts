@@ -69,6 +69,8 @@ const api = {
   getMovies: () => ipcRenderer.invoke('movies:list'),
   getMovie: (tmdbId: number) => ipcRenderer.invoke('movies:get', tmdbId),
   previewMovie: (tmdbId: number) => ipcRenderer.invoke('movies:preview', tmdbId),
+  getTrailer: (imdbId: string) =>
+    ipcRenderer.invoke('media:trailer', imdbId) as Promise<{ url: string | null }>,
   addMovie: (tmdbId: number) => ipcRenderer.invoke('movies:add', tmdbId),
   removeMovie: (tmdbId: number) => ipcRenderer.invoke('movies:remove', tmdbId),
   bulkUpdateMovies: (tmdbIds: number[], partial: Record<string, unknown>) =>
