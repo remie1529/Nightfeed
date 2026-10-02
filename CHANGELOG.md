@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.15
+
+### Added
+- Trailer button on show and movie metadata screens
+- Plays the IMDb trailer in a player inside Nightfeed
+
 ## 2.4.14
 
 ### Added

@@ -263,6 +263,101 @@ async function fetchDetailGraphql(imdbId: string): Promise<{
   };
 }
 
+const TRAILER_QUERY = `query TitleTrailer($id: ID!) {
+  title(id: $id) {
+    latestTrailer {
+      playbackURLs { videoMimeType videoDefinition url }
+    }
+    primaryVideos(first: 8) {
+      edges {
+        node {
+          contentType { id }
+          playbackURLs { videoMimeType videoDefinition url }
+        }
+      }
+    }
+  }
+}`;
+
+interface TrailerUrl {
+  videoMimeType?: string | null;
+  videoDefinition?: string | null;
+  url?: string | null;
+}
+
+function bestMp4(urls: TrailerUrl[] | null | undefined): string | null {
+  const mp4s = (urls || []).filter(
+    (u) => (u.videoMimeType || '').toUpperCase() === 'MP4' && u.url
+  );
+  for (const def of ['DEF_1080p', 'DEF_720p', 'DEF_480p', 'DEF_SD']) {
+    const hit = mp4s.find((u) => u.videoDefinition === def);
+    if (hit?.url) return hit.url;
+  }
+  return mp4s[0]?.url || null;
+}
+
+/** Direct MP4 for the in-app trailer player. Null when IMDb has no trailer. */
+export async function fetchTrailer(imdbId: string): Promise<string | null> {
+  const id = numberToImdbId(imdbIdToNumber(imdbId));
+  const res = await fetchText(
+    GRAPHQL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Origin: 'https://www.imdb.com',
+        Referer: `https://www.imdb.com/title/${id}/`,
+        'x-imdb-client-name': 'imdb-web-app',
+      },
+      body: JSON.stringify({
+        operationName: 'TitleTrailer',
+        variables: { id },
+        query: TRAILER_QUERY,
+      }),
+    },
+    25000
+  );
+  if (!res.ok) throw new Error(`Trailer lookup failed (${res.status})`);
+  let parsed: {
+    errors?: Array<{ message?: string }>;
+    data?: {
+      title?: {
+        latestTrailer?: { playbackURLs?: TrailerUrl[] | null } | null;
+        primaryVideos?: {
+          edges?: Array<{
+            node?: {
+              contentType?: { id?: string | null } | null;
+              playbackURLs?: TrailerUrl[] | null;
+            } | null;
+          } | null> | null;
+        } | null;
+      } | null;
+    };
+  };
+  try {
+    parsed = JSON.parse(res.text);
+  } catch {
+    throw new Error('Trailer lookup returned invalid data');
+  }
+  if (parsed.errors?.length) {
+    throw new Error(parsed.errors[0]?.message || 'Trailer lookup failed');
+  }
+  const title = parsed.data?.title;
+  const latest = bestMp4(title?.latestTrailer?.playbackURLs);
+  if (latest) return latest;
+  const edges = title?.primaryVideos?.edges || [];
+  const trailers = edges.filter((edge) =>
+    (edge?.node?.contentType?.id || '').toLowerCase().includes('trailer')
+  );
+  const pool = trailers.length ? trailers : edges;
+  for (const edge of pool) {
+    const url = bestMp4(edge?.node?.playbackURLs);
+    if (url) return url;
+  }
+  return null;
+}
+
 /** Best-effort HTML scrape (often WAF-blocked from datacenters; works for some networks). */
 async function fetchDetailHtml(imdbId: string): Promise<{
   title: string;
