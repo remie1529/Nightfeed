@@ -534,7 +534,7 @@ function mergeLineup(incoming: LiveTvChannel[], existing: LiveTvChannel[]): Live
         number: old.number || c.number || i + 1,
         name: old.name && old.name !== c.name ? old.name : c.name,
         logo: old.logoCustom && old.logo ? old.logo : c.logo,
-        tvgId: old.epgCustom && old.tvgId ? old.tvgId : c.tvgId,
+        tvgId: old.epgCustom ? String(old.tvgId ?? '') : c.tvgId,
         logoCustom: !!old.logoCustom,
         epgCustom: !!old.epgCustom,
         fakeEpg: !!old.fakeEpg,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface LogPayload {
   text: string;
@@ -8,7 +8,8 @@ interface LogPayload {
 }
 
 export default function LogView({ onBack }: { onBack: () => void }) {
-  const [text, setText] = useState('');
+  const [raw, setRaw] = useState('');
+  const [query, setQuery] = useState('');
   const [meta, setMeta] = useState<{ path: string; truncated: boolean; size: number } | null>(null);
   const [newestAtBottom, setNewestAtBottom] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -17,45 +18,42 @@ export default function LogView({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState('');
   const preRef = useRef<HTMLPreElement>(null);
   const stickRef = useRef(true);
+  const queryRef = useRef('');
 
-  const applyPayload = useCallback(
-    (payload: LogPayload, stick: boolean) => {
-      const raw = payload?.text || '';
-      const lines = raw.replace(/\r\n/g, '\n').split('\n');
-      if (lines.length && lines[lines.length - 1] === '') lines.pop();
-      const display = newestAtBottom ? lines.join('\n') : [...lines].reverse().join('\n');
-      setText(display ? `${display}\n` : '(empty — activity will appear here)');
-      setMeta({
-        path: payload.path || '',
-        truncated: !!payload.truncated,
-        size: payload.size || 0,
-      });
-      if (stick && newestAtBottom) {
-        requestAnimationFrame(() => {
-          const el = preRef.current;
-          if (el) el.scrollTop = el.scrollHeight;
-        });
-      } else if (stick && !newestAtBottom) {
-        requestAnimationFrame(() => {
-          const el = preRef.current;
-          if (el) el.scrollTop = 0;
-        });
-      }
-    },
-    [newestAtBottom]
-  );
+  const view = useMemo(() => {
+    const lines = raw.replace(/\r\n/g, '\n').split('\n');
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    const ordered = newestAtBottom ? lines : [...lines].reverse();
+    const q = query.trim().toLowerCase();
+    const shown = q ? ordered.filter((line) => line.toLowerCase().includes(q)) : ordered;
+    let body = '';
+    if (!raw.trim()) body = '(empty — activity will appear here)';
+    else if (!shown.length) body = '(no matching lines)';
+    else body = `${shown.join('\n')}\n`;
+    return { body, matched: q ? shown.length : null };
+  }, [raw, query, newestAtBottom]);
+
+  const applyPayload = useCallback((payload: LogPayload) => {
+    setRaw(payload?.text || '');
+    setMeta({
+      path: payload.path || '',
+      truncated: !!payload.truncated,
+      size: payload.size || 0,
+    });
+  }, []);
 
   const refresh = useCallback(
     async (stick = true) => {
+      if (stick) stickRef.current = true;
       setBusy(true);
       setError('');
       try {
         const payload = (await window.torrentAPI.getLogTail?.({ lines: 2000 })) as LogPayload;
         if (!payload) {
           const full = (await window.torrentAPI.getLog?.()) as LogPayload;
-          applyPayload(full || { text: '', path: '', truncated: false, size: 0 }, stick);
+          applyPayload(full || { text: '', path: '', truncated: false, size: 0 });
         } else {
-          applyPayload(payload, stick);
+          applyPayload(payload);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -71,15 +69,23 @@ export default function LogView({ onBack }: { onBack: () => void }) {
   }, [refresh]);
 
   useEffect(() => {
+    queryRef.current = query;
+  }, [query]);
+
+  useEffect(() => {
     if (!autoRefresh) return;
     const off = window.torrentAPI.onLogChanged?.(() => {
-      if (!stickRef.current && newestAtBottom) {
+      const searching = !!queryRef.current.trim();
+      if (searching || (!stickRef.current && newestAtBottom)) {
         void refresh(false);
         return;
       }
       void refresh(true);
     });
-    const timer = setInterval(() => void refresh(stickRef.current), 4000);
+    const timer = setInterval(() => {
+      const searching = !!queryRef.current.trim();
+      void refresh(!searching && stickRef.current);
+    }, 4000);
     return () => {
       off?.();
       clearInterval(timer);
@@ -87,14 +93,17 @@ export default function LogView({ onBack }: { onBack: () => void }) {
   }, [autoRefresh, refresh, newestAtBottom]);
 
   useEffect(() => {
-    void refresh(true);
-    // re-order when toggle flips
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newestAtBottom]);
+    if (query.trim()) return;
+    const el = preRef.current;
+    if (!el || !stickRef.current) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = newestAtBottom ? el.scrollHeight : 0;
+    });
+  }, [view.body, newestAtBottom, query]);
 
   const onScroll = () => {
     const el = preRef.current;
-    if (!el) return;
+    if (!el || query.trim()) return;
     if (newestAtBottom) {
       stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
     } else {
@@ -104,7 +113,7 @@ export default function LogView({ onBack }: { onBack: () => void }) {
 
   const copyAll = async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(view.body);
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch (e) {
@@ -136,9 +145,18 @@ export default function LogView({ onBack }: { onBack: () => void }) {
           <p>
             Timestamped app actions · kept about one week
             {meta?.truncated ? ' · showing recent portion' : ''} · {sizeLabel}
+            {view.matched != null ? ` · ${view.matched} match${view.matched === 1 ? '' : 'es'}` : ''}
           </p>
         </div>
         <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <input
+            className="log-search"
+            type="search"
+            placeholder="Search log"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search log"
+          />
           <button type="button" onClick={onBack}>
             ← Settings
           </button>
@@ -155,7 +173,10 @@ export default function LogView({ onBack }: { onBack: () => void }) {
             <input
               type="checkbox"
               checked={newestAtBottom}
-              onChange={(e) => setNewestAtBottom(e.target.checked)}
+              onChange={(e) => {
+                stickRef.current = true;
+                setNewestAtBottom(e.target.checked);
+              }}
             />
             Newest at bottom
           </label>
@@ -179,7 +200,7 @@ export default function LogView({ onBack }: { onBack: () => void }) {
       ) : null}
 
       <pre ref={preRef} className="log-pre" onScroll={onScroll}>
-        {text || 'Loading…'}
+        {view.body || 'Loading…'}
       </pre>
     </div>
   );

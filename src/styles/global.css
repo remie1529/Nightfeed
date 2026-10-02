@@ -1175,6 +1175,13 @@ button.ok-btn {
   opacity: 0.75;
 }
 
+.log-search {
+  width: 220px;
+  max-width: 100%;
+  flex: 0 1 220px;
+  padding: 0.35rem 0.6rem;
+}
+
 .log-toggle {
   display: inline-flex;
   align-items: center;

@@ -1,6 +1,16 @@
 # Nightfeed status
 
-**Current:** v2.4.10 — Custom Live TV channels persist, and the guide matches playback.
+**Current:** v2.4.11 — Search failures stay in the log, empty EPG ids are kept, and the app icon shows on the taskbar and desktop shortcut.
+
+# Status v2.4.11
+
+## Added
+- Search on the activity log
+
+## Fixed
+- Corner popups for torrent search failures are gone; the message is in the log
+- Clearing a Live TV EPG id is remembered
+- Taskbar and desktop shortcut use the Nightfeed logo
 
 # Status v2.4.10
 
