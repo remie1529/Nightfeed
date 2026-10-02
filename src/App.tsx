@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import Library from './views/Library';
+import Upcoming from './views/Upcoming';
 import CalendarView from './views/Calendar';
 import ShowDetail from './views/ShowDetail';
 import Movies from './views/Movies';
@@ -9,10 +10,11 @@ import Requests from './views/Requests';
 import SettingsView from './views/Settings';
 import LogView from './views/LogView';
 import LiveTvView from './views/LiveTv';
-import type { AppSettings, DownloadItem, Movie, UpdateStatus, VpnStatus } from './lib/types';
+import type { AppSettings, DownloadItem, UpdateStatus, VpnStatus } from './lib/types';
 
 type View =
   | 'library'
+  | 'upcoming'
   | 'calendar'
   | 'movies'
   | 'downloads'
@@ -32,6 +34,7 @@ interface Toast {
 export default function App() {
   const [view, setView] = useState<View>('library');
   const [showBack, setShowBack] = useState<View>('library');
+  const [movieBack, setMovieBack] = useState<'movies' | 'upcoming'>('movies');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null);
   const [activeDownloads, setActiveDownloads] = useState(0);
@@ -152,8 +155,9 @@ export default function App() {
     setView('show');
   };
 
-  const openMovie = (movie: Movie) => {
+  const openMovie = (movie: { tmdbId: number }, back: 'movies' | 'upcoming' = 'movies') => {
     setSelectedMovieId(movie.tmdbId);
+    setMovieBack(back);
     setView('movie');
   };
 
@@ -167,10 +171,22 @@ export default function App() {
           <div className="brand-sub">TV & Movies</div>
         </div>
         <button
-          className={`nav-item ${view === 'library' || (view === 'show' && showBack !== 'calendar') ? 'active' : ''}`}
+          className={`nav-item ${view === 'library' || (view === 'show' && showBack === 'library') ? 'active' : ''}`}
           onClick={() => setView('library')}
         >
           Library
+        </button>
+        <button
+          className={`nav-item ${
+            view === 'upcoming' ||
+            (view === 'show' && showBack === 'upcoming') ||
+            (view === 'movie' && movieBack === 'upcoming')
+              ? 'active'
+              : ''
+          }`}
+          onClick={() => setView('upcoming')}
+        >
+          Upcoming
         </button>
         <button
           className={`nav-item ${view === 'calendar' || (view === 'show' && showBack === 'calendar') ? 'active' : ''}`}
@@ -179,7 +195,7 @@ export default function App() {
           Calendar
         </button>
         <button
-          className={`nav-item ${view === 'movies' || view === 'movie' ? 'active' : ''}`}
+          className={`nav-item ${view === 'movies' || (view === 'movie' && movieBack === 'movies') ? 'active' : ''}`}
           onClick={() => setView('movies')}
         >
           Movies
@@ -224,6 +240,12 @@ export default function App() {
             onRefreshDone={() => setLibraryKey((k) => k + 1)}
           />
         )}
+        {view === 'upcoming' && (
+          <Upcoming
+            onOpenShow={(id) => openShow(id, 'upcoming')}
+            onOpenMovie={(id) => openMovie({ tmdbId: id }, 'upcoming')}
+          />
+        )}
         {view === 'calendar' && (
           <CalendarView
             refreshToken={libraryKey}
@@ -233,7 +255,7 @@ export default function App() {
         {view === 'show' && selectedId != null && (
           <ShowDetail
             tmdbId={selectedId}
-            onBack={() => setView(showBack === 'calendar' ? 'calendar' : 'library')}
+            onBack={() => setView(showBack === 'calendar' || showBack === 'upcoming' ? showBack : 'library')}
             onRemoved={() => {
               setSelectedId(null);
               setView('library');
@@ -251,7 +273,7 @@ export default function App() {
         {view === 'movie' && selectedMovieId != null && (
           <MovieDetail
             tmdbId={selectedMovieId}
-            onBack={() => setView('movies')}
+            onBack={() => setView(movieBack === 'upcoming' ? 'upcoming' : 'movies')}
             onRemoved={() => {
               setSelectedMovieId(null);
               setView('movies');

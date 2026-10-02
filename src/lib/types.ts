@@ -299,6 +299,20 @@ export interface CalendarEpisode {
   status: EpisodeStatus;
 }
 
+/** A new series premiere or a new movie that has not opened yet. */
+export interface UpcomingItem {
+  kind: 'show' | 'movie';
+  id: number;
+  title: string;
+  date: string;
+  overview: string;
+  posterUrl: string | null;
+  subtitle: string;
+  /** English titles are listed before every other language. */
+  english: boolean;
+  inLibrary: boolean;
+}
+
 /** Lightweight library grid row — no season trees. */
 export interface ShowListItem {
   id: number;

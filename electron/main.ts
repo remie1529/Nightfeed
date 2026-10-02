@@ -121,6 +121,7 @@ import {
   type FolderScanImportResult,
   type LibraryScanScope,
 } from './services/library-scan';
+import { loadUpcomingPicks } from './services/upcoming';
 import {
   AddShowPolicy,
   AppSettings,
@@ -137,6 +138,7 @@ import {
   LiveTvChannel,
   TelegramRequest,
   TorrentCandidate,
+  UpcomingItem,
   UpdateStatus,
   VpnStatus,
 } from './types';
@@ -3264,6 +3266,19 @@ function registerIpc() {
   });
 
   ipcMain.handle('library:calendar', (_e, from: string, to: string) => listCalendarEpisodes(from, to));
+  ipcMain.handle('library:upcoming', async () => {
+    const feed = await loadUpcomingPicks();
+    const showIds = new Set(getShows().map((s) => s.tmdbId));
+    const movieIds = new Set(getMovies().map((m) => m.tmdbId));
+    const items: UpcomingItem[] = feed.items.map((item) => ({
+      ...item,
+      inLibrary: item.kind === 'show' ? showIds.has(item.id) : movieIds.has(item.id),
+    }));
+    if (feed.error) {
+      activityLog.warn('library', `Upcoming list incomplete: ${feed.error}`);
+    }
+    return { items, error: feed.error };
+  });
 
   ipcMain.handle(
     'library:setEpisodeStatus',
