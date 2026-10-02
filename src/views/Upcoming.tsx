@@ -1,18 +1,86 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Poster from '../components/Poster';
 import type { UpcomingItem } from '../lib/types';
 
 type Filter = 'all' | 'show' | 'movie';
 
-function formatDay(iso: string): string {
+function formatShort(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return iso;
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function UpcomingShelf({
+  label,
+  items,
+  busyKey,
+  onAdd,
+  onOpen,
+}: {
+  label: string;
+  items: UpcomingItem[];
+  busyKey: string | null;
+  onAdd: (item: UpcomingItem) => void;
+  onOpen: (item: UpcomingItem) => void;
+}) {
+  const scroller = useRef<HTMLDivElement>(null);
+
+  const scrollByDir = (direction: -1 | 1) => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * Math.max(320, Math.round(el.clientWidth * 0.85)), behavior: 'smooth' });
+  };
+
+  return (
+    <div className="upcoming-day">
+      <div className="upcoming-day-head">
+        <h3>{label}</h3>
+        <div className="upcoming-day-nav">
+          <button type="button" aria-label="Scroll back" onClick={() => scrollByDir(-1)}>
+            ‹
+          </button>
+          <button type="button" aria-label="Scroll forward" onClick={() => scrollByDir(1)}>
+            ›
+          </button>
+        </div>
+      </div>
+      <div className="upcoming-row" ref={scroller}>
+        {items.map((item) => {
+          const key = `${item.kind}:${item.id}`;
+          const busy = busyKey === key;
+          const meta = [formatShort(item.date), item.subtitle && item.subtitle !== 'Movie' ? item.subtitle : '']
+            .filter(Boolean)
+            .join(' · ');
+          return (
+            <article key={key} className="upcoming-card">
+              {item.inLibrary ? (
+                <button type="button" className="upcoming-poster-btn" onClick={() => onOpen(item)}>
+                  <Poster path={item.posterUrl} alt="" width={148} height={222} />
+                </button>
+              ) : (
+                <Poster path={item.posterUrl} alt="" width={148} height={222} />
+              )}
+              <div className="upcoming-card-title" title={item.title}>
+                {item.title}
+              </div>
+              <div className="upcoming-card-meta" title={meta}>
+                {meta}
+              </div>
+              {item.inLibrary ? (
+                <button type="button" onClick={() => onOpen(item)}>
+                  Open
+                </button>
+              ) : (
+                <button type="button" className="primary" disabled={busy} onClick={() => onAdd(item)}>
+                  {busy ? 'Adding…' : 'Add'}
+                </button>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function Upcoming({
@@ -58,21 +126,27 @@ export default function Upcoming({
   );
 
   const sections = useMemo(() => {
-    const english = visible.filter((item) => item.english);
-    const other = visible.filter((item) => !item.english);
-    const group = (list: UpcomingItem[]) => {
-      const map = new Map<string, UpcomingItem[]>();
-      for (const item of list) {
-        const bucket = map.get(item.date);
-        if (bucket) bucket.push(item);
-        else map.set(item.date, [item]);
-      }
-      return Array.from(map.entries());
-    };
-    return [
-      { id: 'english', label: 'English', days: group(english) },
-      { id: 'other', label: 'Other languages', days: group(other) },
-    ].filter((section) => section.days.length > 0);
+    const row = (id: string, label: string, list: UpcomingItem[]) =>
+      list.length ? { id, label, items: list } : null;
+    const blocks = [
+      {
+        id: 'english',
+        label: 'English',
+        rows: [
+          row('en-show', 'Series', visible.filter((item) => item.english && item.kind === 'show')),
+          row('en-movie', 'Movies', visible.filter((item) => item.english && item.kind === 'movie')),
+        ].filter((entry) => entry != null),
+      },
+      {
+        id: 'other',
+        label: 'Other languages',
+        rows: [
+          row('other-show', 'Series', visible.filter((item) => !item.english && item.kind === 'show')),
+          row('other-movie', 'Movies', visible.filter((item) => !item.english && item.kind === 'movie')),
+        ].filter((entry) => entry != null),
+      },
+    ];
+    return blocks.filter((section) => section.rows.length > 0);
   }, [visible]);
 
   const showCount = items.filter((item) => item.kind === 'show').length;
@@ -161,52 +235,15 @@ export default function Upcoming({
         sections.map((section) => (
           <section key={section.id} className="upcoming-lang">
             <h2>{section.label}</h2>
-            {section.days.map(([date, rows]) => (
-              <div key={date} className="upcoming-day">
-                <h3>{formatDay(date)}</h3>
-                <div className="table-wrap">
-                  <table className="dense">
-                    <tbody>
-                      {rows.map((item) => {
-                        const key = `${item.kind}:${item.id}`;
-                        const busy = busyKey === key;
-                        return (
-                          <tr key={key}>
-                            <td style={{ width: 56 }}>
-                              <Poster path={item.posterUrl} alt="" width={40} height={60} />
-                            </td>
-                            <td>
-                              {item.inLibrary ? (
-                                <button type="button" className="upcoming-title" onClick={() => open(item)}>
-                                  {item.title}
-                                </button>
-                              ) : (
-                                <div className="upcoming-title">{item.title}</div>
-                              )}
-                              <div className="upcoming-meta">
-                                <span className="badge">{item.kind === 'show' ? 'Series' : 'Movie'}</span>
-                                {item.subtitle && item.subtitle !== 'Movie' ? <span>{item.subtitle}</span> : null}
-                              </div>
-                              {item.overview ? <div className="upcoming-overview">{item.overview}</div> : null}
-                            </td>
-                            <td style={{ width: 110, textAlign: 'right' }}>
-                              {item.inLibrary ? (
-                                <button type="button" onClick={() => open(item)}>
-                                  Open
-                                </button>
-                              ) : (
-                                <button type="button" className="primary" disabled={busy} onClick={() => void add(item)}>
-                                  {busy ? 'Adding…' : 'Add'}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+            {section.rows.map((shelf) => (
+              <UpcomingShelf
+                key={shelf.id}
+                label={shelf.label}
+                items={shelf.items}
+                busyKey={busyKey}
+                onAdd={(item) => void add(item)}
+                onOpen={open}
+              />
             ))}
           </section>
         ))}

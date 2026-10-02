@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.12 — Upcoming tab lists new series and movies, with English first.
+**Current:** v2.4.13 — Upcoming titles sit in horizontal poster rows, English first.
+
+# Status v2.4.13
+
+## Changed
+- Upcoming series and movies are horizontal poster rows
+- English rows come first, then other languages
 
 # Status v2.4.12
 

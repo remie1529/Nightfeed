@@ -316,49 +316,94 @@ a { color: var(--accent); }
   margin-bottom: 1.35rem;
 }
 
+.upcoming-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
 .upcoming-day h3 {
-  margin: 0 0 0.45rem;
+  margin: 0;
   font-size: 0.92rem;
   font-weight: 650;
   color: var(--text-dim);
 }
 
-.upcoming-title {
-  font-weight: 650;
-}
-
-button.upcoming-title {
-  background: transparent;
-  border: none;
-  padding: 0;
-  text-align: left;
-  color: var(--text);
-}
-
-button.upcoming-title:hover:not(:disabled) {
-  background: transparent;
-  border: none;
-  color: var(--accent);
-}
-
-.upcoming-meta {
+.upcoming-day-nav {
   display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.2rem;
-  color: var(--text-faint);
-  font-size: 0.78rem;
+  gap: 0.35rem;
+  flex-shrink: 0;
 }
 
-.upcoming-overview {
-  margin-top: 0.28rem;
-  color: var(--text-dim);
-  font-size: 0.8rem;
-  max-width: 72ch;
+.upcoming-day-nav button {
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  line-height: 1;
+  font-size: 1.15rem;
+}
+
+.upcoming-row {
+  display: flex;
+  gap: 0.85rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding-bottom: 0.55rem;
+}
+
+.upcoming-card {
+  flex: 0 0 148px;
+  width: 148px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.upcoming-card .poster {
+  width: 148px;
+  height: 222px;
+}
+
+button.upcoming-poster-btn {
+  display: block;
+  padding: 0;
+  border: none;
+  background: transparent;
+  line-height: 0;
+}
+
+button.upcoming-poster-btn:hover:not(:disabled) {
+  border: none;
+  background: transparent;
+}
+
+.upcoming-card-title {
+  font-weight: 650;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  min-height: 2.5em;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.upcoming-card-meta {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 1em;
+}
+
+.upcoming-card > button {
+  width: 100%;
+  margin-top: auto;
 }
 
 .ltv-logo {
