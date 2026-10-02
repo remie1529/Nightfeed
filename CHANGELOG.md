@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.12
+
+### Added
+- Upcoming tab, above Calendar, lists new series premieres and new movies for the next 90 days
+- English titles are listed first, then other languages
+- Add a series (only episodes that have not aired yet) or a movie straight from that list
+
 ## 2.4.11
 
 ### Added

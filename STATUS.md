@@ -1,6 +1,13 @@
 # Nightfeed status
 
-**Current:** v2.4.11 — Search failures stay in the log, empty EPG ids are kept, and the app icon shows on the taskbar and desktop shortcut.
+**Current:** v2.4.12 — Upcoming tab lists new series and movies, with English first.
+
+# Status v2.4.12
+
+## Added
+- Upcoming tab above Calendar for new series premieres and new movies
+- English titles first, then other languages
+- Add from the list, or open a title that is already in the library
 
 # Status v2.4.11
 

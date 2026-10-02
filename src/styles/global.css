@@ -302,6 +302,65 @@ a { color: var(--accent); }
   margin-top: 0.05rem;
 }
 
+.upcoming-lang {
+  margin-bottom: 1.85rem;
+}
+
+.upcoming-lang > h2 {
+  margin: 0 0 0.85rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.upcoming-day {
+  margin-bottom: 1.35rem;
+}
+
+.upcoming-day h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--text-dim);
+}
+
+.upcoming-title {
+  font-weight: 650;
+}
+
+button.upcoming-title {
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+}
+
+button.upcoming-title:hover:not(:disabled) {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+}
+
+.upcoming-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
+.upcoming-overview {
+  margin-top: 0.28rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  max-width: 72ch;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .ltv-logo {
   width: 28px;
   height: 28px;

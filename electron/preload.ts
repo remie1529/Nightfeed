@@ -16,6 +16,7 @@ const api = {
     ipcRenderer.invoke('library:bulkSetMissingStatus', mazeIds, status),
   getShows: () => ipcRenderer.invoke('library:list'),
   getCalendar: (from: string, to: string) => ipcRenderer.invoke('library:calendar', from, to),
+  getUpcoming: () => ipcRenderer.invoke('library:upcoming'),
   getShow: (mazeId: number) => ipcRenderer.invoke('library:get', mazeId),
   updateShow: (mazeId: number, partial: Record<string, unknown>) =>
     ipcRenderer.invoke('library:update', mazeId, partial),
