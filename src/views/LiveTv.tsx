@@ -544,7 +544,15 @@ export default function LiveTvView() {
                           )
                         )
                       }
-                      onBlur={() => void persist(channels)}
+                      onBlur={(e) => {
+                        const value = e.target.value;
+                        if (value === (c.tvgId || '') && !c.epgCustom) return;
+                        void persist(
+                          channels.map((x) =>
+                            x.id === c.id ? { ...x, tvgId: value, epgCustom: true } : x
+                          )
+                        );
+                      }}
                     />
                   </td>
                   <td>

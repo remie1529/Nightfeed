@@ -1,7 +1,8 @@
 /**
- * Embed Nightfeed icon.ico into the Windows .exe via rcedit+wine.
- * Needed because signAndEditExecutable is false for Linux cross-builds,
- * which otherwise leaves the default Electron atom icon on desktop/taskbar.
+ * Embed build/icon.ico into the Windows .exe.
+ * signAndEditExecutable is false, so without this the taskbar and desktop
+ * shortcut keep the default Electron icon. rcedit often fails once with
+ * "Unable to commit changes" while the new exe is still locked; retry.
  */
 const fs = require('fs');
 const path = require('path');
@@ -57,17 +58,31 @@ exports.default = async function afterPack(context) {
   }
 
   console.log('[after-pack-icon] embedding icon into', exePath);
-  try {
-    if (process.platform === 'win32') {
-      execFileSync(rceditPath, [exePath, '--set-icon', icoPath], { stdio: 'inherit' });
-    } else {
-      execFileSync('wine', [rceditPath, exePath, '--set-icon', icoPath], {
-        stdio: 'inherit',
-        env: { ...process.env, WINEDEBUG: '-all' },
-      });
+  const args = [exePath, '--set-icon', icoPath];
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    try {
+      if (process.platform === 'win32') {
+        execFileSync(rceditPath, args, { stdio: 'inherit' });
+      } else {
+        execFileSync('wine', [rceditPath, ...args], {
+          stdio: 'inherit',
+          env: { ...process.env, WINEDEBUG: '-all' },
+        });
+      }
+      console.log('[after-pack-icon] done');
+      return;
+    } catch (err) {
+      lastErr = err;
+      const msg = err && err.message ? err.message : String(err);
+      console.warn(`[after-pack-icon] attempt ${attempt} failed: ${msg}`);
+      if (process.platform !== 'win32') break;
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
     }
-    console.log('[after-pack-icon] done');
-  } catch (err) {
-    console.warn('[after-pack-icon] skipped:', err && err.message ? err.message : err);
   }
+  const msg = lastErr && lastErr.message ? lastErr.message : String(lastErr);
+  if (process.platform === 'win32') {
+    throw new Error(`[after-pack-icon] failed to embed icon: ${msg}`);
+  }
+  console.warn('[after-pack-icon] skipped:', msg);
 };

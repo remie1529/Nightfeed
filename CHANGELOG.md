@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.11
+
+### Added
+- Search box on the activity log
+
+### Fixed
+- Torrent search failures, such as an unreachable mirror or no matching torrents, are written to the activity log and no longer pop up in the corner
+- A Live TV EPG id that was cleared stays empty after the playlist is refreshed
+- The Nightfeed logo is used for the Windows taskbar and the desktop shortcut
+
 ## 2.4.10
 
 ### Fixed

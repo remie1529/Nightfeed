@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell, type NativeImage } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
@@ -141,6 +141,11 @@ import {
   VpnStatus,
 } from './types';
 
+if (process.platform === 'win32') {
+  // Must match build.appId so the taskbar uses the Nightfeed shortcut icon.
+  app.setAppUserModelId('com.tv.manager');
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'nfimg',
@@ -210,7 +215,7 @@ const updateState: UpdateStatus = {
   error: null,
 };
 
-function resolveAppIcon(): string | undefined {
+function loadWindowIcon(): NativeImage | undefined {
   const candidates = [
     path.join(process.resourcesPath || '', 'icon.ico'),
     path.join(process.resourcesPath || '', 'icon.png'),
@@ -219,7 +224,9 @@ function resolveAppIcon(): string | undefined {
   ];
   for (const c of candidates) {
     try {
-      if (c && fs.existsSync(c)) return c;
+      if (!c || !fs.existsSync(c)) continue;
+      const img = nativeImage.createFromPath(c);
+      if (!img.isEmpty()) return img;
     } catch {
       // ignore
     }
@@ -228,7 +235,7 @@ function resolveAppIcon(): string | undefined {
 }
 
 function createWindow() {
-  const iconPath = resolveAppIcon();
+  const icon = loadWindowIcon();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
@@ -238,7 +245,7 @@ function createWindow() {
     title: 'Nightfeed',
     autoHideMenuBar: true,
     show: false,
-    ...(iconPath ? { icon: iconPath } : {}),
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -246,10 +253,9 @@ function createWindow() {
       sandbox: false,
     },
   });
-  if (iconPath) {
+  if (icon) {
     try {
-      const img = nativeImage.createFromPath(iconPath);
-      if (!img.isEmpty()) mainWindow.setIcon(img);
+      mainWindow.setIcon(icon);
     } catch {
       // ignore
     }
@@ -3414,7 +3420,7 @@ function registerIpc() {
     }
     // Partial source errors are returned in res.error but must not wipe other results
     if (res.error && !res.results.length) {
-      notify(res.error, 'warn');
+      activityLog.warn('search', res.error);
     }
     return res;
   });
@@ -3672,7 +3678,7 @@ function registerIpc() {
       );
     }
     if (res.error && !res.results.length) {
-      notify(res.error, 'warn');
+      activityLog.warn('search', res.error);
     }
     return res;
   });
