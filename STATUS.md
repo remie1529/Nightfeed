@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.13 — Upcoming titles sit in horizontal poster rows, English first.
+**Current:** v2.4.14 — Upcoming posters open metadata even when the title is not in the library.
+
+# Status v2.4.14
+
+## Added
+- Upcoming posters and titles open the show or movie metadata screen before the title is tracked
+- Add from that screen
 
 # Status v2.4.13
 

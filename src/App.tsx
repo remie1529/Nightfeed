@@ -255,6 +255,7 @@ export default function App() {
         {view === 'show' && selectedId != null && (
           <ShowDetail
             tmdbId={selectedId}
+            backLabel={showBack === 'upcoming' ? 'Upcoming' : showBack === 'calendar' ? 'Calendar' : 'Library'}
             onBack={() => setView(showBack === 'calendar' || showBack === 'upcoming' ? showBack : 'library')}
             onRemoved={() => {
               setSelectedId(null);
@@ -273,6 +274,7 @@ export default function App() {
         {view === 'movie' && selectedMovieId != null && (
           <MovieDetail
             tmdbId={selectedMovieId}
+            backLabel={movieBack === 'upcoming' ? 'Upcoming' : 'Movies'}
             onBack={() => setView(movieBack === 'upcoming' ? 'upcoming' : 'movies')}
             onRemoved={() => {
               setSelectedMovieId(null);

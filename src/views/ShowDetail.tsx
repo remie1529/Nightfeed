@@ -25,17 +25,21 @@ function selectValue(status: EpisodeStatus): EpisodeOverrideStatus {
 
 export default function ShowDetail({
   tmdbId,
+  backLabel = 'Library',
   onBack,
   onRemoved,
 }: {
   tmdbId: number;
+  backLabel?: string;
   onBack: () => void;
   onRemoved: () => void;
 }) {
   const [show, setShow] = useState<Show | null>(null);
+  const [tracked, setTracked] = useState(true);
   const [season, setSeason] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [searchEp, setSearchEp] = useState<Episode | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,7 +50,9 @@ export default function ShowDetail({
   const [seasonBusy, setSeasonBusy] = useState(false);
 
   const load = async () => {
-    const s = (await window.torrentAPI.getShow(tmdbId)) as Show | null;
+    const stored = (await window.torrentAPI.getShow(tmdbId)) as Show | null;
+    const s = stored || ((await window.torrentAPI.previewShow(tmdbId)) as Show);
+    setTracked(!!stored);
     setShow(s);
     if (s && s.seasons.length) {
       const latest = s.seasons.reduce(
@@ -54,6 +60,19 @@ export default function ShowDetail({
         s.seasons[0]
       );
       setSeason((prev) => prev ?? latest.seasonNumber);
+    }
+  };
+
+  const addToLibrary = async () => {
+    setAdding(true);
+    setError(null);
+    try {
+      await window.torrentAPI.addShow(tmdbId, 'future');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -70,7 +89,11 @@ export default function ShowDetail({
     setRefreshing(true);
     setError(null);
     try {
-      const s = (await window.torrentAPI.refreshShow(tmdbId)) as Show;
+      const stored = (await window.torrentAPI.getShow(tmdbId)) as Show | null;
+      const s = stored
+        ? ((await window.torrentAPI.refreshShow(tmdbId)) as Show)
+        : ((await window.torrentAPI.previewShow(tmdbId)) as Show);
+      setTracked(!!stored);
       setShow(s);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -182,7 +205,7 @@ export default function ShowDetail({
   if (!show) {
     return (
       <div className="page">
-        <button className="ghost" onClick={onBack}>← Library</button>
+        <button className="ghost" onClick={onBack}>← {backLabel}</button>
         <p style={{ color: 'var(--text-dim)' }}>{error || 'Loading…'}</p>
       </div>
     );
@@ -191,12 +214,18 @@ export default function ShowDetail({
   return (
     <div className="page" style={{ maxWidth: 1100 }}>
       <div className="toolbar" style={{ marginBottom: '1rem' }}>
-        <button className="ghost" onClick={onBack}>← Library</button>
+        <button className="ghost" onClick={onBack}>← {backLabel}</button>
         <div style={{ flex: 1 }} />
         <button onClick={refresh} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh metadata'}
         </button>
-        <button className="danger" onClick={remove}>Remove</button>
+        {tracked ? (
+          <button className="danger" onClick={remove}>Remove</button>
+        ) : (
+          <button className="primary" onClick={() => void addToLibrary()} disabled={adding}>
+            {adding ? 'Adding…' : 'Add'}
+          </button>
+        )}
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -213,8 +242,13 @@ export default function ShowDetail({
               : ''}
           </div>
           <p style={{ color: 'var(--text-dim)', maxWidth: 680 }}>{show.overview}</p>
+          {!tracked && (
+            <p className="hint" style={{ marginTop: 8 }}>
+              Not in your library yet. Add keeps only episodes that have not aired.
+            </p>
+          )}
 
-          <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 560 }}>
+          {tracked && <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 560 }}>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label className="toggle-row">
                 <input
@@ -315,7 +349,7 @@ export default function ShowDetail({
                 <button onClick={pickPath}>Browse</button>
               </div>
             </div>
-          </div>
+          </div>}
         </div>
       </div>
 
@@ -330,7 +364,7 @@ export default function ShowDetail({
           </button>
         ))}
         <div style={{ flex: 1 }} />
-        {season != null && (
+        {tracked && season != null && (
           <label className="season-bulk" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             <span style={{ color: 'var(--text-faint)', fontSize: '0.8rem' }}>
               Set all in season
@@ -388,7 +422,7 @@ export default function ShowDetail({
                   <td className="mono">{ep.airDate || '—'}</td>
                   <td>
                     <div className="status-cell">
-                      {derived ? (
+                      {!tracked || derived ? (
                         <StatusBadge status={ep.status} />
                       ) : (
                         <select
@@ -410,7 +444,7 @@ export default function ShowDetail({
                     </div>
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <div className="toolbar" style={{ justifyContent: 'flex-end', gap: 6 }}>
+                    {tracked && <div className="toolbar" style={{ justifyContent: 'flex-end', gap: 6 }}>
                       {ep.status === 'downloaded' && (
                         <button
                           onClick={() => openSearch(ep)}
@@ -432,7 +466,7 @@ export default function ShowDetail({
                       >
                         Get
                       </button>
-                    </div>
+                    </div>}
                   </td>
                 </tr>
               );

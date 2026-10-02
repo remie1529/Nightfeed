@@ -381,7 +381,8 @@ button.upcoming-poster-btn:hover:not(:disabled) {
   background: transparent;
 }
 
-.upcoming-card-title {
+.upcoming-card-title,
+button.upcoming-card-title {
   font-weight: 650;
   font-size: 0.82rem;
   line-height: 1.25;
@@ -390,6 +391,21 @@ button.upcoming-poster-btn:hover:not(:disabled) {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+button.upcoming-card-title {
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: var(--text);
+  width: 100%;
+}
+
+button.upcoming-card-title:hover:not(:disabled) {
+  border: none;
+  background: transparent;
+  color: var(--accent);
 }
 
 .upcoming-card-meta {
@@ -401,7 +417,7 @@ button.upcoming-poster-btn:hover:not(:disabled) {
   min-height: 1em;
 }
 
-.upcoming-card > button {
+.upcoming-card > button:last-child {
   width: 100%;
   margin-top: auto;
 }
