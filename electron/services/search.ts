@@ -1866,10 +1866,18 @@ export async function searchMovieTorrents(
     ? cleaned.filter((r) => titleMatchesMovieYear(r.title || '', year))
     : cleaned;
   const yearFiltered = cleaned.length - yearPool.length;
-  const ranked = rankResults(yearPool, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
+  const titled = yearPool.filter((r) => titleMatchesShow(r.title || '', title));
+  const titleFiltered = yearPool.length - titled.length;
+  const ranked = rankResults(titled, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
-  return { results: ranked, query, error, yearFiltered: yearFiltered || undefined };
+  return {
+    results: ranked,
+    query,
+    error,
+    yearFiltered: yearFiltered || undefined,
+    titleFiltered: titleFiltered || undefined,
+  };
 }
 
 /** Keep a torrent only when its title year is the movie's release year. */

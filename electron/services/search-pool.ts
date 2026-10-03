@@ -171,7 +171,7 @@ export async function searchMovieTorrents(
   title: string,
   year: number | null | undefined,
   preferred: Resolution
-): Promise<{ results: SearchResult[]; query: string; error?: string }> {
+): Promise<{ results: SearchResult[]; query: string; error?: string; yearFiltered?: number; titleFiltered?: number }> {
   await ensurePool();
   if (!useWorkers || pool.length === 0) {
     return searchMovieDirect(settings, title, year, preferred);
