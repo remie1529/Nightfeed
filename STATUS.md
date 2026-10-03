@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.16 — Movie Find keeps only torrents for that film.
+**Current:** v2.4.17 — Movie Find requires the whole film title, not one shared word.
+
+# Status v2.4.17
+
+## Fixed
+- Movie search drops longer or different titles that only share a word with the film
 
 # Status v2.4.16
 

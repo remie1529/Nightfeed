@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.17
+
+### Fixed
+- Movie Find requires the whole film title. A torrent that only contains one word of the name, such as "Beast Race" or "Heart of the Beast" for "The Beast", is dropped
+
 ## 2.4.16
 
 ### Fixed
