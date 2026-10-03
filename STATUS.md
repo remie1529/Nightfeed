@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.15 — Trailer button plays inside the show and movie screens.
+**Current:** v2.4.16 — Movie Find keeps only torrents for that film.
+
+# Status v2.4.16
+
+## Fixed
+- Movie search no longer lists other films that merely share the release year
 
 # Status v2.4.15
 

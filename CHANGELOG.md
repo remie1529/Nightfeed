@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.16
+
+### Fixed
+- Movie Find drops torrents for a different film, even when the year in the title matches
+
 ## 2.4.15
 
 ### Added
