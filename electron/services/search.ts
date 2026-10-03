@@ -1866,7 +1866,7 @@ export async function searchMovieTorrents(
     ? cleaned.filter((r) => titleMatchesMovieYear(r.title || '', year))
     : cleaned;
   const yearFiltered = cleaned.length - yearPool.length;
-  const titled = yearPool.filter((r) => titleMatchesShow(r.title || '', title));
+  const titled = yearPool.filter((r) => titleMatchesMovie(r.title || '', title));
   const titleFiltered = yearPool.length - titled.length;
   const ranked = rankResults(titled, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
@@ -1878,6 +1878,84 @@ export async function searchMovieTorrents(
     yearFiltered: yearFiltered || undefined,
     titleFiltered: titleFiltered || undefined,
   };
+}
+
+const MOVIE_RELEASE_WORDS = new Set([
+  '720p', '1080p', '2160p', '480p', '576p', '4k', 'uhd', 'hd', 'fhd', 'sd',
+  'hdr', 'hdr10', 'dv', 'dovi', 'hlg',
+  'bluray', 'bdrip', 'brrip', 'bdremux', 'remux', 'web', 'webrip', 'webdl', 'webcap',
+  'hdrip', 'dvdrip', 'dvdscr', 'hdtv', 'hdts', 'telesync', 'cam', 'camrip', 'screener',
+  'scr', 'dvd', 'ppv', 'ppvrip', 'hdcam', 'hdtc', 'proper', 'repack', 'rerip',
+  'extended', 'unrated', 'theatrical', 'imax', 'remastered', 'uncut',
+  'x264', 'x265', 'h264', 'h265', 'hevc', 'avc', 'xvid', 'divx', 'av1', '10bit', '8bit',
+  'aac', 'ac3', 'eac3', 'ddp', 'dd', 'dts', 'dtshd', 'atmos', 'truehd', 'flac', 'mp3', 'opus',
+  'mkv', 'mp4', 'avi', 'm4v',
+  'multi', 'sub', 'subs', 'subbed', 'dubbed', 'dual',
+  'eng', 'english', 'hindi', 'telugu', 'esp', 'spanish', 'latino', 'castellano',
+  'french', 'german', 'italian', 'portuguese', 'russian', 'korean', 'japanese', 'chinese',
+  'tamil', 'malayalam', 'kannada',
+  'hq', 'amzn', 'amazon', 'nf', 'netflix', 'dsnp', 'hmax', 'atvp', 'hulu', 'yts', 'yify',
+  'rarbg', 'ettv', 'eztv', 'dl', 'rip', 'mux', 'pre',
+]);
+
+function isMovieReleaseToken(token: string): boolean {
+  if (MOVIE_RELEASE_WORDS.has(token)) return true;
+  if (/^(19|20)\d{2}$/.test(token)) return true;
+  if (/^(480|576|720|1080|2160)p?$/.test(token)) return true;
+  if (/^[hx]26[45]$/.test(token)) return true;
+  if (/^ddp?\d*$/.test(token)) return true;
+  if (/^dd\d*$/.test(token)) return true;
+  return false;
+}
+
+/** Title words only: drop brackets, alternate-title parentheses, years, and release tags. */
+function movieTitleTokens(text: string, protect: Set<string> = new Set()): string[] {
+  const cleaned = (text || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\((?!\d{4}\))[^)]*\)/g, ' ')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const articles = new Set(['the', 'a', 'an']);
+  return cleaned.split(' ').filter((token) => {
+    if (!token) return false;
+    if (protect.has(token)) return true;
+    if (articles.has(token)) return false;
+    if (isMovieReleaseToken(token)) return false;
+    if (/^\d{1,2}$/.test(token)) return false;
+    if (token.length === 1) return false;
+    return true;
+  });
+}
+
+/** Words in the film's name. Articles are ignored. Nothing else is. */
+function movieNameTokens(text: string): string[] {
+  const cleaned = (text || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const articles = new Set(['the', 'a', 'an']);
+  return cleaned.split(' ').filter((token) => token && !articles.has(token));
+}
+
+/**
+ * The torrent must be this film. A shared word is not enough:
+ * "Beast Race" and "Heart of the Beast" are not "The Beast".
+ */
+export function titleMatchesMovie(torrentTitle: string, movieTitle: string): boolean {
+  const name = (movieTitle || '').trim();
+  if (!name) return false;
+  if (/\bS\d{1,3}E\d{1,3}\b/i.test(torrentTitle || '')) return false;
+  if (/\b(season\s+\d+|complete\s+(series|season))\b/i.test(torrentTitle || '')) return false;
+  const expected = movieNameTokens(name);
+  if (!expected.length) return false;
+  const got = movieTitleTokens(torrentTitle, new Set(expected));
+  if (got.length !== expected.length) return false;
+  return got.every((token, i) => token === expected[i]);
 }
 
 /** Keep a torrent only when its title year is the movie's release year. */
