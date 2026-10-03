@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.18
+
+### Fixed
+- Movie Find keeps a torrent only when the name is this film or an IMDb alternate title. A translation in parentheses, such as "Beast (La Bestia)", is dropped unless IMDb lists that name
+- A full date or month in the torrent must be near this film's real release date. A wrong IMDb id in the name is dropped
+
 ## 2.4.17
 
 ### Fixed

@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.17 — Movie Find requires the whole film title, not one shared word.
+**Current:** v2.4.18 — Movie Find checks the film's real name, alternate titles, and release date.
+
+# Status v2.4.18
+
+## Fixed
+- Movie search drops other films that share a word, a year, or a made-up translation
+- A date in the torrent name has to sit near this film's release date
 
 # Status v2.4.17
 

@@ -29,6 +29,7 @@ export type SearchWorkerRequest =
       title: string;
       year: number | null | undefined;
       preferred: Resolution;
+      hints?: { imdbId?: string | null; releaseDate?: string | null };
     }
   | {
       id: number;
@@ -68,7 +69,8 @@ async function handle(msg: SearchWorkerRequest): Promise<SearchWorkerResponse> {
         msg.settings,
         msg.title,
         msg.year,
-        msg.preferred
+        msg.preferred,
+        msg.hints
       );
       return { id: msg.id, ok: true, result };
     }
