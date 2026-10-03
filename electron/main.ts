@@ -3451,9 +3451,16 @@ function registerIpc() {
       {
         sourcesHit: sourcesInResults(res.results),
         dateFiltered: res.dateFiltered || 0,
+        blockFiltered: res.blockFiltered || 0,
         error: res.error || '',
       }
     );
+    if (res.blockFiltered && res.blockFiltered > 0) {
+      activityLog.info(
+        'search',
+        `Dropped ${res.blockFiltered} TV torrent(s) matching the block list for ${show.name} S${pad2(season)}E${pad2(episode)}`
+      );
+    }
     if (res.dateFiltered && res.dateFiltered > 0) {
       activityLog.info(
         'search',
@@ -3745,8 +3752,15 @@ function registerIpc() {
         error: res.error || '',
         yearFiltered: res.yearFiltered || 0,
         titleFiltered: res.titleFiltered || 0,
+        blockFiltered: res.blockFiltered || 0,
       }
     );
+    if (res.blockFiltered && res.blockFiltered > 0) {
+      activityLog.info(
+        'search',
+        `Dropped ${res.blockFiltered} movie torrent(s) matching the block list for ${movie.title}`
+      );
+    }
     if (res.yearFiltered && res.yearFiltered > 0) {
       activityLog.info(
         'search',

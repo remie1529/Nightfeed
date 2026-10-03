@@ -101,6 +101,10 @@ export interface AppSettings {
   jackettApiKey: string;
   /** Minimum seeders for auto-download and best-torrent pick (default 8). */
   minSeeders: number;
+  /** Phrases removed from TV torrent results. One per line or comma. */
+  torrentBlockTv: string;
+  /** Phrases removed from movie torrent results. One per line or comma. */
+  torrentBlockMovies: string;
   autoDownload: boolean;
   autoDownloadDelayMinutes: number;
   launchOnStartup: boolean;

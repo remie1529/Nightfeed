@@ -1663,7 +1663,7 @@ export async function searchEpisodeTorrents(
   episode: number,
   preferred: Resolution,
   opts: SearchEpisodeOpts = {}
-): Promise<{ results: SearchResult[]; query: string; error?: string; dateFiltered?: number }> {
+): Promise<{ results: SearchResult[]; query: string; error?: string; dateFiltered?: number; blockFiltered?: number }> {
   const query = buildQuery(showName, season, episode);
   const airDay = utcDay(opts.airDate);
   const today = new Date().toISOString().slice(0, 10);
@@ -1758,7 +1758,9 @@ export async function searchEpisodeTorrents(
   );
   // Never fall back to unfiltered merge — wrong episodes must not appear in Find / auto-download.
   const { kept: dated, removed: dateFiltered } = filterResultsByAirDate(episodeOnly, opts.airDate);
-  const ranked = rankResults(dated, preferred, showName, settings.minSeeders ?? MIN_AUTO_SEEDERS);
+  const visible = dated.filter((r) => !torrentTitleBlocked(r.title || '', settings.torrentBlockTv));
+  const blockFiltered = dated.length - visible.length;
+  const ranked = rankResults(visible, preferred, showName, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const parts: string[] = [];
   if (errors.length > 0) parts.push(errors.join(' | '));
   if (dateFiltered > 0) parts.push(`Dropped ${dateFiltered} pre-air torrent(s)`);
@@ -1767,7 +1769,7 @@ export async function searchEpisodeTorrents(
   }
   const error = parts.length > 0 ? parts.join(' | ') : undefined;
 
-  return { results: ranked, query, error, dateFiltered: dateFiltered || undefined };
+  return { results: ranked, query, error, dateFiltered: dateFiltered || undefined, blockFiltered: blockFiltered || undefined };
 }
 
 export function buildMovieQuery(title: string, year?: number | null): string {
@@ -1876,7 +1878,9 @@ export async function searchMovieTorrents(
   const identity = await movieMatchContext(title, hints);
   const titled = yearPool.filter((r) => titleMatchesMovie(r.title || '', title, identity));
   const titleFiltered = yearPool.length - titled.length;
-  const ranked = rankResults(titled, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
+  const visible = titled.filter((r) => !torrentTitleBlocked(r.title || '', settings.torrentBlockMovies));
+  const blockFiltered = titled.length - visible.length;
+  const ranked = rankResults(visible, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
 
   return {
@@ -1885,7 +1889,25 @@ export async function searchMovieTorrents(
     error,
     yearFiltered: yearFiltered || undefined,
     titleFiltered: titleFiltered || undefined,
+    blockFiltered: blockFiltered || undefined,
   };
+}
+
+/** User block list: one phrase per line or comma. Case-insensitive. */
+export function torrentTitleBlocked(title: string, list: string | undefined): boolean {
+  const raw = list || '';
+  if (!raw.trim() || !title) return false;
+  for (const part of raw.split(/[\n,]/)) {
+    const term = part.trim().toLowerCase();
+    if (term.length < 2) continue;
+    if (term.includes(' ')) {
+      if (title.toLowerCase().includes(term)) return true;
+      continue;
+    }
+    const re = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(term)}(?:[^a-z0-9]|$)`, 'i');
+    if (re.test(title)) return true;
+  }
+  return false;
 }
 
 const MOVIE_RELEASE_WORDS = new Set([
@@ -1979,13 +2001,6 @@ function acceptedSequences(titles: string[]): string[][] {
   };
   const lists = titles.map(movieNameTokens).filter((tokens) => tokens.length);
   for (const tokens of lists) add(tokens);
-  const primary = lists[0];
-  if (primary) {
-    for (const aka of lists.slice(1)) {
-      add([...primary, ...aka]);
-      add([...aka, ...primary]);
-    }
-  }
   return sequences;
 }
 

@@ -651,6 +651,33 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
           </div>
         </div>
 
+        <div className="field" style={{ gridColumn: '1 / -1' }}>
+          <label>Remove from TV show results</label>
+          <textarea
+            rows={4}
+            placeholder={'One word or phrase per line\ncam\nhindi'}
+            value={settings.torrentBlockTv || ''}
+            onChange={(e) => setLocal({ ...settings, torrentBlockTv: e.target.value })}
+          />
+          <div className="hint">
+            Any TV torrent whose name contains one of these is hidden from Find and from auto-download.
+          </div>
+        </div>
+
+        <div className="field" style={{ gridColumn: '1 / -1' }}>
+          <label>Remove from movie results</label>
+          <textarea
+            rows={4}
+            placeholder={'One word or phrase per line\ncastellano\nlektor\nverpeliculas\na la carrera'}
+            value={settings.torrentBlockMovies || ''}
+            onChange={(e) => setLocal({ ...settings, torrentBlockMovies: e.target.value })}
+          />
+          <div className="hint">
+            Any movie torrent whose name contains one of these is hidden from Find and from auto-download.
+            Use this for dubbed tags and site names that are not the film.
+          </div>
+        </div>
+
         <div className="field">
           <label>Minimum file size for TV shows (MB)</label>
           <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
