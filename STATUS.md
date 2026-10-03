@@ -1,6 +1,15 @@
 # Nightfeed status
 
-**Current:** v2.4.18 — Movie Find checks the film's real name, alternate titles, and release date.
+**Current:** v2.4.19 — Separate block lists hide unwanted TV and movie torrents.
+
+# Status v2.4.19
+
+## Added
+- Remove from TV show results
+- Remove from movie results
+
+## Fixed
+- A parenthetical translation is no longer accepted just because it is glued to the film name
 
 # Status v2.4.18
 

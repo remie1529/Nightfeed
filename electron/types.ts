@@ -128,6 +128,10 @@ export interface AppSettings {
   jackettApiKey: string;
   /** Minimum seeders required for auto-download / best-torrent pick (default 8). */
   minSeeders: number;
+  /** Phrases removed from TV torrent results. One per line or comma. */
+  torrentBlockTv: string;
+  /** Phrases removed from movie torrent results. One per line or comma. */
+  torrentBlockMovies: string;
   /** Automatically search + download missing/aired episodes after each refresh. */
   autoDownload: boolean;
   /** Optional pause between auto-started downloads (minutes). 0 = no extra delay. */
@@ -567,6 +571,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   jackettUrl: 'http://127.0.0.1:9117',
   jackettApiKey: '',
   minSeeders: 8,
+  torrentBlockTv: '',
+  torrentBlockMovies: '',
   autoDownload: true,
   autoDownloadDelayMinutes: 0,
   launchOnStartup: false,

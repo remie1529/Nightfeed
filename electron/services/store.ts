@@ -202,6 +202,8 @@ export function getSettings(): AppSettings {
   if (typeof merged.liveTvFakeEpgMissing !== 'boolean') merged.liveTvFakeEpgMissing = true;
   if (!merged.liveTvFakeEpgMinutes || merged.liveTvFakeEpgMinutes < 15) merged.liveTvFakeEpgMinutes = 60;
   if (!merged.liveTvFakeEpgDays || merged.liveTvFakeEpgDays < 1) merged.liveTvFakeEpgDays = 2;
+  if (typeof merged.torrentBlockTv !== 'string') merged.torrentBlockTv = '';
+  if (typeof merged.torrentBlockMovies !== 'string') merged.torrentBlockMovies = '';
   if (typeof merged.minSeeders !== 'number' || !Number.isFinite(merged.minSeeders) || merged.minSeeders < 0) {
     merged.minSeeders = 8;
   } else {

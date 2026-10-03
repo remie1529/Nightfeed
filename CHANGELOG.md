@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.4.19
+
+### Added
+- Settings has two block lists: one removes matching torrents from TV results, one from movie results
+- A phrase matches the torrent name and is hidden from Find and from auto-download
+
+### Fixed
+- A translation stuck on the title, such as "The Runner (A la carrera)", is no longer treated as the film unless that whole name is the title
+
 ## 2.4.18
 
 ### Fixed
