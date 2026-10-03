@@ -13,7 +13,7 @@ import {
   extractInfoHash,
 } from './search';
 import type { AppSettings, Resolution, SearchResult } from '../types';
-import type { SearchEpisodeOpts } from './search';
+import type { MovieSearchHints, SearchEpisodeOpts } from './search';
 
 const POOL_SIZE = Math.max(1, Math.min(4, os.cpus()?.length || 1));
 const WORKER_PATH = resolveDistElectronAsset('search-worker.js');
@@ -170,11 +170,12 @@ export async function searchMovieTorrents(
   settings: AppSettings,
   title: string,
   year: number | null | undefined,
-  preferred: Resolution
+  preferred: Resolution,
+  hints?: MovieSearchHints
 ): Promise<{ results: SearchResult[]; query: string; error?: string; yearFiltered?: number; titleFiltered?: number }> {
   await ensurePool();
   if (!useWorkers || pool.length === 0) {
-    return searchMovieDirect(settings, title, year, preferred);
+    return searchMovieDirect(settings, title, year, preferred, hints);
   }
   try {
     return await runOnPool({
@@ -183,9 +184,10 @@ export async function searchMovieTorrents(
       title,
       year,
       preferred,
+      hints,
     });
   } catch {
-    return searchMovieDirect(settings, title, year, preferred);
+    return searchMovieDirect(settings, title, year, preferred, hints);
   }
 }
 

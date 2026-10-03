@@ -877,7 +877,8 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
             settings,
             movie.title,
             movie.releaseYear,
-            preferred
+            preferred,
+            { imdbId: movie.imdbId, releaseDate: movie.releaseDate }
           );
           candidates = toHealthyPreferredCandidates(
             filterResultsSkippingTried(res.results, tried),
@@ -1506,7 +1507,8 @@ async function autoDownloadMovie(
     settings,
     movie.title,
     movie.releaseYear,
-    preferred
+    preferred,
+    { imdbId: movie.imdbId, releaseDate: movie.releaseDate }
   );
   const rules = qualityRules('movie', preferred);
   const triedList = loadTriedForMovie(movie.tmdbId);
@@ -3732,7 +3734,8 @@ function registerIpc() {
       settings,
       movie.title,
       movie.releaseYear,
-      preferred
+      preferred,
+      { imdbId: movie.imdbId, releaseDate: movie.releaseDate }
     );
     activityLog.info(
       'search',
@@ -3753,7 +3756,7 @@ function registerIpc() {
     if (res.titleFiltered && res.titleFiltered > 0) {
       activityLog.info(
         'search',
-        `Dropped ${res.titleFiltered} torrent(s) that are not "${movie.title}"`
+        `Dropped ${res.titleFiltered} torrent(s) that are not "${movie.title}" or not its release date`
       );
     }
     if (res.error && !res.results.length) {

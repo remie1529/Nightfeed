@@ -1,4 +1,5 @@
 import { AppSettings, Resolution, SearchResult, TorrentSourceId, DEFAULT_TORRENT_SOURCES } from '../types';
+import { loadMovieIdentity } from './movie-identity';
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -1775,12 +1776,18 @@ export function buildMovieQuery(title: string, year?: number | null): string {
   return t;
 }
 
+export interface MovieSearchHints {
+  imdbId?: string | null;
+  releaseDate?: string | null;
+}
+
 /** Movie torrent search — skips EZTV (TV-only); prefers movie categories where supported. */
 export async function searchMovieTorrents(
   settings: AppSettings,
   title: string,
   year: number | null | undefined,
-  preferred: Resolution
+  preferred: Resolution,
+  hints?: MovieSearchHints
 ): Promise<{ results: SearchResult[]; query: string; error?: string }> {
   const query = buildMovieQuery(title, year);
   const sources = enabledTorrentSources(settings).filter((id) => id !== 'eztv');
@@ -1866,7 +1873,8 @@ export async function searchMovieTorrents(
     ? cleaned.filter((r) => titleMatchesMovieYear(r.title || '', year))
     : cleaned;
   const yearFiltered = cleaned.length - yearPool.length;
-  const titled = yearPool.filter((r) => titleMatchesMovie(r.title || '', title));
+  const identity = await movieMatchContext(title, hints);
+  const titled = yearPool.filter((r) => titleMatchesMovie(r.title || '', title, identity));
   const titleFiltered = yearPool.length - titled.length;
   const ranked = rankResults(titled, preferred, undefined, settings.minSeeders ?? MIN_AUTO_SEEDERS);
   const error = errors.length > 0 ? errors.join(' | ') : undefined;
@@ -1908,29 +1916,20 @@ function isMovieReleaseToken(token: string): boolean {
   return false;
 }
 
-/** Title words only: drop brackets, alternate-title parentheses, years, and release tags. */
-function movieTitleTokens(text: string, protect: Set<string> = new Set()): string[] {
-  const cleaned = (text || '')
-    .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/\((?!\d{4}\))[^)]*\)/g, ' ')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const articles = new Set(['the', 'a', 'an']);
-  return cleaned.split(' ').filter((token) => {
-    if (!token) return false;
-    if (protect.has(token)) return true;
-    if (articles.has(token)) return false;
-    if (isMovieReleaseToken(token)) return false;
-    if (/^\d{1,2}$/.test(token)) return false;
-    if (token.length === 1) return false;
-    return true;
-  });
+const MONTH_INDEX: Record<string, number> = {
+  january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+  may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8,
+  september: 9, sep: 9, sept: 9, october: 10, oct: 10, november: 11, nov: 11,
+  december: 12, dec: 12,
+};
+
+export interface MovieMatchContext {
+  titles: string[];
+  imdbId?: string | null;
+  releaseDates: string[];
 }
 
-/** Words in the film's name. Articles are ignored. Nothing else is. */
+/** Words in a film name. Leading articles are ignored. Parentheses stay. */
 function movieNameTokens(text: string): string[] {
   const cleaned = (text || '')
     .toLowerCase()
@@ -1942,20 +1941,167 @@ function movieNameTokens(text: string): string[] {
   return cleaned.split(' ').filter((token) => token && !articles.has(token));
 }
 
+/** Title words left after release tags. Unknown parentheses are kept, so "(La Bestia)" still counts. */
+function movieTitleTokens(text: string, protect: Set<string>): string[] {
+  const cleaned = (text || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const articles = new Set(['the', 'a', 'an']);
+  return cleaned.split(' ').filter((token) => {
+    if (!token) return false;
+    if (protect.has(token)) return true;
+    if (articles.has(token)) return false;
+    if (MONTH_INDEX[token]) return false;
+    if (isMovieReleaseToken(token)) return false;
+    if (/^\d{1,2}$/.test(token)) return false;
+    if (token.length === 1) return false;
+    return true;
+  });
+}
+
+function sameTokens(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((token, i) => token === b[i]);
+}
+
+function acceptedSequences(titles: string[]): string[][] {
+  const sequences: string[][] = [];
+  const seen = new Set<string>();
+  const add = (tokens: string[]) => {
+    if (!tokens.length) return;
+    const key = tokens.join(' ');
+    if (seen.has(key)) return;
+    seen.add(key);
+    sequences.push(tokens);
+  };
+  const lists = titles.map(movieNameTokens).filter((tokens) => tokens.length);
+  for (const tokens of lists) add(tokens);
+  const primary = lists[0];
+  if (primary) {
+    for (const aka of lists.slice(1)) {
+      add([...primary, ...aka]);
+      add([...aka, ...primary]);
+    }
+  }
+  return sequences;
+}
+
+function imdbIdsInTitle(title: string): string[] {
+  return [...title.matchAll(/\btt(\d{7,8})\b/gi)].map((m) => `tt${m[1]}`);
+}
+
+function torrentFullDates(title: string): string[] {
+  const found: string[] = [];
+  const add = (year: number, month: number, day: number) => {
+    if (month < 1 || month > 12 || day < 1 || day > 31) return;
+    const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const check = new Date(`${iso}T00:00:00Z`);
+    if (check.getUTCFullYear() !== year || check.getUTCMonth() + 1 !== month || check.getUTCDate() !== day) return;
+    found.push(iso);
+  };
+  const ymd = /\b((?:19|20)\d{2})[.\-_/ ](\d{1,2})[.\-_/ ](\d{1,2})\b/g;
+  const dmy = /\b(\d{1,2})[.\-_/](\d{1,2})[.\-_/]((?:19|20)\d{2})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = ymd.exec(title))) add(Number(m[1]), Number(m[2]), Number(m[3]));
+  while ((m = dmy.exec(title))) add(Number(m[3]), Number(m[2]), Number(m[1]));
+  return [...new Set(found)];
+}
+
+function torrentMonths(title: string): number[] {
+  const months: number[] = [];
+  const re = new RegExp(`\\b(${Object.keys(MONTH_INDEX).join('|')})\\b`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(title))) {
+    const month = MONTH_INDEX[m[1].toLowerCase()];
+    if (month) months.push(month);
+  }
+  return [...new Set(months)];
+}
+
+function daysApart(a: string, b: string): number {
+  const left = Date.parse(`${a}T00:00:00Z`);
+  const right = Date.parse(`${b}T00:00:00Z`);
+  return Math.abs(left - right) / 86400000;
+}
+
+function usableReleaseDate(iso: string | null | undefined): string | null {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  if (iso.endsWith('-01-01')) return null;
+  return iso;
+}
+
+async function movieMatchContext(title: string, hints?: MovieSearchHints): Promise<MovieMatchContext> {
+  const titles = [title];
+  const releaseDates: string[] = [];
+  const stored = usableReleaseDate(hints?.releaseDate);
+  if (stored) releaseDates.push(stored);
+  const imdbId = (hints?.imdbId || '').trim();
+  if (imdbId) {
+    try {
+      const identity = await loadMovieIdentity(imdbId);
+      if (identity) {
+        titles.push(...identity.titles);
+        releaseDates.push(...identity.releaseDates);
+      }
+    } catch {
+      // Title and the stored release date still apply.
+    }
+  }
+  return {
+    titles: [...new Set(titles.map((name) => name.trim()).filter(Boolean))],
+    imdbId: imdbId || null,
+    releaseDates: [...new Set(releaseDates)],
+  };
+}
+
+function releaseDateAgrees(torrentTitle: string, releaseDates: string[]): boolean {
+  if (!releaseDates.length) return true;
+  const dated = torrentFullDates(torrentTitle);
+  if (dated.length && !dated.every((iso) => releaseDates.some((known) => daysApart(iso, known) <= 120))) {
+    return false;
+  }
+  const months = torrentMonths(torrentTitle);
+  if (!months.length) return true;
+  const allowed = new Set<number>();
+  for (const iso of releaseDates) {
+    const month = Number(iso.slice(5, 7));
+    allowed.add(month);
+    allowed.add(month === 12 ? 1 : month + 1);
+  }
+  return months.every((month) => allowed.has(month));
+}
+
 /**
- * The torrent must be this film. A shared word is not enough:
- * "Beast Race" and "Heart of the Beast" are not "The Beast".
+ * The torrent must be this film, not another film that shares a word or a year.
+ * "(La Bestia)" is a different title unless IMDb lists it as an alternate name.
+ * A full date in the torrent must sit near this film's real release date.
  */
-export function titleMatchesMovie(torrentTitle: string, movieTitle: string): boolean {
+export function titleMatchesMovie(
+  torrentTitle: string,
+  movieTitle: string,
+  context?: MovieMatchContext
+): boolean {
+  const raw = torrentTitle || '';
   const name = (movieTitle || '').trim();
   if (!name) return false;
-  if (/\bS\d{1,3}E\d{1,3}\b/i.test(torrentTitle || '')) return false;
-  if (/\b(season\s+\d+|complete\s+(series|season))\b/i.test(torrentTitle || '')) return false;
-  const expected = movieNameTokens(name);
-  if (!expected.length) return false;
-  const got = movieTitleTokens(torrentTitle, new Set(expected));
-  if (got.length !== expected.length) return false;
-  return got.every((token, i) => token === expected[i]);
+  if (/\bS\d{1,3}E\d{1,3}\b/i.test(raw)) return false;
+  if (/\b(season\s+\d+|complete\s+(series|season)|trilogy|duology|collection|double feature)\b/i.test(raw)) {
+    return false;
+  }
+  const wantedId = (context?.imdbId || '').trim().toLowerCase();
+  const foundIds = imdbIdsInTitle(raw);
+  if (wantedId && foundIds.length && !foundIds.some((id) => id.toLowerCase() === wantedId)) return false;
+
+  const titles = context?.titles?.length ? context.titles : [name];
+  const sequences = acceptedSequences(titles);
+  if (!sequences.length) return false;
+  const protect = new Set(sequences.flat());
+  const got = movieTitleTokens(raw.replace(/\btt\d{7,8}\b/gi, ' '), protect);
+  if (!sequences.some((expected) => sameTokens(got, expected))) return false;
+  return releaseDateAgrees(raw, context?.releaseDates || []);
 }
 
 /** Keep a torrent only when its title year is the movie's release year. */

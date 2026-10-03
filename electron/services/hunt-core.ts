@@ -680,7 +680,8 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
         settings,
         movie.title,
         movie.releaseYear,
-        preferred
+        preferred,
+        { imdbId: movie.imdbId, releaseDate: movie.releaseDate }
       );
       const triedKey = triedMovieKey(movie.tmdbId);
       const triedList = triedListFor(triedMap, triedKey);
