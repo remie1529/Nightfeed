@@ -18,6 +18,8 @@ export type TorrentSourceId =
   | 'apibay'
   | 'knaben'
   | 'yourbittorrent'
+  | 'torrentfunk'
+  | 'torrentz'
   | 'torrentscsv'
   | 'eztv'
   | 'yts'
@@ -42,6 +44,8 @@ export interface TorrentSources {
   apibay: boolean;
   knaben: boolean;
   yourbittorrent: boolean;
+  torrentfunk: boolean;
+  torrentz: boolean;
   torrentscsv: boolean;
   eztv: boolean;
   yts: boolean;
@@ -475,6 +479,8 @@ export const DEFAULT_TORRENT_SOURCES: TorrentSources = {
   apibay: true,
   knaben: true,
   yourbittorrent: true,
+  torrentfunk: true,
+  torrentz: true,
   torrentscsv: true,
   eztv: true,
   yts: true,

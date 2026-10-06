@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.20
+
+### Added
+- TorrentFunk search, using its public JSON API
+- Torrentz search, using its RSS feed. Each result includes an info hash
+
 ## 2.4.19
 
 ### Added
