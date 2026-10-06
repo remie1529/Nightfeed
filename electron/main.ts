@@ -122,7 +122,6 @@ import {
   type FolderScanImportResult,
   type LibraryScanScope,
 } from './services/library-scan';
-import { loadUpcomingPicks } from './services/upcoming';
 import {
   AddShowPolicy,
   AppSettings,
@@ -139,7 +138,6 @@ import {
   LiveTvChannel,
   TelegramRequest,
   TorrentCandidate,
-  UpcomingItem,
   UpdateStatus,
   VpnStatus,
 } from './types';
@@ -3062,30 +3060,6 @@ function registerIpc() {
     );
   });
 
-  ipcMain.handle('library:preview', async (_e, mazeId: number) => {
-    const id = Number(mazeId);
-    if (!Number.isFinite(id) || id <= 0) throw new Error('Unknown show');
-    const settings = getSettings();
-    const existing = getShows().find((s) => s.tmdbId === id);
-    if (existing) {
-      return applyLocalStatuses(
-        existing,
-        settings.libraryRoot,
-        downloadingKeys(),
-        tvRoots(settings),
-        episodeMetaMaps()
-      );
-    }
-    return fetchShowDetail(
-      id,
-      settings.libraryRoot || '',
-      undefined,
-      downloadingKeys(),
-      tvRoots(settings),
-      episodeMetaMaps()
-    );
-  });
-
   ipcMain.handle('library:add', async (_e, mazeId: number, policy?: AddShowPolicy) => {
     const show = await addShowWithPolicy(mazeId, policy || 'manual');
     activityLog.info('library', `Added show: ${show?.name || mazeId}`, {
@@ -3293,19 +3267,6 @@ function registerIpc() {
   });
 
   ipcMain.handle('library:calendar', (_e, from: string, to: string) => listCalendarEpisodes(from, to));
-  ipcMain.handle('library:upcoming', async () => {
-    const feed = await loadUpcomingPicks();
-    const showIds = new Set(getShows().map((s) => s.tmdbId));
-    const movieIds = new Set(getMovies().map((m) => m.tmdbId));
-    const items: UpcomingItem[] = feed.items.map((item) => ({
-      ...item,
-      inLibrary: item.kind === 'show' ? showIds.has(item.id) : movieIds.has(item.id),
-    }));
-    if (feed.error) {
-      activityLog.warn('library', `Upcoming list incomplete: ${feed.error}`);
-    }
-    return { items, error: feed.error };
-  });
 
   ipcMain.handle(
     'library:setEpisodeStatus',
@@ -3585,21 +3546,6 @@ function registerIpc() {
     const movie = getMovies().find((m) => m.tmdbId === tmdbId);
     if (!movie) return null;
     return withMovieLocalStatus(movie);
-  });
-
-  ipcMain.handle('movies:preview', async (_e, tmdbId: number) => {
-    const id = Number(tmdbId);
-    if (!Number.isFinite(id) || id <= 0) throw new Error('Unknown movie');
-    const existing = getMovies().find((m) => m.tmdbId === id);
-    if (existing) return withMovieLocalStatus(existing);
-    const settings = getSettings();
-    return fetchMovieDetail(
-      id,
-      settings.movieLibraryRoot || '',
-      null,
-      downloadingMovieIds(),
-      movieRoots(settings)
-    );
   });
 
   ipcMain.handle('media:trailer', async (_e, imdbId: string) => {
