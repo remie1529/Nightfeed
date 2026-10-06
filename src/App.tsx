@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import Library from './views/Library';
-import Upcoming from './views/Upcoming';
 import CalendarView from './views/Calendar';
 import ShowDetail from './views/ShowDetail';
 import Movies from './views/Movies';
@@ -14,7 +13,6 @@ import type { AppSettings, DownloadItem, UpdateStatus, VpnStatus } from './lib/t
 
 type View =
   | 'library'
-  | 'upcoming'
   | 'calendar'
   | 'movies'
   | 'downloads'
@@ -34,7 +32,6 @@ interface Toast {
 export default function App() {
   const [view, setView] = useState<View>('library');
   const [showBack, setShowBack] = useState<View>('library');
-  const [movieBack, setMovieBack] = useState<'movies' | 'upcoming'>('movies');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null);
   const [activeDownloads, setActiveDownloads] = useState(0);
@@ -155,9 +152,8 @@ export default function App() {
     setView('show');
   };
 
-  const openMovie = (movie: { tmdbId: number }, back: 'movies' | 'upcoming' = 'movies') => {
+  const openMovie = (movie: { tmdbId: number }) => {
     setSelectedMovieId(movie.tmdbId);
-    setMovieBack(back);
     setView('movie');
   };
 
@@ -177,25 +173,13 @@ export default function App() {
           Library
         </button>
         <button
-          className={`nav-item ${
-            view === 'upcoming' ||
-            (view === 'show' && showBack === 'upcoming') ||
-            (view === 'movie' && movieBack === 'upcoming')
-              ? 'active'
-              : ''
-          }`}
-          onClick={() => setView('upcoming')}
-        >
-          Upcoming
-        </button>
-        <button
           className={`nav-item ${view === 'calendar' || (view === 'show' && showBack === 'calendar') ? 'active' : ''}`}
           onClick={() => setView('calendar')}
         >
           Calendar
         </button>
         <button
-          className={`nav-item ${view === 'movies' || (view === 'movie' && movieBack === 'movies') ? 'active' : ''}`}
+          className={`nav-item ${view === 'movies' || view === 'movie' ? 'active' : ''}`}
           onClick={() => setView('movies')}
         >
           Movies
@@ -240,12 +224,6 @@ export default function App() {
             onRefreshDone={() => setLibraryKey((k) => k + 1)}
           />
         )}
-        {view === 'upcoming' && (
-          <Upcoming
-            onOpenShow={(id) => openShow(id, 'upcoming')}
-            onOpenMovie={(id) => openMovie({ tmdbId: id }, 'upcoming')}
-          />
-        )}
         {view === 'calendar' && (
           <CalendarView
             refreshToken={libraryKey}
@@ -255,8 +233,8 @@ export default function App() {
         {view === 'show' && selectedId != null && (
           <ShowDetail
             tmdbId={selectedId}
-            backLabel={showBack === 'upcoming' ? 'Upcoming' : showBack === 'calendar' ? 'Calendar' : 'Library'}
-            onBack={() => setView(showBack === 'calendar' || showBack === 'upcoming' ? showBack : 'library')}
+            backLabel={showBack === 'calendar' ? 'Calendar' : 'Library'}
+            onBack={() => setView(showBack === 'calendar' ? 'calendar' : 'library')}
             onRemoved={() => {
               setSelectedId(null);
               setView('library');
@@ -274,8 +252,8 @@ export default function App() {
         {view === 'movie' && selectedMovieId != null && (
           <MovieDetail
             tmdbId={selectedMovieId}
-            backLabel={movieBack === 'upcoming' ? 'Upcoming' : 'Movies'}
-            onBack={() => setView(movieBack === 'upcoming' ? 'upcoming' : 'movies')}
+            backLabel="Movies"
+            onBack={() => setView('movies')}
             onRemoved={() => {
               setSelectedMovieId(null);
               setView('movies');

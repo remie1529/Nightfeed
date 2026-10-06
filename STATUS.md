@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.20 — TorrentFunk and Torrentz are torrent sources.
+**Current:** v2.4.21 — The Upcoming tab is gone.
+
+# Status v2.4.21
+
+## Removed
+- Upcoming tab and its premiere list
 
 # Status v2.4.20
 
@@ -38,25 +43,6 @@
 ## Added
 - Trailer button on show and movie metadata
 - Playback stays inside Nightfeed
-
-# Status v2.4.14
-
-## Added
-- Upcoming posters and titles open the show or movie metadata screen before the title is tracked
-- Add from that screen
-
-# Status v2.4.13
-
-## Changed
-- Upcoming series and movies are horizontal poster rows
-- English rows come first, then other languages
-
-# Status v2.4.12
-
-## Added
-- Upcoming tab above Calendar for new series premieres and new movies
-- English titles first, then other languages
-- Add from the list, or open a title that is already in the library
 
 # Status v2.4.11
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.21
+
+### Removed
+- The Upcoming tab, and the premiere list that fed it
+
 ## 2.4.20
 
 ### Added
@@ -36,25 +41,6 @@
 ### Added
 - Trailer button on show and movie metadata screens
 - Plays the IMDb trailer in a player inside Nightfeed
-
-## 2.4.14
-
-### Added
-- Upcoming posters and titles open the metadata screen even when the show or movie is not in the library yet
-- Add from that screen. A series still keeps only episodes that have not aired
-
-## 2.4.13
-
-### Changed
-- Upcoming is horizontal poster rows: English series, English movies, then other languages
-- Each row scrolls sideways, with back and forward buttons
-
-## 2.4.12
-
-### Added
-- Upcoming tab, above Calendar, lists new series premieres and new movies for the next 90 days
-- English titles are listed first, then other languages
-- Add a series (only episodes that have not aired yet) or a movie straight from that list
 
 ## 2.4.11
 
