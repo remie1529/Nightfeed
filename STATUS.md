@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.19 — Separate block lists hide unwanted TV and movie torrents.
+**Current:** v2.4.20 — TorrentFunk and Torrentz are torrent sources.
+
+# Status v2.4.20
+
+## Added
+- TorrentFunk JSON search
+- Torrentz RSS search
 
 # Status v2.4.19
 

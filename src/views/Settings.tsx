@@ -9,6 +9,8 @@ const GENERAL_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; h
   { id: 'apibay', label: 'Apibay', hint: 'Pirate Bay JSON API' },
   { id: 'knaben', label: 'Knaben', hint: 'Meta-search JSON API' },
   { id: 'yourbittorrent', label: 'YourBittorrent', hint: 'Public search JSON' },
+  { id: 'torrentfunk', label: 'TorrentFunk', hint: 'Public search JSON' },
+  { id: 'torrentz', label: 'Torrentz', hint: 'Search RSS with info hashes' },
   { id: 'torrentscsv', label: 'Torrents.csv', hint: 'Open dump search API' },
   { id: 'eztv', label: 'EZTV', hint: 'TV via IMDb id' },
   { id: 'yts', label: 'YTS', hint: 'YIFY movie API' },

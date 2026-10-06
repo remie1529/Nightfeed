@@ -657,12 +657,18 @@ async function searchKnaben(query: string): Promise<SearchResult[]> {
   return results;
 }
 
-async function searchYourBittorrent(query: string, category = 'television'): Promise<SearchResult[]> {
+async function searchJsonIndex(
+  source: 'yourbittorrent' | 'torrentfunk',
+  origin: string,
+  label: string,
+  query: string,
+  category: string
+): Promise<SearchResult[]> {
   const url =
-    `https://yourbittorrent.com/api/search.json?q=${encodeURIComponent(query)}` +
+    `${origin}/api/search.json?q=${encodeURIComponent(query)}` +
     `&category=${encodeURIComponent(category)}&limit=50&sort=seeds`;
   const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`YourBittorrent HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
   const data = (await res.json()) as {
     results?: Array<{
       name?: string;
@@ -679,7 +685,7 @@ async function searchYourBittorrent(query: string, category = 'television'): Pro
   for (const item of data.results || []) {
     const title = item.name || '';
     const hash = (item.infohash || extractInfoHash(item.magnet || '')).toLowerCase();
-    if (!title || !hash) continue;
+    if (!title || !/^[a-f0-9]{40}$/.test(hash)) continue;
     const magnet =
       item.magnet && item.magnet.startsWith('magnet:')
         ? item.magnet
@@ -690,10 +696,60 @@ async function searchYourBittorrent(query: string, category = 'television'): Pro
       size: item.size_bytes || 0,
       seeders: item.seeds || 0,
       leechers: Math.max(0, (item.peers || 0) - (item.seeds || 0)),
-      source: 'yourbittorrent',
+      source,
       resolution: detectResolution(title),
       infoHash: hash,
       publishedAt: parsePublishedAt(item.added_iso || item.added),
+    });
+  }
+  return results;
+}
+
+async function searchYourBittorrent(query: string, category = 'television'): Promise<SearchResult[]> {
+  return searchJsonIndex('yourbittorrent', 'https://yourbittorrent.com', 'YourBittorrent', query, category);
+}
+
+async function searchTorrentFunk(query: string, category: string): Promise<SearchResult[]> {
+  return searchJsonIndex('torrentfunk', 'https://www.torrentfunk.com', 'TorrentFunk', query, category);
+}
+
+/** Torrentz search feed. Each item's link and description carry a v1 info hash. */
+async function searchTorrentz(query: string, category: 'movies' | 'tv'): Promise<SearchResult[]> {
+  const url = `https://torrentz.cc/feed?q=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } },
+    20000
+  );
+  if (!res.ok) throw new Error(`Torrentz HTTP ${res.status}`);
+  const xml = await res.text();
+  const results: SearchResult[] = [];
+  for (const item of parseRssItems(xml)) {
+    const title = rssTag(item, 'title');
+    const cat = rssTag(item, 'category').toLowerCase();
+    if (category === 'movies' && cat && cat !== 'movies') continue;
+    if (category === 'tv' && cat && cat !== 'tv' && cat !== 'television' && cat !== 'anime') continue;
+    const desc = rssTag(item, 'description');
+    const link = rssTag(item, 'link') || rssTag(item, 'guid');
+    const hash = (
+      (desc.match(/\bHash:\s*([a-fA-F0-9]{40})\b/) || [])[1] ||
+      (link.match(/\/([a-fA-F0-9]{40})\/?$/) || [])[1] ||
+      ''
+    ).toLowerCase();
+    if (!title || !/^[a-f0-9]{40}$/.test(hash)) continue;
+    const sizeText = (desc.match(/\bSize:\s*([^S]*?)\s+Seeds:/i) || [])[1] || '';
+    const seeds = parseInt((desc.match(/\bSeeds:\s*(\d+)/i) || [])[1] || '0', 10);
+    const peers = parseInt((desc.match(/\bPeers:\s*(\d+)/i) || [])[1] || '0', 10);
+    results.push({
+      title,
+      magnet: buildMagnet(hash, title),
+      size: parseSizeToBytes(sizeText),
+      seeders: Number.isFinite(seeds) ? seeds : 0,
+      leechers: Number.isFinite(peers) ? peers : 0,
+      source: 'torrentz',
+      resolution: detectResolution(title),
+      infoHash: hash,
+      publishedAt: parsePublishedAt(rssTag(item, 'pubDate')),
     });
   }
   return results;
@@ -1621,6 +1677,8 @@ export function enabledTorrentSources(settings: AppSettings): TorrentSourceId[] 
     'apibay',
     'knaben',
     'yourbittorrent',
+    'torrentfunk',
+    'torrentz',
     'torrentscsv',
     'eztv',
     'yts',
@@ -1693,6 +1751,12 @@ export async function searchEpisodeTorrents(
   if (sources.includes('knaben')) runners.push(run('Knaben', () => searchKnaben(query)));
   if (sources.includes('yourbittorrent')) {
     runners.push(run('YourBittorrent', () => searchYourBittorrent(query)));
+  }
+  if (sources.includes('torrentfunk')) {
+    runners.push(run('TorrentFunk', () => searchTorrentFunk(query, 'television')));
+  }
+  if (sources.includes('torrentz')) {
+    runners.push(run('Torrentz', () => searchTorrentz(query, 'tv')));
   }
   if (sources.includes('torrentscsv')) {
     runners.push(run('TorrentsCSV', () => searchTorrentsCsv(query)));
@@ -1812,6 +1876,12 @@ export async function searchMovieTorrents(
   if (sources.includes('knaben')) runners.push(run('Knaben', () => searchKnaben(query)));
   if (sources.includes('yourbittorrent')) {
     runners.push(run('YourBittorrent', () => searchYourBittorrent(query, 'movies')));
+  }
+  if (sources.includes('torrentfunk')) {
+    runners.push(run('TorrentFunk', () => searchTorrentFunk(query, 'movies')));
+  }
+  if (sources.includes('torrentz')) {
+    runners.push(run('Torrentz', () => searchTorrentz(query, 'movies')));
   }
   if (sources.includes('torrentscsv')) {
     runners.push(run('TorrentsCSV', () => searchTorrentsCsv(query)));
