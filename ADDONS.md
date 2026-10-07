@@ -81,9 +81,18 @@ Lines are written to the activity log with category `addon`. Do not log password
 ### Pages
 
 - `api.ui.addPage({ id, title, html })` adds a page and a left-nav tab with that title. The id is unique inside this addon. The tab is there only while the addon is installed and turned on.
-- `api.ui.setPage(id, html)` replaces that page’s HTML. The Addons screen shows the new HTML.
+- `api.ui.setPage(id, html)` replaces that page’s HTML.
+- `api.ui.onAction(function (action, payload) { ... })` handles button clicks from that page. Return a value, or a promise, and the page receives it.
+- `api.ui.openShow(mazeId)` opens a show that is already in the library. Back returns to the addon tab.
+- `api.ui.openMovie(imdbNumericId)` opens a movie that is already in the library. Back returns to the addon tab.
 
-Page HTML is shown in a frame that cannot read Nightfeed’s own page. Use the API from `index.js` to change the library, then push new HTML with `setPage`.
+The page runs in a frame. From a script in that HTML, call:
+
+```js
+const result = await window.nightfeed.call('add', { kind: 'show', id: 123 });
+```
+
+`index.js` receives that through `onAction`. The frame cannot read Nightfeed’s own screens. Use `openShow` and `openMovie` when the title is already in the library.
 
 ### Events
 

@@ -35,6 +35,7 @@ interface Toast {
 export default function App() {
   const [view, setView] = useState<View>('library');
   const [showBack, setShowBack] = useState<View>('library');
+  const [movieBack, setMovieBack] = useState<'movies' | 'addon'>('movies');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedMovieId, setSelectedMovieId] = useState<number | null>(null);
   const [activeDownloads, setActiveDownloads] = useState(0);
@@ -87,7 +88,16 @@ export default function App() {
     };
     loadPages();
     const offPages = window.torrentAPI.onAddonsChanged?.(loadPages);
-    return () => offPages?.();
+    const offNav = window.torrentAPI.onAddonNavigate?.((nav) => {
+      const id = Number(nav?.id);
+      if (!Number.isFinite(id)) return;
+      if (nav?.kind === 'show') openShow(id, 'addon');
+      if (nav?.kind === 'movie') openMovie({ tmdbId: id }, 'addon');
+    });
+    return () => {
+      offPages?.();
+      offNav?.();
+    };
   }, [bootReady]);
 
   useEffect(() => {
@@ -180,8 +190,9 @@ export default function App() {
     setView('show');
   };
 
-  const openMovie = (movie: { tmdbId: number }) => {
+  const openMovie = (movie: { tmdbId: number }, back: 'movies' | 'addon' = 'movies') => {
     setSelectedMovieId(movie.tmdbId);
+    setMovieBack(back);
     setView('movie');
   };
 
@@ -207,7 +218,7 @@ export default function App() {
           Calendar
         </button>
         <button
-          className={`nav-item ${view === 'movies' || view === 'movie' ? 'active' : ''}`}
+          className={`nav-item ${view === 'movies' || (view === 'movie' && movieBack === 'movies') ? 'active' : ''}`}
           onClick={() => setView('movies')}
         >
           Movies
@@ -282,8 +293,8 @@ export default function App() {
         {view === 'show' && selectedId != null && (
           <ShowDetail
             tmdbId={selectedId}
-            backLabel={showBack === 'calendar' ? 'Calendar' : 'Library'}
-            onBack={() => setView(showBack === 'calendar' ? 'calendar' : 'library')}
+            backLabel={showBack === 'calendar' ? 'Calendar' : showBack === 'addon' ? 'Upcoming' : 'Library'}
+            onBack={() => setView(showBack === 'calendar' || showBack === 'addon' ? showBack : 'library')}
             onRemoved={() => {
               setSelectedId(null);
               setView('library');
@@ -301,8 +312,8 @@ export default function App() {
         {view === 'movie' && selectedMovieId != null && (
           <MovieDetail
             tmdbId={selectedMovieId}
-            backLabel="Movies"
-            onBack={() => setView('movies')}
+            backLabel={movieBack === 'addon' ? 'Upcoming' : 'Movies'}
+            onBack={() => setView(movieBack === 'addon' ? 'addon' : 'movies')}
             onRemoved={() => {
               setSelectedMovieId(null);
               setView('movies');
@@ -315,6 +326,8 @@ export default function App() {
         {view === 'addons' && <Addons />}
         {view === 'addon' && addonPageKey && (
           <AddonPageView
+            addonId={addonPages.find((page) => pageKey(page) === addonPageKey)?.addonId || ''}
+            pageId={addonPages.find((page) => pageKey(page) === addonPageKey)?.pageId || ''}
             title={addonPages.find((page) => pageKey(page) === addonPageKey)?.title || 'Addon'}
             html={addonPages.find((page) => pageKey(page) === addonPageKey)?.html || ''}
           />

@@ -3286,6 +3286,9 @@ function registerIpc() {
     addonHost.setEnabled(String(id || ''), !!enabled)
   );
   ipcMain.handle('addons:remove', (_e, id: string) => addonHost.removeAddon(String(id || '')));
+  ipcMain.handle('addons:action', (_e, addonId: string, action: string, payload: unknown) =>
+    addonHost.handleAddonAction(String(addonId || ''), String(action || ''), payload)
+  );
 
   ipcMain.handle(
     'library:setEpisodeStatus',

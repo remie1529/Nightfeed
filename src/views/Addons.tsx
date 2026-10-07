@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface CatalogAddon {
   id: string;
@@ -44,17 +44,68 @@ export function pageKey(page: { addonId: string; pageId: string }): string {
 }
 
 function pageFrame(html: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-    body { margin: 0; padding: 16px; background: #161616; color: #eee; font: 15px Segoe UI, sans-serif; }
-    h1 { font-size: 1.3rem; margin: 0 0 0.6rem; }
-    p { margin: 0.25rem 0; color: #ccc; }
-  </style></head><body>${html}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><script>
+    (function () {
+      const pending = {};
+      let n = 0;
+      window.nightfeed = {
+        call(action, payload) {
+          const id = ++n;
+          return new Promise(function (resolve) {
+            pending[id] = resolve;
+            parent.postMessage({ source: 'nf-addon', id: id, action: action, payload: payload || null }, '*');
+          });
+        }
+      };
+      window.addEventListener('message', function (e) {
+        const data = e.data;
+        if (!data || data.source !== 'nf-addon-result') return;
+        const done = pending[data.id];
+        if (!done) return;
+        delete pending[data.id];
+        done(data.result);
+      });
+    })();
+  </script></head><body>${html}</body></html>`;
 }
 
-export function AddonPageView({ title, html }: { title: string; html: string }) {
+export function AddonPageView({
+  addonId,
+  pageId,
+  title,
+  html,
+}: {
+  addonId: string;
+  pageId: string;
+  title: string;
+  html: string;
+}) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  useEffect(() => {
+    const onMessage = async (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow) return;
+      const data = event.data as { source?: string; id?: number; action?: string; payload?: unknown };
+      if (!data || data.source !== 'nf-addon') return;
+      let result: unknown = { ok: false, error: 'Addon action failed' };
+      try {
+        result = await window.torrentAPI.addonPageAction(addonId, String(data.action || ''), data.payload);
+      } catch (err) {
+        result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      frameRef.current?.contentWindow?.postMessage({ source: 'nf-addon-result', id: data.id, result }, '*');
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [addonId, pageId]);
   return (
     <div className="page page-wide addon-page-view">
-      <iframe className="addon-frame addon-frame-fill" title={title} sandbox="allow-scripts" srcDoc={pageFrame(html)} />
+      <iframe
+        ref={frameRef}
+        className="addon-frame addon-frame-fill"
+        title={title}
+        sandbox="allow-scripts"
+        srcDoc={pageFrame(html)}
+      />
     </div>
   );
 }
@@ -247,7 +298,7 @@ export default function Addons() {
                   Close
                 </button>
               </div>
-              <iframe className="addon-frame" title={openPage.title} sandbox="allow-scripts" srcDoc={pageFrame(openPage.html)} />
+              <AddonPageView addonId={openPage.addonId} pageId={openPage.pageId} title={openPage.title} html={openPage.html} />
             </section>
           )}
         </>

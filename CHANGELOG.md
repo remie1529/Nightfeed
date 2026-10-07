@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.25
+
+### Added
+- Addon pages can call back into the addon, and can open a show or movie that is already in the library
+
 ## 2.4.24
 
 ### Added

@@ -23,6 +23,13 @@ const api = {
   installAddonFile: () => ipcRenderer.invoke('addons:installFile'),
   setAddonEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('addons:setEnabled', id, enabled),
   removeAddon: (id: string) => ipcRenderer.invoke('addons:remove', id),
+  addonPageAction: (addonId: string, action: string, payload: unknown) =>
+    ipcRenderer.invoke('addons:action', addonId, action, payload),
+  onAddonNavigate: (cb: (nav: { kind?: string; id?: number }) => void) => {
+    const listener = (_: unknown, nav: { kind?: string; id?: number }) => cb(nav);
+    ipcRenderer.on('addons:navigate', listener);
+    return () => ipcRenderer.removeListener('addons:navigate', listener);
+  },
   onAddonsChanged: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on('addons:changed', listener);
