@@ -351,6 +351,15 @@ a { color: var(--accent); }
   margin-top: 0.6rem;
 }
 
+.addon-page-view {
+  height: 100%;
+}
+
+.addon-frame-fill {
+  height: calc(100vh - 3.5rem);
+  margin-top: 0;
+}
+
 .ltv-logo {
   width: 28px;
   height: 28px;

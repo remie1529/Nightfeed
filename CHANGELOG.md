@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.23
+
+### Fixed
+- An installed addon page is a tab in the left menu. Library count shows there while it is turned on
+
 ## 2.4.22
 
 ### Added

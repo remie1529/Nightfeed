@@ -27,12 +27,24 @@ interface AddonPage {
   html: string;
 }
 
+export function pageKey(page: { addonId: string; pageId: string }): string {
+  return `${page.addonId}:${page.pageId}`;
+}
+
 function pageFrame(html: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     body { margin: 0; padding: 16px; background: #161616; color: #eee; font: 15px Segoe UI, sans-serif; }
     h1 { font-size: 1.3rem; margin: 0 0 0.6rem; }
     p { margin: 0.25rem 0; color: #ccc; }
   </style></head><body>${html}</body></html>`;
+}
+
+export function AddonPageView({ title, html }: { title: string; html: string }) {
+  return (
+    <div className="page page-wide addon-page-view">
+      <iframe className="addon-frame addon-frame-fill" title={title} sandbox="allow-scripts" srcDoc={pageFrame(html)} />
+    </div>
+  );
 }
 
 export default function Addons() {
@@ -78,7 +90,7 @@ export default function Addons() {
   };
 
   const installedIds = new Set(installed.map((item) => item.id));
-  const openPage = pages.find((page) => `${page.addonId}:${page.pageId}` === openKey) || null;
+  const openPage = pages.find((page) => pageKey(page) === openKey) || null;
 
   return (
     <div className="page page-wide">
@@ -189,7 +201,7 @@ export default function Addons() {
                             <button
                               key={page.pageId}
                               type="button"
-                              onClick={() => setOpenKey(`${page.addonId}:${page.pageId}`)}
+                              onClick={() => setOpenKey(pageKey(page))}
                             >
                               {page.title}
                             </button>
