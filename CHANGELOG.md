@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.26
+
+### Fixed
+- Addon pages show their content. The page script was blocked, so a tab such as Upcoming opened empty
+
 ## 2.4.25
 
 ### Added

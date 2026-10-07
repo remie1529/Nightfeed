@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.25 — Addon pages can call the addon and open a library title.
+**Current:** v2.4.26 — Addon pages render instead of opening blank.
+
+# Status v2.4.26
+
+## Fixed
+- An addon tab shows the page content, including scripts and pictures
 
 # Status v2.4.25
 

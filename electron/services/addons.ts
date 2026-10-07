@@ -36,6 +36,7 @@ export interface AddonPage {
   pageId: string;
   title: string;
   html: string;
+  rev: number;
 }
 
 interface Manifest {
@@ -219,6 +220,7 @@ function createApi(addonId: string, addonName: string) {
           pageId,
           title: String(page?.title || pageId).slice(0, 80),
           html: String(page?.html || ''),
+          rev: 1,
         });
         pushPages();
       },
@@ -227,7 +229,9 @@ function createApi(addonId: string, addonName: string) {
         const existing = pages.get(key);
         if (!existing) throw new Error(`Unknown page ${id}`);
         existing.html = String(html || '');
+        existing.rev += 1;
         ctx?.broadcast('addons:page', existing);
+        ctx?.broadcast('addons:changed');
       },
       onAction(fn: (action: string, payload: unknown) => unknown) {
         if (typeof fn === 'function') actionHandlers.set(addonId, fn);
@@ -367,6 +371,34 @@ export function listInstalled(): InstalledAddon[] {
 
 export function listPages(): AddonPage[] {
   return [...pages.values()];
+}
+
+export function renderAddonPage(addonId: string, pageId: string): string | null {
+  const page = pages.get(pageKey(addonId, pageId));
+  if (!page) return null;
+  return `<!doctype html><html><head><meta charset="utf-8"><script>
+    (function () {
+      const pending = {};
+      let n = 0;
+      window.nightfeed = {
+        call(action, payload) {
+          const id = ++n;
+          return new Promise(function (resolve) {
+            pending[id] = resolve;
+            parent.postMessage({ source: 'nf-addon', id: id, action: action, payload: payload || null }, '*');
+          });
+        }
+      };
+      window.addEventListener('message', function (e) {
+        const data = e.data;
+        if (!data || data.source !== 'nf-addon-result') return;
+        const done = pending[data.id];
+        if (!done) return;
+        delete pending[data.id];
+        done(data.result);
+      });
+    })();
+  </script></head><body>${page.html}</body></html>`;
 }
 
 export function touchLibrary() {

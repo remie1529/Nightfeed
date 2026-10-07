@@ -49,7 +49,7 @@ export default function App() {
   const [appVersion, setAppVersion] = useState('');
   const [liveTvOn, setLiveTvOn] = useState(false);
   const [bootReady, setBootReady] = useState(false);
-  const [addonPages, setAddonPages] = useState<Array<{ addonId: string; pageId: string; title: string; html: string }>>([]);
+  const [addonPages, setAddonPages] = useState<Array<{ addonId: string; pageId: string; title: string; html: string; rev?: number }>>([]);
   const [addonPageKey, setAddonPageKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -329,7 +329,7 @@ export default function App() {
             addonId={addonPages.find((page) => pageKey(page) === addonPageKey)?.addonId || ''}
             pageId={addonPages.find((page) => pageKey(page) === addonPageKey)?.pageId || ''}
             title={addonPages.find((page) => pageKey(page) === addonPageKey)?.title || 'Addon'}
-            html={addonPages.find((page) => pageKey(page) === addonPageKey)?.html || ''}
+            rev={addonPages.find((page) => pageKey(page) === addonPageKey)?.rev || 0}
           />
         )}
         {view === 'livetv' && liveTvOn && <LiveTvView />}
