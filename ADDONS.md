@@ -108,8 +108,12 @@ Approved addons are the folders under `addons/approved/` plus the list in `addon
 2. Add an entry to `addons/catalog.json` with the same `id`, `name`, `version`, `description`, `author`, and `"dir": "approved/your-id"`.
 3. Open a pull request. Nightfeed only shows a store addon after that catalog change is on `main`.
 
-The app reads the catalog shipped with the install, then tries to refresh it from:
+The app reads the catalog shipped with the install, then refreshes it from:
 
 `https://raw.githubusercontent.com/remie1529/Nightfeed/main/addons/catalog.json`
 
-A store install copies the folder from the catalog. If that folder is not on this PC, Nightfeed downloads `addon.json` and the files it lists from the same GitHub path.
+A store install downloads `addon.json` and the files it lists from that GitHub path. Nightfeed does not need a new app installer for that download. If GitHub cannot be reached, a first install uses the copy shipped with the app. An update that cannot be downloaded leaves the installed copy in place.
+
+Raise `version` in both `addon.json` and `addons/catalog.json` when you change an approved addon. The store compares that version with the installed one. A higher store version shows **Update** on that addon only. Installing the update replaces that addon’s files and reloads it. Other addons and Nightfeed itself stay as they are.
+
+An addon installed from a file is not checked against the store unless it uses the same `id`. Then the store can still offer **Update**, which replaces the file copy with the approved one.

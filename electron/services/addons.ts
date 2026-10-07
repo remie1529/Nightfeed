@@ -421,25 +421,21 @@ async function fetchText(url: string): Promise<string> {
   return res.text();
 }
 
-async function materializeStoreAddon(entry: CatalogAddon): Promise<string> {
-  const dirName = entry.id.replace(/[^a-z0-9.-]/g, '_');
-  const dest = path.join(rootDir(), dirName);
-  fs.rmSync(dest, { recursive: true, force: true });
+function copyAddonDir(sourceDir: string, dest: string) {
+  const manifest = readManifest(sourceDir);
   fs.mkdirSync(dest, { recursive: true });
-  const bundled = bundledAddonsDir();
-  const localDir = bundled ? path.join(bundled, entry.dir) : '';
-  if (localDir && fs.existsSync(path.join(localDir, 'addon.json'))) {
-    const manifest = readManifest(localDir);
-    fs.copyFileSync(path.join(localDir, 'addon.json'), path.join(dest, 'addon.json'));
-    for (const file of manifest.files) {
-      const from = path.resolve(localDir, file);
-      if (!from.startsWith(path.resolve(localDir))) throw new Error('Addon file escapes its folder');
-      fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
-      fs.copyFileSync(from, path.join(dest, file));
-    }
-    return dirName;
+  fs.copyFileSync(path.join(sourceDir, 'addon.json'), path.join(dest, 'addon.json'));
+  for (const file of manifest.files) {
+    const from = path.resolve(sourceDir, file);
+    if (!from.startsWith(path.resolve(sourceDir))) throw new Error('Addon file escapes its folder');
+    fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
+    fs.copyFileSync(from, path.join(dest, file));
   }
+}
+
+async function downloadAddonDir(entry: CatalogAddon, dest: string) {
   const base = `${RAW_ROOT}/${entry.dir.replace(/^\/+|\/+$/g, '')}`;
+  fs.mkdirSync(dest, { recursive: true });
   const manifestText = await fetchText(`${base}/addon.json`);
   fs.writeFileSync(path.join(dest, 'addon.json'), manifestText, 'utf8');
   const manifest = readManifest(dest, false);
@@ -448,7 +444,37 @@ async function materializeStoreAddon(entry: CatalogAddon): Promise<string> {
     fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
     fs.writeFileSync(path.join(dest, file), body, 'utf8');
   }
-  return dirName;
+  readManifest(dest);
+}
+
+async function materializeStoreAddon(entry: CatalogAddon): Promise<string> {
+  const dirName = entry.id.replace(/[^a-z0-9.-]/g, '_');
+  const dest = path.join(rootDir(), dirName);
+  const staging = path.join(rootDir(), `.staging-${dirName}`);
+  fs.rmSync(staging, { recursive: true, force: true });
+  const alreadyInstalled = fs.existsSync(path.join(dest, 'addon.json'));
+  try {
+    try {
+      await downloadAddonDir(entry, staging);
+    } catch (err) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      if (alreadyInstalled) {
+        throw new Error('Could not download the addon update. The installed copy was left as it is.');
+      }
+      const bundled = bundledAddonsDir();
+      const localDir = bundled ? path.join(bundled, entry.dir) : '';
+      if (!localDir || !fs.existsSync(path.join(localDir, 'addon.json'))) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
+      copyAddonDir(localDir, staging);
+    }
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.renameSync(staging, dest);
+    return dirName;
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
+  }
 }
 
 function remember(record: RecordedAddon) {

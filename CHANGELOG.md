@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.24
+
+### Added
+- The addon store shows Update when an approved addon version is higher than the installed one
+- Update downloads that addon from GitHub and reloads it. Nightfeed itself is not updated
+
 ## 2.4.23
 
 ### Fixed
