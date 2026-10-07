@@ -16,6 +16,22 @@ const api = {
     ipcRenderer.invoke('library:bulkSetMissingStatus', mazeIds, status),
   getShows: () => ipcRenderer.invoke('library:list'),
   getCalendar: (from: string, to: string) => ipcRenderer.invoke('library:calendar', from, to),
+  getAddonCatalog: () => ipcRenderer.invoke('addons:catalog'),
+  getInstalledAddons: () => ipcRenderer.invoke('addons:installed'),
+  getAddonPages: () => ipcRenderer.invoke('addons:pages'),
+  installStoreAddon: (id: string) => ipcRenderer.invoke('addons:installStore', id),
+  installAddonFile: () => ipcRenderer.invoke('addons:installFile'),
+  setAddonEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('addons:setEnabled', id, enabled),
+  removeAddon: (id: string) => ipcRenderer.invoke('addons:remove', id),
+  onAddonsChanged: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('addons:changed', listener);
+    ipcRenderer.on('addons:pages', listener);
+    return () => {
+      ipcRenderer.removeListener('addons:changed', listener);
+      ipcRenderer.removeListener('addons:pages', listener);
+    };
+  },
   getShow: (mazeId: number) => ipcRenderer.invoke('library:get', mazeId),
   updateShow: (mazeId: number, partial: Record<string, unknown>) =>
     ipcRenderer.invoke('library:update', mazeId, partial),

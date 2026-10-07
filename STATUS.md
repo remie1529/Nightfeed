@@ -1,6 +1,14 @@
 # Nightfeed status
 
-**Current:** v2.4.21 — The Upcoming tab is gone.
+**Current:** v2.4.22 — Addons store, local installs, and an addon manager.
+
+# Status v2.4.22
+
+## Added
+- Addons store for approved addons
+- Install from a file
+- Addon manager to turn addons on, off, or remove them
+- ADDONS.md
 
 # Status v2.4.21
 

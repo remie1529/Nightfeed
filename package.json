@@ -1,7 +1,7 @@
 {
   "name": "tv-show-manager",
   "productName": "Nightfeed",
-  "version": "2.4.21",
+  "version": "2.4.22",
   "description": "Desktop TV show and movie manager",
   "main": "dist-electron/main.js",
   "author": "Remco Groothoff",
@@ -105,6 +105,10 @@
     ],
     "icon": "build/icon.png",
     "extraResources": [
+      {
+        "from": "addons",
+        "to": "addons"
+      },
       {
         "from": "build/icon.png",
         "to": "icon.png"
