@@ -104,7 +104,8 @@ const result = await window.nightfeed.call('add', { kind: 'show', id: 123 });
 In Nightfeed, open **Addons**.
 
 - **Store** lists approved addons from this repository. Install writes a copy into Nightfeed’s app data.
-- **Installed** is the manager: turn an addon on or off, open its pages, or remove it.
+- **Refresh** checks the store again for newer versions.
+- **Installed** is the manager: turn an addon on or off, update it when a newer approved version is available, or remove it. Open an addon from its tab in the left menu.
 - **Install from file** accepts a `.zip` or an `addon.json`. That addon is marked as a local file, not as an approved store addon.
 
 Installed addons live in `%AppData%\Nightfeed\addons`.

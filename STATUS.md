@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.27 — A title that is not in the library can still open its metadata screen.
+**Current:** v2.4.28 — Addons can refresh the store, and installed addons show Update.
+
+# Status v2.4.28
+
+## Changed
+- Refresh checks for newer approved addons
+- Installed list has Update on the row, and no longer opens the addon page from there
 
 # Status v2.4.27
 
