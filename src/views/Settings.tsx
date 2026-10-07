@@ -1625,7 +1625,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
             <li>Embedded WebTorrent downloads with multi-source public torrent search</li>
             <li>Requests from the web portal or Telegram; approve or deny in-app</li>
             <li>OpenVPN torrent-only split tunnel so Plex and browsing keep your ISP IP</li>
-            <li>Live TV / EPG for Plex, calendar week view, backup &amp; restore, folder scan import</li>
+            <li>Live TV / EPG for Plex, calendar week view, addon store, backup &amp; restore, folder scan import</li>
             <li>Multi-root libraries (UNC supported), FTP upload, quality gates, and auto-download</li>
           </ul>
           <p style={{ margin: '0 0 8px' }}>

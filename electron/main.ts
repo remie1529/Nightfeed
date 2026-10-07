@@ -114,6 +114,7 @@ import {
 import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
 import { ensureTvShowNfo } from './services/nfo';
 import { activityLog, summarizeSettingsKeys } from './services/activity-log';
+import * as addonHost from './services/addons';
 import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
 import os from 'os';
@@ -357,6 +358,7 @@ function pushDownloads(opts?: { persist?: 'debounce' | 'now' | 'skip' }) {
   if (key === lastDownloadsUiKey && mode === 'debounce') return;
   lastDownloadsUiKey = key;
   mainWindow?.webContents.send('downloads:update', slim);
+  addonHost.touchDownloads();
 }
 
 function notify(message: string, kind: 'info' | 'ok' | 'warn' | 'error' = 'info') {
@@ -978,7 +980,7 @@ async function tryNextAfterExeReject(item: DownloadItem): Promise<void> {
         ),
       });
       upsertMovie(withMovieLocalStatus(movie));
-      mainWindow?.webContents.send('movies:changed');
+      emitMoviesChanged();
     } else {
       const show = getShows().find((s) => s.tmdbId === item.showId);
       if (!show) throw new Error('Show not found');
@@ -1074,13 +1076,20 @@ function emitLibraryChanged(immediate = false) {
       libraryChangedTimer = null;
     }
     mainWindow?.webContents.send('library:changed');
+    addonHost.touchLibrary();
     return;
   }
   if (libraryChangedTimer) clearTimeout(libraryChangedTimer);
   libraryChangedTimer = setTimeout(() => {
     libraryChangedTimer = null;
     mainWindow?.webContents.send('library:changed');
+    addonHost.touchLibrary();
   }, 200);
+}
+
+function emitMoviesChanged() {
+  mainWindow?.webContents.send("movies:changed");
+  addonHost.touchLibrary();
 }
 
 /** Grid payload: counts from stored statuses — no disk scan, no season trees over IPC. */
@@ -1295,7 +1304,7 @@ async function applyHuntIntents(
         });
         upsertMovie(withMovieLocalStatus(movie));
         pushDownloads({ persist: 'now' });
-        mainWindow?.webContents.send('movies:changed');
+        emitMoviesChanged();
         if (intent.upgrade) {
           notify(`Upgrade: ${movie.title}`, 'ok');
         }
@@ -1407,7 +1416,7 @@ async function addMovieById(tmdbId: number): Promise<Movie> {
     movieRoots(settings)
   );
   upsertMovie(movie);
-  mainWindow?.webContents.send('movies:changed');
+  emitMoviesChanged();
   return withMovieLocalStatus(movie);
 }
 
@@ -1559,7 +1568,7 @@ async function autoDownloadMovie(
   });
   upsertMovie(withMovieLocalStatus(movie));
   pushDownloads({ persist: 'now' });
-  mainWindow?.webContents.send('movies:changed');
+  emitMoviesChanged();
   if (upgrade) {
     notify(`Upgrade: ${movie.title}`, 'ok');
   }
@@ -1972,7 +1981,7 @@ async function importMovieFromScan(movieId: number, folderPath: string): Promise
         downloadingMovieIds()
       );
       upsertMovie(updated);
-      mainWindow?.webContents.send('movies:changed');
+      emitMoviesChanged();
       return withMovieLocalStatus(updated);
     }
     return withMovieLocalStatus(existing);
@@ -2001,7 +2010,7 @@ async function importMovieFromScan(movieId: number, folderPath: string): Promise
   movie = { ...movie, libraryPath: folderPath || movie.libraryPath };
   movie = applyMovieLocalStatus(movie, settings.movieLibraryRoot, downloadingMovieIds());
   upsertMovie(movie);
-  mainWindow?.webContents.send('movies:changed');
+  emitMoviesChanged();
   return withMovieLocalStatus(movie);
 }
 
@@ -2094,7 +2103,7 @@ async function runFolderScanImport(items: FolderScanImportItem[]): Promise<Folde
   });
   emitLibraryChanged(true);
   if (result.added || result.failed) {
-    mainWindow?.webContents.send('movies:changed');
+    emitMoviesChanged();
   }
   return result;
 }
@@ -3268,6 +3277,16 @@ function registerIpc() {
 
   ipcMain.handle('library:calendar', (_e, from: string, to: string) => listCalendarEpisodes(from, to));
 
+  ipcMain.handle('addons:catalog', () => addonHost.getCatalog());
+  ipcMain.handle('addons:installed', () => addonHost.listInstalled());
+  ipcMain.handle('addons:pages', () => addonHost.listPages());
+  ipcMain.handle('addons:installStore', (_e, id: string) => addonHost.installFromStore(String(id || '')));
+  ipcMain.handle('addons:installFile', () => addonHost.installFromDialog());
+  ipcMain.handle('addons:setEnabled', (_e, id: string, enabled: boolean) =>
+    addonHost.setEnabled(String(id || ''), !!enabled)
+  );
+  ipcMain.handle('addons:remove', (_e, id: string) => addonHost.removeAddon(String(id || '')));
+
   ipcMain.handle(
     'library:setEpisodeStatus',
     (
@@ -3576,7 +3595,7 @@ function registerIpc() {
     );
     upsertMovie(movie);
     activityLog.info('library', `Added movie: ${movie.title}`, { tmdbId });
-    mainWindow?.webContents.send('movies:changed');
+    emitMoviesChanged();
     return withMovieLocalStatus(movie);
   });
 
@@ -3584,7 +3603,7 @@ function registerIpc() {
     const movie = getMovies().find((m) => m.tmdbId === tmdbId);
     removeMovie(tmdbId);
     activityLog.info('library', `Removed movie: ${movie?.title || tmdbId}`, { tmdbId });
-    mainWindow?.webContents.send('movies:changed');
+    emitMoviesChanged();
     return getMovies().map((m) => withMovieLocalStatus(m));
   });
 
@@ -3599,7 +3618,7 @@ function registerIpc() {
       upsertMovie(movies[idx]);
       n += 1;
     }
-    if (n) mainWindow?.webContents.send('movies:changed');
+    if (n) emitMoviesChanged();
     if (n && 'monitored' in partial) {
       activityLog.info(
         'monitor',
@@ -3625,7 +3644,7 @@ function registerIpc() {
     }
     if (n) {
       activityLog.info('library', `Bulk removed ${n} movie(s)`);
-      mainWindow?.webContents.send('movies:changed');
+      emitMoviesChanged();
     }
     return { removed: n };
   });
@@ -3647,7 +3666,7 @@ function registerIpc() {
         keys: Object.keys(partial || {}).join(','),
       });
     }
-    mainWindow?.webContents.send('movies:changed');
+    emitMoviesChanged();
     return withMovieLocalStatus(movies[idx]);
   });
 
@@ -3664,7 +3683,7 @@ function registerIpc() {
       movieRoots(settings)
     );
     upsertMovie(movie);
-    mainWindow?.webContents.send('movies:changed');
+    emitMoviesChanged();
     if (settings.autoDownload) {
       void autoDownloadMovie(movie, undefined, { allowUpgrade: true }).catch(() => undefined);
     }
@@ -3781,7 +3800,7 @@ function registerIpc() {
       // Mark downloading in store for UI
       upsertMovie(withMovieLocalStatus(movie));
       pushDownloads({ persist: 'now' });
-      mainWindow?.webContents.send('movies:changed');
+      emitMoviesChanged();
       return item;
     }
   );
@@ -3829,7 +3848,7 @@ function registerIpc() {
     telegramBot.sync(settings);
     scheduleRefresh();
     emitLibraryChanged();
-    mainWindow?.webContents.send('movies:changed');
+    emitMoviesChanged();
     pushDownloads({ persist: 'skip' });
     activityLog.info('backup', 'Imported backup', {
       path: filePaths[0],
@@ -4064,6 +4083,42 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send('log:changed');
   });
   registerIpc();
+  addonHost.startAddons({
+    userData: app.getPath('userData'),
+    version: app.getVersion(),
+    getShows: () => getShows(),
+    getMovies: () => getMovies(),
+    addShow: (mazeId, policy) => addShowWithPolicy(mazeId, policy || 'manual'),
+    addMovie: async (imdbNumericId) => {
+      const settings = getSettings();
+      if (!movieRoots(settings).length) {
+        throw new Error('Set a movie library folder in Settings before adding movies');
+      }
+      const existing = getMovies().find((m) => m.tmdbId === imdbNumericId);
+      const movie = await fetchMovieDetail(
+        imdbNumericId,
+        settings.movieLibraryRoot,
+        existing,
+        downloadingMovieIds(),
+        movieRoots(settings)
+      );
+      upsertMovie(movie);
+      emitMoviesChanged();
+      return movie;
+    },
+    removeShow: async (mazeId) => {
+      removeShow(mazeId);
+      emitLibraryChanged(true);
+    },
+    removeMovie: async (imdbNumericId) => {
+      removeMovie(imdbNumericId);
+      emitMoviesChanged();
+    },
+    listDownloads: () => downloadEngine.list(),
+    notify: (message) => notify(message),
+    log: (level, message) => activityLog[level]('addon', message),
+    broadcast: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+  });
   createWindow();
   writeSessionLock();
   wireTelegram();
@@ -4192,7 +4247,7 @@ app.whenReady().then(async () => {
         }
         upsertMovie(withMovieLocalStatus(movie));
       }
-      mainWindow?.webContents.send('movies:changed');
+      emitMoviesChanged();
     } else if (item?.showId != null && item.seasonNumber != null && item.episodeNumber != null) {
       const alreadyIgnored =
         getEpisodeOverride(item.showId, item.seasonNumber, item.episodeNumber) === 'ignored';

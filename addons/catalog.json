@@ -1,0 +1,12 @@
+{
+  "addons": [
+    {
+      "id": "nightfeed.library-count",
+      "name": "Library count",
+      "version": "1.0.0",
+      "description": "Adds a page that shows how many shows and movies are in your library.",
+      "author": "Nightfeed",
+      "dir": "approved/library-count"
+    }
+  ]
+}

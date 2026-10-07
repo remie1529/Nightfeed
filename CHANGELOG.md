@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.22
+
+### Added
+- Addons screen with an approved store and an installed-addon manager
+- Install an addon from a zip or from addon.json
+- Approved starter addon: Library count
+- ADDONS.md explains how to build an addon and how it controls Nightfeed
+
 ## 2.4.21
 
 ### Removed

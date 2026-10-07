@@ -6,6 +6,7 @@ import Movies from './views/Movies';
 import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import Requests from './views/Requests';
+import Addons from './views/Addons';
 import SettingsView from './views/Settings';
 import LogView from './views/LogView';
 import LiveTvView from './views/LiveTv';
@@ -17,6 +18,7 @@ type View =
   | 'movies'
   | 'downloads'
   | 'requests'
+  | 'addons'
   | 'settings'
   | 'show'
   | 'movie'
@@ -197,6 +199,12 @@ export default function App() {
           Requests
           {pendingRequests > 0 ? <span className="nav-badge">{pendingRequests}</span> : null}
         </button>
+        <button
+          className={`nav-item ${view === 'addons' ? 'active' : ''}`}
+          onClick={() => setView('addons')}
+        >
+          Addons
+        </button>
         {liveTvOn && (
           <button
             className={`nav-item ${view === 'livetv' ? 'active' : ''}`}
@@ -263,6 +271,7 @@ export default function App() {
         )}
         {view === 'downloads' && <Downloads />}
         {view === 'requests' && <Requests refreshToken={requestsKey} />}
+        {view === 'addons' && <Addons />}
         {view === 'livetv' && liveTvOn && <LiveTvView />}
         {view === 'settings' && <SettingsView onOpenLog={() => setView('log')} />}
         {view === 'log' && <LogView onBack={() => setView('settings')} />}

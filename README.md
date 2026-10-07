@@ -49,6 +49,7 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 - **Multiple library roots** — several TV/movie folders, drag to reorder; top is default for new titles
 - **OpenVPN** — Nightfeed starts Community `openvpn.exe` (not the GUI), auto-connect, torrent-only split tunnel, kill switch
 - **Live TV** — optional HDHomeRun tuner + XMLTV for Plex, plus custom channels from your library
+- **Addons** — approved addons in the in-app store, plus addons you install from a file. See [ADDONS.md](ADDONS.md) for how an addon is built and how it controls Nightfeed.
 - **Reliability** — startup loading screen until backend ready; optional crash-restart via Task Scheduler; collapsible full-width Settings
 
 ---
