@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.28
+
+### Changed
+- Addons has a Refresh button that checks the store for newer versions
+- Installed addons no longer have a button that opens the addon page
+- An installed addon with a newer store version has an Update button on that row
+
 ## 2.4.27
 
 ### Added

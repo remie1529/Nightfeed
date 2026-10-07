@@ -19,15 +19,6 @@ interface InstalledAddon {
   error: string;
 }
 
-interface AddonPage {
-  addonId: string;
-  addonName: string;
-  pageId: string;
-  title: string;
-  html: string;
-  rev?: number;
-}
-
 export function compareVersions(left: string, right: string): number {
   const parse = (value: string) => value.split(/[^0-9]+/).filter(Boolean).map((part) => Number(part));
   const a = parse(left);
@@ -90,21 +81,17 @@ export default function Addons() {
   const [tab, setTab] = useState<'store' | 'installed'>('store');
   const [catalog, setCatalog] = useState<CatalogAddon[]>([]);
   const [installed, setInstalled] = useState<InstalledAddon[]>([]);
-  const [pages, setPages] = useState<AddonPage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [openKey, setOpenKey] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [store, local, addonPages] = await Promise.all([
+    const [store, local] = await Promise.all([
       window.torrentAPI.getAddonCatalog() as Promise<{ addons?: CatalogAddon[]; error?: string }>,
       window.torrentAPI.getInstalledAddons() as Promise<InstalledAddon[]>,
-      window.torrentAPI.getAddonPages() as Promise<AddonPage[]>,
     ]);
     setCatalog(Array.isArray(store?.addons) ? store.addons : []);
     setInstalled(Array.isArray(local) ? local : []);
-    setPages(Array.isArray(addonPages) ? addonPages : []);
-    if (store?.error) setError(store.error);
+    setError(store?.error ? store.error : null);
   }, []);
 
   useEffect(() => {
@@ -129,7 +116,6 @@ export default function Addons() {
   };
 
   const installedById = new Map(installed.map((item) => [item.id, item]));
-  const openPage = pages.find((page) => pageKey(page) === openKey) || null;
 
   return (
     <div className="page page-wide">
@@ -151,6 +137,19 @@ export default function Addons() {
           </button>
           <button type="button" disabled={busy !== null} onClick={() => void run('file', () => window.torrentAPI.installAddonFile())}>
             {busy === 'file' ? 'Installing…' : 'Install from file'}
+          </button>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => {
+              setBusy('refresh');
+              setError(null);
+              refresh()
+                .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                .finally(() => setBusy(null));
+            }}
+          >
+            {busy === 'refresh' ? 'Checking…' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -213,7 +212,6 @@ export default function Addons() {
                 </thead>
                 <tbody>
                   {installed.map((item) => {
-                    const ownPages = pages.filter((page) => page.addonId === item.id);
                     const storeItem = catalog.find((entry) => entry.id === item.id);
                     const newer = !!storeItem && compareVersions(storeItem.version, item.version) > 0;
                     return (
@@ -223,7 +221,7 @@ export default function Addons() {
                           <div className="addon-meta">
                             {item.version || '—'}
                             {item.author ? ` · ${item.author}` : ''}
-                            {newer ? ` · Update ${storeItem?.version} in the store` : ''}
+                            {newer ? ` · ${storeItem?.version} is available` : ''}
                           </div>
                           {item.description ? <div className="addon-meta">{item.description}</div> : null}
                           {item.error ? <div className="error-banner" style={{ marginTop: 6 }}>{item.error}</div> : null}
@@ -241,15 +239,16 @@ export default function Addons() {
                           />
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          {ownPages.map((page) => (
+                          {newer && (
                             <button
-                              key={page.pageId}
                               type="button"
-                              onClick={() => setOpenKey(pageKey(page))}
+                              className="primary"
+                              disabled={busy === item.id}
+                              onClick={() => void run(item.id, () => window.torrentAPI.installStoreAddon(item.id))}
                             >
-                              {page.title}
+                              {busy === item.id ? 'Updating…' : 'Update'}
                             </button>
-                          ))}
+                          )}
                           <button
                             type="button"
                             className="danger"
@@ -265,17 +264,6 @@ export default function Addons() {
                 </tbody>
               </table>
             </div>
-          )}
-          {openPage && (
-            <section className="addon-page">
-              <div className="toolbar">
-                <h2 style={{ margin: 0 }}>{openPage.title}</h2>
-                <button type="button" className="ghost" onClick={() => setOpenKey(null)}>
-                  Close
-                </button>
-              </div>
-              <AddonPageView addonId={openPage.addonId} pageId={openPage.pageId} title={openPage.title} rev={openPage.rev || 0} />
-            </section>
           )}
         </>
       )}
