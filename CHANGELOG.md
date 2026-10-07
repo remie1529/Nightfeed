@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.29
+
+### Fixed
+- Downloads stay in the background worker. The packaged app could not load WebTorrent's dependencies there, so downloads ran in the window process instead
+
 ## 2.4.28
 
 ### Changed
