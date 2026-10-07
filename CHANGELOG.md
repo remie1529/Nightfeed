@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.31
+
+### Fixed
+- A library refresh no longer freezes the app. The hunt was writing one log line per episode, and opening that log read the whole file
+
 ## 2.4.30
 
 ### Changed

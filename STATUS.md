@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.30 — Each installed addon runs in its own worker.
+**Current:** v2.4.31 — Library refresh no longer floods the log.
+
+# Status v2.4.31
+
+## Fixed
+- Refresh logs one line per show, not one line per episode
+- The log screen reads the end of the file, so a large log does not freeze the app
 
 # Status v2.4.30
 
