@@ -406,37 +406,24 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
     let ignored = 0;
     let alreadyDl = 0;
     let haveOk = 0;
+    let unaired = 0;
+    let other = 0;
 
     for (const ep of show.episodes || []) {
       const ok = overrideKey(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
-      const epLabel = `${show.name} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
       if (ep.status === 'ignored' || overrides[ok] === 'ignored') {
         ignored += 1;
-        log({
-          level: 'info',
-          category: 'hunt',
-          message: `Skipped ${epLabel}: ignored`,
-        });
         continue;
       }
       if (active.has(ok)) {
         alreadyDl += 1;
-        log({
-          level: 'info',
-          category: 'hunt',
-          message: `Skipped ${epLabel}: already downloading`,
-        });
         continue;
       }
       if (ep.status === 'missing' || ep.status === 'aired') {
         const airDay = (ep.airDate || '').slice(0, 10);
         const today = new Date().toISOString().slice(0, 10);
         if (airDay && airDay > today) {
-          log({
-            level: 'info',
-            category: 'hunt',
-            message: `Skipped ${show.name} S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}: not aired yet (${airDay})`,
-          });
+          unaired += 1;
           continue;
         }
         jobs.push({ ep, upgrade: false });
@@ -448,26 +435,17 @@ export async function huntShowsCore(input: HuntShowsInput): Promise<HuntResult> 
           jobs.push({ ep, upgrade: true });
         } else {
           haveOk += 1;
-          log({
-            level: 'info',
-            category: 'hunt',
-            message: `Skipped ${epLabel}: already have / no upgrade needed`,
-            meta: { current: current || '', preferred },
-          });
         }
         continue;
       }
-      log({
-        level: 'info',
-        category: 'hunt',
-        message: `Skipped ${epLabel}: status ${ep.status}`,
-      });
+      other += 1;
     }
 
+    const upgrades = jobs.filter((j) => j.upgrade).length;
     log({
       level: 'info',
       category: 'hunt',
-      message: `Scan show: ${show.name} — ${jobs.length} to check (${jobs.filter((j) => j.upgrade).length} upgrade), skipped ${ignored} ignored / ${alreadyDl} already downloading / ${haveOk} have preferred`,
+      message: `Scan show: ${show.name} — ${jobs.length} to check (${upgrades} upgrade), skipped ${ignored} ignored / ${alreadyDl} downloading / ${unaired} not aired / ${haveOk} have preferred${other ? ` / ${other} other` : ''}`,
       meta: { preferred, mazeId: show.tmdbId },
     });
 
@@ -614,6 +592,11 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
     meta: { sources: sourceIds.join(',') || '(none)' },
   });
 
+  let pausedMovies = 0;
+  let downloadingMovies = 0;
+  let haveMovies = 0;
+  let otherMovies = 0;
+
   for (let i = 0; i < input.movies.length; i++) {
     const movie = input.movies[i];
     input.onProgress?.({
@@ -624,19 +607,11 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
     });
 
     if (!isMonitored(movie) && !force) {
-      log({
-        level: 'info',
-        category: 'hunt',
-        message: `Skipped movie: ${movie.title} (monitoring paused)`,
-      });
+      pausedMovies += 1;
       continue;
     }
     if (active.has(movie.tmdbId)) {
-      log({
-        level: 'info',
-        category: 'hunt',
-        message: `Skipped movie: ${movie.title} (already downloading)`,
-      });
+      downloadingMovies += 1;
       continue;
     }
 
@@ -653,19 +628,11 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
       );
 
     if (movie.status === 'downloaded' && !upgrade) {
-      log({
-        level: 'info',
-        category: 'hunt',
-        message: `Skipped movie: ${movie.title} (already have / no upgrade needed)`,
-      });
+      haveMovies += 1;
       continue;
     }
     if (movie.status !== 'missing' && movie.status !== 'downloaded' && !force) {
-      log({
-        level: 'info',
-        category: 'hunt',
-        message: `Skipped movie: ${movie.title} (status ${movie.status})`,
-      });
+      otherMovies += 1;
       continue;
     }
 
@@ -763,7 +730,7 @@ export async function huntMoviesCore(input: HuntMoviesInput): Promise<HuntResult
   log({
     level: 'info',
     category: 'hunt',
-    message: `Movie upgrade hunt plan: ${intents.length} intent(s)`,
+    message: `Movie upgrade hunt plan: ${intents.length} intent(s), skipped ${pausedMovies} paused / ${downloadingMovies} downloading / ${haveMovies} have preferred / ${otherMovies} other`,
   });
 
   return { intents, logs };

@@ -10,6 +10,7 @@ import {
   readLogAll,
   setLogWriterModeLogger,
 } from './log-writer-pool';
+import { readTailBytes } from './log-file-tail';
 
 const RETENTION_DAYS = 7;
 const FILE_PREFIX = 'nightfeed-';
@@ -75,7 +76,7 @@ function safeMeta(meta?: Record<string, unknown>): string {
 
 /**
  * Central activity log: daily files under userData/logs, ~7 day retention.
- * Emits `changed` after each write so the UI can tail.
+ * Emits `changed` in short bursts so the UI can tail.
  */
 class ActivityLogService extends EventEmitter {
   private dir = '';
@@ -85,6 +86,7 @@ class ActivityLogService extends EventEmitter {
   private ready = false;
   private pendingLines: string[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private changedTimer: NodeJS.Timeout | null = null;
   private useLogWorker = false;
   private modeLogged = false;
 
@@ -164,7 +166,7 @@ class ActivityLogService extends EventEmitter {
         `${formatLocalStamp()} [${level.toUpperCase()}] [${category}] ${message}` +
         `${safeMeta(meta)}\n`;
       this.pendingLines.push(line);
-      this.emit('changed');
+      this.noteChanged();
       if (!this.flushTimer) {
         this.flushTimer = setTimeout(() => {
           this.flushTimer = null;
@@ -175,6 +177,16 @@ class ActivityLogService extends EventEmitter {
     } catch {
       // never throw from logger
     }
+  }
+
+  /** One UI ping per burst, so a refresh cannot send thousands of log updates. */
+  private noteChanged(): void {
+    if (this.changedTimer) return;
+    this.changedTimer = setTimeout(() => {
+      this.changedTimer = null;
+      this.emit('changed');
+    }, 250);
+    this.changedTimer.unref?.();
   }
 
   /** Flush buffered lines to log-writer worker (or sync fallback). */
@@ -270,25 +282,16 @@ class ActivityLogService extends EventEmitter {
     let truncated = false;
     let remaining = maxBytes;
     const chunks: string[] = [];
-    // Read from newest backwards until budget, then reverse for chronological display.
+    // Newest file first. A large daily log is read from the end only.
     for (let i = files.length - 1; i >= 0 && remaining > 0; i--) {
-      const f = files[i];
-      try {
-        const buf = fs.readFileSync(f);
-        if (buf.length <= remaining) {
-          chunks.unshift(buf.toString('utf8'));
-          remaining -= buf.length;
-        } else {
-          truncated = true;
-          const slice = buf.subarray(buf.length - remaining);
-          let text = slice.toString('utf8');
-          const nl = text.indexOf('\n');
-          if (nl >= 0 && nl < text.length - 1) text = text.slice(nl + 1);
-          chunks.unshift(text);
-          remaining = 0;
-        }
-      } catch {
-        // ignore
+      const part = readTailBytes(files[i], remaining);
+      if (!part.text && part.size === 0) continue;
+      chunks.unshift(part.text);
+      if (part.truncated) {
+        truncated = true;
+        remaining = 0;
+      } else {
+        remaining -= Buffer.byteLength(part.text);
       }
     }
     const text = chunks.join('');
@@ -339,6 +342,11 @@ class ActivityLogService extends EventEmitter {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
+    }
+    if (this.changedTimer) {
+      clearTimeout(this.changedTimer);
+      this.changedTimer = null;
+      this.emit('changed');
     }
     void this.flush(true);
     void destroyLogWriter();

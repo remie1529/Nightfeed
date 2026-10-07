@@ -5,6 +5,7 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
+import { readTailBytes } from '../services/log-file-tail';
 
 const RETENTION_DAYS = 7;
 const FILE_PREFIX = 'nightfeed-';
@@ -100,23 +101,14 @@ function readAll(maxBytes = 2.5 * 1024 * 1024): {
   let remaining = maxBytes;
   const chunks: string[] = [];
   for (let i = files.length - 1; i >= 0 && remaining > 0; i--) {
-    const f = files[i];
-    try {
-      const buf = fs.readFileSync(f);
-      if (buf.length <= remaining) {
-        chunks.unshift(buf.toString('utf8'));
-        remaining -= buf.length;
-      } else {
-        truncated = true;
-        const slice = buf.subarray(buf.length - remaining);
-        let text = slice.toString('utf8');
-        const nl = text.indexOf('\n');
-        if (nl >= 0 && nl < text.length - 1) text = text.slice(nl + 1);
-        chunks.unshift(text);
-        remaining = 0;
-      }
-    } catch {
-      // ignore
+    const part = readTailBytes(files[i], remaining);
+    if (!part.text && part.size === 0) continue;
+    chunks.unshift(part.text);
+    if (part.truncated) {
+      truncated = true;
+      remaining = 0;
+    } else {
+      remaining -= Buffer.byteLength(part.text);
     }
   }
   openDay(dayKey());

@@ -97,6 +97,7 @@ parentPort.on('message', (msg: HuntWorkerRequest) => {
             onLog: (line) => logBuf.push(line),
           });
           logBuf.flush();
+          result.logs = [];
           parentPort!.postMessage({ id: msg.id, ok: true, result });
         } catch (err) {
           logBuf.flush();
@@ -127,6 +128,7 @@ parentPort.on('message', (msg: HuntWorkerRequest) => {
             onLog: (line) => logBuf.push(line),
           });
           logBuf.flush();
+          result.logs = [];
           parentPort!.postMessage({ id: msg.id, ok: true, result });
         } catch (err) {
           logBuf.flush();
