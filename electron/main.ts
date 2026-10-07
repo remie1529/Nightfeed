@@ -153,6 +153,10 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'nfimg',
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, bypassCSP: true },
   },
+  {
+    scheme: 'nfaddon',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, bypassCSP: true },
+  },
 ]);
 
 if (!isCrashWatchdogArg()) {
@@ -4065,6 +4069,25 @@ app.whenReady().then(async () => {
     return;
   }
   try {
+    protocol.handle('nfaddon', (request) => {
+      let addonId = '';
+      let pageId = '';
+      try {
+        const url = new URL(request.url);
+        addonId = url.searchParams.get('addon') || '';
+        pageId = url.searchParams.get('page') || '';
+      } catch {
+        return new Response('Bad addon page', { status: 400 });
+      }
+      const html = addonHost.renderAddonPage(addonId, pageId);
+      if (!html) return new Response('Addon page not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+      return new Response(html, {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src http: https: data:;",
+        },
+      });
+    });
     protocol.handle('nfimg', async (request) => {
       const file = resolveNfimgFile(request.url);
       if (!file || !fs.existsSync(file)) {

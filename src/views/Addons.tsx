@@ -25,6 +25,7 @@ interface AddonPage {
   pageId: string;
   title: string;
   html: string;
+  rev?: number;
 }
 
 export function compareVersions(left: string, right: string): number {
@@ -43,44 +44,19 @@ export function pageKey(page: { addonId: string; pageId: string }): string {
   return `${page.addonId}:${page.pageId}`;
 }
 
-function pageFrame(html: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><script>
-    (function () {
-      const pending = {};
-      let n = 0;
-      window.nightfeed = {
-        call(action, payload) {
-          const id = ++n;
-          return new Promise(function (resolve) {
-            pending[id] = resolve;
-            parent.postMessage({ source: 'nf-addon', id: id, action: action, payload: payload || null }, '*');
-          });
-        }
-      };
-      window.addEventListener('message', function (e) {
-        const data = e.data;
-        if (!data || data.source !== 'nf-addon-result') return;
-        const done = pending[data.id];
-        if (!done) return;
-        delete pending[data.id];
-        done(data.result);
-      });
-    })();
-  </script></head><body>${html}</body></html>`;
-}
-
 export function AddonPageView({
   addonId,
   pageId,
   title,
-  html,
+  rev = 0,
 }: {
   addonId: string;
   pageId: string;
   title: string;
-  html: string;
+  rev?: number;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const src = `nfaddon://page/?addon=${encodeURIComponent(addonId)}&page=${encodeURIComponent(pageId)}&rev=${rev}`;
   useEffect(() => {
     const onMessage = async (event: MessageEvent) => {
       if (event.source !== frameRef.current?.contentWindow) return;
@@ -103,8 +79,8 @@ export function AddonPageView({
         ref={frameRef}
         className="addon-frame addon-frame-fill"
         title={title}
-        sandbox="allow-scripts"
-        srcDoc={pageFrame(html)}
+        sandbox="allow-scripts allow-popups"
+        src={src}
       />
     </div>
   );
@@ -298,7 +274,7 @@ export default function Addons() {
                   Close
                 </button>
               </div>
-              <AddonPageView addonId={openPage.addonId} pageId={openPage.pageId} title={openPage.title} html={openPage.html} />
+              <AddonPageView addonId={openPage.addonId} pageId={openPage.pageId} title={openPage.title} rev={openPage.rev || 0} />
             </section>
           )}
         </>
