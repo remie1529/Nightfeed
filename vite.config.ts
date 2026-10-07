@@ -87,6 +87,19 @@ export default defineConfig({
         },
       },
       {
+        entry: 'electron/workers/addon-worker.ts',
+        onstart() {},
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            emptyOutDir: false,
+            rollupOptions: {
+              external: electronExternal,
+            },
+          },
+        },
+      },
+      {
         entry: 'electron/workers/metadata-worker.ts',
         onstart() {},
         vite: {

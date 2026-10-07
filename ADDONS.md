@@ -1,8 +1,8 @@
 # Nightfeed addons
 
-Addons are small JavaScript packages that Nightfeed loads in its main process. An approved addon appears in the in-app store. Anyone can also install an addon from a file on their own PC.
+Addons are small JavaScript packages. An approved addon appears in the in-app store. Anyone can also install an addon from a file on their own PC.
 
-An addon runs with the same power as Nightfeed. It can read and change the library through the API below. Install only addons you trust. A local addon is not reviewed.
+Each enabled addon runs in its own background worker, one process per addon. The window process stays up if that worker crashes or spends a long time in `activate`. The addon still uses Node (`fs`, `path`, network) and the API below to read and change the library. Install only addons you trust. A local addon is not reviewed.
 
 ## Package
 
