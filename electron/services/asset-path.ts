@@ -19,9 +19,11 @@ export function resolveDistElectronAsset(filename: string): string {
 }
 
 /**
- * NODE_PATH entries so a script running from app.asar.unpacked can still
- * require() packages that live only inside app.asar/node_modules (and prefer
- * unpacked natives like utp-native / koffi).
+ * Candidate node_modules folders for a packaged utility process.
+ * Electron builds that process with kNoGlobalSearchPaths, so assigning
+ * NODE_PATH does not change lookup. torrent-utility still patches
+ * Module._nodeModulePaths. These entries stay for any host that does honor
+ * NODE_PATH, with unpacked natives (utp-native, koffi) listed first.
  */
 export function packagedNodeModulePaths(): string[] {
   try {

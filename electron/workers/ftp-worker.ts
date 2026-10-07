@@ -3,6 +3,7 @@
  */
 import { parentPort, workerData } from 'worker_threads';
 import path from 'path';
+import './utility-module-paths';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ftp = require('basic-ftp');

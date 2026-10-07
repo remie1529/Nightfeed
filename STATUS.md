@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.28 — Addons can refresh the store, and installed addons show Update.
+**Current:** v2.4.29 — Downloads run in the background worker again.
+
+# Status v2.4.29
+
+## Fixed
+- The download worker loads WebTorrent's dependencies in the installed app
+- FTP upload worker can load basic-ftp from the installed app
 
 # Status v2.4.28
 
