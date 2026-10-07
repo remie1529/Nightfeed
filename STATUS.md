@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.26 — Addon pages render instead of opening blank.
+**Current:** v2.4.27 — A title that is not in the library can still open its metadata screen.
+
+# Status v2.4.27
+
+## Added
+- Show and movie metadata screens load before the title is added
+- Add on that screen keeps only unaired episodes for a series
 
 # Status v2.4.26
 

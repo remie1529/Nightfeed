@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.27
+
+### Added
+- Opening a show or movie that is not in the library yet still shows its metadata screen, with Add
+
 ## 2.4.26
 
 ### Fixed

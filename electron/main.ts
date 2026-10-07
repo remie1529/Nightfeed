@@ -3073,6 +3073,30 @@ function registerIpc() {
     );
   });
 
+  ipcMain.handle('library:preview', async (_e, mazeId: number) => {
+    const id = Number(mazeId);
+    if (!Number.isFinite(id) || id <= 0) throw new Error('Unknown show');
+    const settings = getSettings();
+    const existing = getShows().find((s) => s.tmdbId === id);
+    if (existing) {
+      return applyLocalStatuses(
+        existing,
+        settings.libraryRoot,
+        downloadingKeys(),
+        tvRoots(settings),
+        episodeMetaMaps()
+      );
+    }
+    return fetchShowDetail(
+      id,
+      settings.libraryRoot || '',
+      undefined,
+      downloadingKeys(),
+      tvRoots(settings),
+      episodeMetaMaps()
+    );
+  });
+
   ipcMain.handle('library:add', async (_e, mazeId: number, policy?: AddShowPolicy) => {
     const show = await addShowWithPolicy(mazeId, policy || 'manual');
     activityLog.info('library', `Added show: ${show?.name || mazeId}`, {
@@ -3572,6 +3596,21 @@ function registerIpc() {
     const movie = getMovies().find((m) => m.tmdbId === tmdbId);
     if (!movie) return null;
     return withMovieLocalStatus(movie);
+  });
+
+  ipcMain.handle('movies:preview', async (_e, tmdbId: number) => {
+    const id = Number(tmdbId);
+    if (!Number.isFinite(id) || id <= 0) throw new Error('Unknown movie');
+    const existing = getMovies().find((m) => m.tmdbId === id);
+    if (existing) return withMovieLocalStatus(existing);
+    const settings = getSettings();
+    return fetchMovieDetail(
+      id,
+      settings.movieLibraryRoot || '',
+      null,
+      downloadingMovieIds(),
+      movieRoots(settings)
+    );
   });
 
   ipcMain.handle('media:trailer', async (_e, imdbId: string) => {

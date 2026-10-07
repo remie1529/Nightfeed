@@ -40,6 +40,7 @@ const api = {
     };
   },
   getShow: (mazeId: number) => ipcRenderer.invoke('library:get', mazeId),
+  previewShow: (mazeId: number) => ipcRenderer.invoke('library:preview', mazeId),
   updateShow: (mazeId: number, partial: Record<string, unknown>) =>
     ipcRenderer.invoke('library:update', mazeId, partial),
   refreshShow: (mazeId: number) => ipcRenderer.invoke('library:refresh', mazeId),
@@ -89,6 +90,7 @@ const api = {
   searchMovies: (query: string) => ipcRenderer.invoke('tmdb:searchMovies', query),
   getMovies: () => ipcRenderer.invoke('movies:list'),
   getMovie: (tmdbId: number) => ipcRenderer.invoke('movies:get', tmdbId),
+  previewMovie: (tmdbId: number) => ipcRenderer.invoke('movies:preview', tmdbId),
   getTrailer: (imdbId: string) =>
     ipcRenderer.invoke('media:trailer', imdbId) as Promise<{ url: string | null }>,
   addMovie: (tmdbId: number) => ipcRenderer.invoke('movies:add', tmdbId),

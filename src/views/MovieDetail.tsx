@@ -17,8 +17,10 @@ export default function MovieDetail({
   onRemoved: () => void;
 }) {
   const [movie, setMovie] = useState<Movie | null>(null);
+  const [tracked, setTracked] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -27,8 +29,23 @@ export default function MovieDetail({
   const [showSearch, setShowSearch] = useState(false);
 
   const load = async () => {
-    const m = (await window.torrentAPI.getMovie(tmdbId)) as Movie | null;
+    const stored = (await window.torrentAPI.getMovie(tmdbId)) as Movie | null;
+    const m = stored || ((await window.torrentAPI.previewMovie(tmdbId)) as Movie);
+    setTracked(!!stored);
     setMovie(m);
+  };
+
+  const addToLibrary = async () => {
+    setAdding(true);
+    setError(null);
+    try {
+      await window.torrentAPI.addMovie(tmdbId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdding(false);
+    }
   };
 
   useEffect(() => {
@@ -39,7 +56,11 @@ export default function MovieDetail({
     setRefreshing(true);
     setError(null);
     try {
-      const m = (await window.torrentAPI.refreshMovie(tmdbId)) as Movie;
+      const stored = (await window.torrentAPI.getMovie(tmdbId)) as Movie | null;
+      const m = stored
+        ? ((await window.torrentAPI.refreshMovie(tmdbId)) as Movie)
+        : ((await window.torrentAPI.previewMovie(tmdbId)) as Movie);
+      setTracked(!!stored);
       setMovie(m);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -155,7 +176,13 @@ export default function MovieDetail({
         <button onClick={refresh} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
-        <button className="danger" onClick={remove}>Remove</button>
+        {tracked ? (
+          <button className="danger" onClick={remove}>Remove</button>
+        ) : (
+          <button className="primary" onClick={() => void addToLibrary()} disabled={adding}>
+            {adding ? 'Adding…' : 'Add'}
+          </button>
+        )}
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -173,6 +200,9 @@ export default function MovieDetail({
               : null}
           </div>
           <p style={{ color: 'var(--text-dim)', maxWidth: 680 }}>{movie.overview}</p>
+          {!tracked && (
+            <p className="hint" style={{ marginTop: 8 }}>Not in your library yet.</p>
+          )}
 
           {movie.localPath && (
             <div className="mono" style={{ color: 'var(--text-faint)', fontSize: '0.8rem', marginTop: 8 }}>
@@ -180,7 +210,7 @@ export default function MovieDetail({
             </div>
           )}
 
-          <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 520 }}>
+          {tracked && <div className="form-grid" style={{ marginTop: '1.25rem', maxWidth: 520 }}>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label className="toggle-row">
                 <input
@@ -232,9 +262,9 @@ export default function MovieDetail({
                 ) : null}
               </select>
             </div>
-          </div>
+          </div>}
 
-          <div className="toolbar" style={{ marginTop: '1.25rem' }}>
+          {tracked && <div className="toolbar" style={{ marginTop: '1.25rem' }}>
             <button
               className="primary"
               disabled={movie.status === 'downloaded' || movie.status === 'downloading' || searching}
@@ -253,7 +283,7 @@ export default function MovieDetail({
             >
               Get…
             </button>
-          </div>
+          </div>}
         </div>
       </div>
 
