@@ -27,6 +27,18 @@ interface AddonPage {
   html: string;
 }
 
+export function compareVersions(left: string, right: string): number {
+  const parse = (value: string) => value.split(/[^0-9]+/).filter(Boolean).map((part) => Number(part));
+  const a = parse(left);
+  const b = parse(right);
+  const count = Math.max(a.length, b.length);
+  for (let i = 0; i < count; i++) {
+    const diff = (a[i] || 0) - (b[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 export function pageKey(page: { addonId: string; pageId: string }): string {
   return `${page.addonId}:${page.pageId}`;
 }
@@ -89,7 +101,7 @@ export default function Addons() {
     }
   };
 
-  const installedIds = new Set(installed.map((item) => item.id));
+  const installedById = new Map(installed.map((item) => [item.id, item]));
   const openPage = pages.find((page) => pageKey(page) === openKey) || null;
 
   return (
@@ -127,7 +139,8 @@ export default function Addons() {
             </div>
           )}
           {catalog.map((item) => {
-            const have = installedIds.has(item.id);
+            const current = installedById.get(item.id);
+            const newer = !!current && compareVersions(item.version, current.version) > 0;
             return (
               <article key={item.id} className="addon-card">
                 <h2>{item.name}</h2>
@@ -135,15 +148,16 @@ export default function Addons() {
                   {item.version}
                   {item.author ? ` · ${item.author}` : ''}
                   {' · Approved'}
+                  {newer ? ` · Installed ${current?.version}` : ''}
                 </p>
                 <p>{item.description}</p>
                 <button
                   type="button"
                   className="primary"
-                  disabled={have || busy === item.id}
+                  disabled={(!!current && !newer) || busy === item.id}
                   onClick={() => void run(item.id, () => window.torrentAPI.installStoreAddon(item.id))}
                 >
-                  {have ? 'Installed' : busy === item.id ? 'Installing…' : 'Install'}
+                  {busy === item.id ? (newer ? 'Updating…' : 'Installing…') : newer ? 'Update' : current ? 'Installed' : 'Install'}
                 </button>
               </article>
             );
@@ -173,6 +187,8 @@ export default function Addons() {
                 <tbody>
                   {installed.map((item) => {
                     const ownPages = pages.filter((page) => page.addonId === item.id);
+                    const storeItem = catalog.find((entry) => entry.id === item.id);
+                    const newer = !!storeItem && compareVersions(storeItem.version, item.version) > 0;
                     return (
                       <tr key={item.id}>
                         <td>
@@ -180,6 +196,7 @@ export default function Addons() {
                           <div className="addon-meta">
                             {item.version || '—'}
                             {item.author ? ` · ${item.author}` : ''}
+                            {newer ? ` · Update ${storeItem?.version} in the store` : ''}
                           </div>
                           {item.description ? <div className="addon-meta">{item.description}</div> : null}
                           {item.error ? <div className="error-banner" style={{ marginTop: 6 }}>{item.error}</div> : null}

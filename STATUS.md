@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.23 — Installed addon pages are left-nav tabs.
+**Current:** v2.4.24 — The addon store can update one addon without updating Nightfeed.
+
+# Status v2.4.24
+
+## Added
+- Update appears when the approved addon version is newer
+- That update replaces only the addon
 
 # Status v2.4.23
 
