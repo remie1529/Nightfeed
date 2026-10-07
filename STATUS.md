@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.22 — Addons store, local installs, and an addon manager.
+**Current:** v2.4.23 — Installed addon pages are left-nav tabs.
+
+# Status v2.4.23
+
+## Fixed
+- Library count and other addon pages appear in the left menu
 
 # Status v2.4.22
 

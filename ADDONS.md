@@ -80,7 +80,7 @@ Lines are written to the activity log with category `addon`. Do not log password
 
 ### Pages
 
-- `api.ui.addPage({ id, title, html })` adds a page. The id is unique inside this addon.
+- `api.ui.addPage({ id, title, html })` adds a page and a left-nav tab with that title. The id is unique inside this addon. The tab is there only while the addon is installed and turned on.
 - `api.ui.setPage(id, html)` replaces that page’s HTML. The Addons screen shows the new HTML.
 
 Page HTML is shown in a frame that cannot read Nightfeed’s own page. Use the API from `index.js` to change the library, then push new HTML with `setPage`.

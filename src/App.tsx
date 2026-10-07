@@ -6,7 +6,7 @@ import Movies from './views/Movies';
 import MovieDetail from './views/MovieDetail';
 import Downloads from './views/Downloads';
 import Requests from './views/Requests';
-import Addons from './views/Addons';
+import Addons, { AddonPageView, pageKey } from './views/Addons';
 import SettingsView from './views/Settings';
 import LogView from './views/LogView';
 import LiveTvView from './views/LiveTv';
@@ -19,6 +19,7 @@ type View =
   | 'downloads'
   | 'requests'
   | 'addons'
+  | 'addon'
   | 'settings'
   | 'show'
   | 'movie'
@@ -47,6 +48,8 @@ export default function App() {
   const [appVersion, setAppVersion] = useState('');
   const [liveTvOn, setLiveTvOn] = useState(false);
   const [bootReady, setBootReady] = useState(false);
+  const [addonPages, setAddonPages] = useState<Array<{ addonId: string; pageId: string; title: string; html: string }>>([]);
+  const [addonPageKey, setAddonPageKey] = useState<string | null>(null);
 
   useEffect(() => {
     const markReady = () => setBootReady(true);
@@ -67,6 +70,29 @@ export default function App() {
       setTimeout(() => splash.remove(), 280);
     }
   }, [bootReady]);
+
+  useEffect(() => {
+    if (!bootReady) return;
+    const loadPages = () => {
+      window.torrentAPI
+        .getAddonPages?.()
+        .then((pages) => {
+          const list = Array.isArray(pages) ? pages : [];
+          setAddonPages(list);
+          setAddonPageKey((current) =>
+            current && list.some((page) => pageKey(page) === current) ? current : null
+          );
+        })
+        .catch(() => undefined);
+    };
+    loadPages();
+    const offPages = window.torrentAPI.onAddonsChanged?.(loadPages);
+    return () => offPages?.();
+  }, [bootReady]);
+
+  useEffect(() => {
+    if (view === 'addon' && !addonPageKey) setView('addons');
+  }, [view, addonPageKey]);
 
   useEffect(() => {
     if (!bootReady) return;
@@ -205,6 +231,21 @@ export default function App() {
         >
           Addons
         </button>
+        {addonPages.map((page) => {
+          const key = pageKey(page);
+          return (
+            <button
+              key={key}
+              className={`nav-item ${view === 'addon' && addonPageKey === key ? 'active' : ''}`}
+              onClick={() => {
+                setAddonPageKey(key);
+                setView('addon');
+              }}
+            >
+              {page.title}
+            </button>
+          );
+        })}
         {liveTvOn && (
           <button
             className={`nav-item ${view === 'livetv' ? 'active' : ''}`}
@@ -272,6 +313,12 @@ export default function App() {
         {view === 'downloads' && <Downloads />}
         {view === 'requests' && <Requests refreshToken={requestsKey} />}
         {view === 'addons' && <Addons />}
+        {view === 'addon' && addonPageKey && (
+          <AddonPageView
+            title={addonPages.find((page) => pageKey(page) === addonPageKey)?.title || 'Addon'}
+            html={addonPages.find((page) => pageKey(page) === addonPageKey)?.html || ''}
+          />
+        )}
         {view === 'livetv' && liveTvOn && <LiveTvView />}
         {view === 'settings' && <SettingsView onOpenLog={() => setView('log')} />}
         {view === 'log' && <LogView onBack={() => setView('settings')} />}
