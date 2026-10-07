@@ -3,8 +3,8 @@
     {
       "id": "nightfeed.library-count",
       "name": "Library count",
-      "version": "1.0.0",
-      "description": "Adds a page that shows how many shows and movies are in your library.",
+      "version": "1.1.0",
+      "description": "Library stats for TV shows and movies, in the Nightfeed style.",
       "author": "Nightfeed",
       "dir": "approved/library-count"
     }
