@@ -83,6 +83,7 @@ let ctx: AddonContext | null = null;
 const loaded = new Map<string, LoadedAddon>();
 const pages = new Map<string, AddonPage>();
 const loadErrors = new Map<string, string>();
+const actionHandlers = new Map<string, (action: string, payload: unknown) => unknown>();
 
 function rootDir(): string {
   if (!ctx) throw new Error('Addons are not ready');
@@ -228,6 +229,15 @@ function createApi(addonId: string, addonName: string) {
         existing.html = String(html || '');
         ctx?.broadcast('addons:page', existing);
       },
+      onAction(fn: (action: string, payload: unknown) => unknown) {
+        if (typeof fn === 'function') actionHandlers.set(addonId, fn);
+      },
+      openShow(id: number) {
+        ctx?.broadcast('addons:navigate', { kind: 'show', id: Number(id) });
+      },
+      openMovie(id: number) {
+        ctx?.broadcast('addons:navigate', { kind: 'movie', id: Number(id) });
+      },
     },
     events: {
       onLibraryChanged(fn: () => void) {
@@ -260,6 +270,7 @@ function unload(id: string) {
   for (const key of [...pages.keys()]) {
     if (key.startsWith(`${id}:`)) pages.delete(key);
   }
+  actionHandlers.delete(id);
   loaded.delete(id);
 }
 
@@ -584,6 +595,12 @@ export function removeAddon(id: string): InstalledAddon[] {
   writeState(all.filter((item) => item.id !== id));
   pushPages();
   return listInstalled();
+}
+
+export async function handleAddonAction(addonId: string, action: string, payload: unknown) {
+  const fn = actionHandlers.get(String(addonId || ''));
+  if (!fn) throw new Error('This addon is not running');
+  return plain(await fn(String(action || ''), payload));
 }
 
 export function startAddons(next: AddonContext) {

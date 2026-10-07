@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.24 — The addon store can update one addon without updating Nightfeed.
+**Current:** v2.4.25 — Addon pages can call the addon and open a library title.
+
+# Status v2.4.25
+
+## Added
+- Addon page buttons can talk to the addon
+- Open a show or movie that is already in the library, then return to the addon tab
 
 # Status v2.4.24
 
