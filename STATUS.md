@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.29 — Downloads run in the background worker again.
+**Current:** v2.4.30 — Each installed addon runs in its own worker.
+
+# Status v2.4.30
+
+## Changed
+- An enabled addon runs in a separate background process
+- The addon API is unchanged
 
 # Status v2.4.29
 

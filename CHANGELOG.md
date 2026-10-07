@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.30
+
+### Changed
+- Each installed addon runs in its own background worker. The rest of Nightfeed keeps running if that addon crashes
+
 ## 2.4.29
 
 ### Fixed

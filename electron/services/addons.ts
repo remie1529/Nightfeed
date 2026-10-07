@@ -1,10 +1,10 @@
 import { execFile } from 'child_process';
-import { dialog } from 'electron';
+import { dialog, utilityProcess } from 'electron';
 import fs from 'fs';
-import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { resolveDistElectronAsset, buildUtilityProcessEnv } from './asset-path';
 
 const execFileAsync = promisify(execFile);
 const CATALOG_URL = 'https://raw.githubusercontent.com/remie1529/Nightfeed/main/addons/catalog.json';
@@ -72,19 +72,25 @@ interface AddonContext {
   broadcast: (channel: string, payload?: unknown) => void;
 }
 
-interface LoadedAddon {
-  record: RecordedAddon;
-  manifest: Manifest;
-  deactivate?: () => void;
-  libraryListeners: Array<() => void>;
-  downloadListeners: Array<() => void>;
+interface AddonWorker {
+  id: string;
+  name: string;
+  token: number;
+  child: ReturnType<typeof utilityProcess.fork>;
+  ready: boolean;
+  stopping: boolean;
+  done: boolean;
+  finish: ((error: string | null) => void) | null;
+  actions: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>;
 }
 
 let ctx: AddonContext | null = null;
-const loaded = new Map<string, LoadedAddon>();
+const workers = new Map<string, AddonWorker>();
 const pages = new Map<string, AddonPage>();
 const loadErrors = new Map<string, string>();
-const actionHandlers = new Map<string, (action: string, payload: unknown) => unknown>();
+let generation = 0;
+let reloadChain: Promise<void> = Promise.resolve();
+let actionSeq = 0;
 
 function rootDir(): string {
   if (!ctx) throw new Error('Addons are not ready');
@@ -153,6 +159,7 @@ function readManifest(dir: string, requireFiles = true): Manifest {
 }
 
 function plain<T>(value: T): T {
+  if (value === undefined) return null as T;
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
@@ -165,178 +172,280 @@ function pushPages() {
   ctx?.broadcast('addons:changed');
 }
 
-function createApi(addonId: string, addonName: string) {
-  const libraryListeners: Array<() => void> = [];
-  const downloadListeners: Array<() => void> = [];
-  const api = {
-    app: {
-      version: ctx?.version || '',
-      notify(message: string) {
-        ctx?.notify(String(message || '').slice(0, 240));
-      },
-    },
-    log: {
-      info(message: string) {
-        ctx?.log('info', `${addonName}: ${String(message || '').slice(0, 500)}`);
-      },
-      warn(message: string) {
-        ctx?.log('warn', `${addonName}: ${String(message || '').slice(0, 500)}`);
-      },
-    },
-    library: {
-      async listShows() {
-        return plain(ctx?.getShows() || []);
-      },
-      async listMovies() {
-        return plain(ctx?.getMovies() || []);
-      },
-      async addShow(mazeId: number, policy?: 'all' | 'future' | 'manual') {
-        return plain(await ctx!.addShow(Number(mazeId), policy));
-      },
-      async addMovie(imdbNumericId: number) {
-        return plain(await ctx!.addMovie(Number(imdbNumericId)));
-      },
-      async removeShow(mazeId: number) {
-        return plain(await ctx!.removeShow(Number(mazeId)));
-      },
-      async removeMovie(imdbNumericId: number) {
-        return plain(await ctx!.removeMovie(Number(imdbNumericId)));
-      },
-    },
-    downloads: {
-      list() {
-        return plain(ctx?.listDownloads() || []);
-      },
-    },
-    ui: {
-      addPage(page: { id?: string; title?: string; html?: string }) {
-        const pageId = String(page?.id || '').trim();
-        if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(pageId)) {
-          throw new Error('Page id must be lowercase letters, digits, or dashes');
-        }
-        pages.set(pageKey(addonId, pageId), {
-          addonId,
-          addonName,
-          pageId,
-          title: String(page?.title || pageId).slice(0, 80),
-          html: String(page?.html || ''),
-          rev: 1,
-        });
-        pushPages();
-      },
-      setPage(id: string, html: string) {
-        const key = pageKey(addonId, String(id || ''));
-        const existing = pages.get(key);
-        if (!existing) throw new Error(`Unknown page ${id}`);
-        existing.html = String(html || '');
-        existing.rev += 1;
-        ctx?.broadcast('addons:page', existing);
-        ctx?.broadcast('addons:changed');
-      },
-      onAction(fn: (action: string, payload: unknown) => unknown) {
-        if (typeof fn === 'function') actionHandlers.set(addonId, fn);
-      },
-      openShow(id: number) {
-        ctx?.broadcast('addons:navigate', { kind: 'show', id: Number(id) });
-      },
-      openMovie(id: number) {
-        ctx?.broadcast('addons:navigate', { kind: 'movie', id: Number(id) });
-      },
-    },
-    events: {
-      onLibraryChanged(fn: () => void) {
-        if (typeof fn === 'function') libraryListeners.push(fn);
-        return () => {
-          const idx = libraryListeners.indexOf(fn);
-          if (idx >= 0) libraryListeners.splice(idx, 1);
-        };
-      },
-      onDownloadsChanged(fn: () => void) {
-        if (typeof fn === 'function') downloadListeners.push(fn);
-        return () => {
-          const idx = downloadListeners.indexOf(fn);
-          if (idx >= 0) downloadListeners.splice(idx, 1);
-        };
-      },
-    },
-  };
-  return { api, libraryListeners, downloadListeners };
-}
-
-function unload(id: string) {
-  const current = loaded.get(id);
-  if (!current) return;
-  try {
-    current.deactivate?.();
-  } catch {
-    // A broken deactivate must not stop the app.
-  }
+function clearPages(id: string) {
+  let changed = false;
   for (const key of [...pages.keys()]) {
-    if (key.startsWith(`${id}:`)) pages.delete(key);
+    if (key.startsWith(`${id}:`)) {
+      pages.delete(key);
+      changed = true;
+    }
   }
-  actionHandlers.delete(id);
-  loaded.delete(id);
+  if (changed) pushPages();
 }
 
-function loadOne(record: RecordedAddon): InstalledAddon {
-  const dir = path.join(rootDir(), record.dirName);
-  let manifest: Manifest;
+function rejectActions(worker: AddonWorker, error: string) {
+  for (const waiter of worker.actions.values()) waiter.reject(new Error(error));
+  worker.actions.clear();
+}
+
+function stopWorker(id: string) {
+  const worker = workers.get(id);
+  if (!worker) return;
+  worker.stopping = true;
+  workers.delete(id);
+  rejectActions(worker, 'Addon worker stopped');
   try {
-    manifest = readManifest(dir);
-  } catch (err) {
-    return {
-      id: record.id,
-      name: record.id,
-      version: '',
-      description: '',
-      author: '',
-      enabled: record.enabled,
-      source: record.source,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    worker.child.postMessage({ type: 'deactivate' });
+  } catch {
+    // The process may already be gone.
   }
-  const info: InstalledAddon = {
+  const timer = setTimeout(() => {
+    try {
+      worker.child.kill();
+    } catch {
+      // ignore
+    }
+  }, 1500);
+  worker.child.once('exit', () => clearTimeout(timer));
+}
+
+function finishStart(worker: AddonWorker, error: string | null) {
+  if (worker.done) return;
+  worker.done = true;
+  worker.finish?.(error);
+}
+
+function applyAddonEvent(worker: AddonWorker, msg: any) {
+  const addonId = worker.id;
+  const addonName = worker.name;
+  if (msg.event === 'notify') {
+    ctx?.notify(String(msg.message || '').slice(0, 240));
+    return;
+  }
+  if (msg.event === 'log') {
+    const level = msg.level === 'warn' ? 'warn' : 'info';
+    ctx?.log(level, `${addonName}: ${String(msg.message || '').slice(0, 500)}`);
+    return;
+  }
+  if (msg.event === 'addPage') {
+    const pageId = String(msg.pageId || '').trim();
+    if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(pageId)) return;
+    pages.set(pageKey(addonId, pageId), {
+      addonId,
+      addonName,
+      pageId,
+      title: String(msg.title || pageId).slice(0, 80),
+      html: String(msg.html || ''),
+      rev: 1,
+    });
+    pushPages();
+    return;
+  }
+  if (msg.event === 'setPage') {
+    const existing = pages.get(pageKey(addonId, String(msg.pageId || '')));
+    if (!existing) return;
+    existing.html = String(msg.html || '');
+    existing.rev += 1;
+    ctx?.broadcast('addons:page', existing);
+    ctx?.broadcast('addons:changed');
+    return;
+  }
+  if (msg.event === 'openShow') {
+    ctx?.broadcast('addons:navigate', { kind: 'show', id: Number(msg.id) });
+    return;
+  }
+  if (msg.event === 'openMovie') {
+    ctx?.broadcast('addons:navigate', { kind: 'movie', id: Number(msg.id) });
+  }
+}
+
+async function answerCall(worker: AddonWorker, msg: { requestId: number; method?: string; args?: unknown[] }) {
+  const args = Array.isArray(msg.args) ? msg.args : [];
+  try {
+    let result: unknown = null;
+    if (msg.method === 'listShows') result = plain(ctx?.getShows() || []);
+    else if (msg.method === 'listMovies') result = plain(ctx?.getMovies() || []);
+    else if (msg.method === 'addShow') result = plain(await ctx!.addShow(Number(args[0]), args[1] as 'all' | 'future' | 'manual' | undefined));
+    else if (msg.method === 'addMovie') result = plain(await ctx!.addMovie(Number(args[0])));
+    else if (msg.method === 'removeShow') result = plain(await ctx!.removeShow(Number(args[0])));
+    else if (msg.method === 'removeMovie') result = plain(await ctx!.removeMovie(Number(args[0])));
+    else throw new Error('Unknown addon call');
+    if (worker.stopping) return;
+    worker.child.postMessage({ type: 'call-result', requestId: msg.requestId, ok: true, result });
+  } catch (err) {
+    if (worker.stopping) return;
+    const error = err instanceof Error ? err.message : String(err);
+    try {
+      worker.child.postMessage({ type: 'call-result', requestId: msg.requestId, ok: false, error });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function markWorkerStopped(worker: AddonWorker, error: string) {
+  if (worker.stopping || worker.token !== generation) return;
+  workers.delete(worker.id);
+  worker.stopping = true;
+  rejectActions(worker, error);
+  try {
+    worker.child.kill();
+  } catch {
+    // ignore
+  }
+  loadErrors.set(worker.id, error);
+  clearPages(worker.id);
+  ctx?.log('warn', `${worker.name}: ${error}`);
+  ctx?.broadcast('addons:changed');
+}
+
+function launchWorker(record: RecordedAddon, manifest: Manifest, token: number): Promise<void> {
+  const script = resolveDistElectronAsset('addon-worker.js');
+  if (!fs.existsSync(script)) {
+    const error = 'addon-worker.js missing';
+    loadErrors.set(manifest.id, error);
+    ctx?.log('warn', `${manifest.name}: ${error}`);
+    return Promise.resolve();
+  }
+  const mainFile = path.join(rootDir(), record.dirName, manifest.main);
+  let stderr = '';
+  const child = utilityProcess.fork(script, [], {
+    serviceName: `addon-${manifest.id.replace(/[^a-z0-9-]/g, '-')}`.slice(0, 48),
+    stdio: 'pipe',
+    env: buildUtilityProcessEnv(),
+  });
+  const worker: AddonWorker = {
     id: manifest.id,
     name: manifest.name,
-    version: manifest.version,
-    description: manifest.description,
-    author: manifest.author,
-    enabled: record.enabled,
-    source: record.source,
-    error: '',
+    token,
+    child,
+    ready: false,
+    stopping: false,
+    done: false,
+    finish: null,
+    actions: new Map(),
   };
-  if (!record.enabled) return info;
-  loadErrors.delete(manifest.id);
-  try {
-    unload(manifest.id);
-    const mainFile = path.join(dir, manifest.main);
-    const req = createRequire(mainFile);
-    delete req.cache[req.resolve(mainFile)];
-    const mod = req(mainFile) as { activate?: (api: unknown) => unknown; deactivate?: () => void };
-    if (typeof mod.activate !== 'function') throw new Error('index.js must export activate(api)');
-    const built = createApi(manifest.id, manifest.name);
-    const result = mod.activate(built.api);
-    if (result && typeof (result as Promise<unknown>).then === 'function') {
-      (result as Promise<unknown>).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        loadErrors.set(manifest.id, message);
-        ctx?.log('warn', `${manifest.name} failed: ${message}`);
-        ctx?.broadcast('addons:changed');
-      });
+  if (token !== generation) {
+    try {
+      child.kill();
+    } catch {
+      // ignore
     }
-    loaded.set(manifest.id, {
-      record,
-      manifest,
-      deactivate: typeof mod.deactivate === 'function' ? mod.deactivate : undefined,
-      libraryListeners: built.libraryListeners,
-      downloadListeners: built.downloadListeners,
+    return Promise.resolve();
+  }
+  workers.set(manifest.id, worker);
+  const outcome = new Promise<string | null>((resolve) => {
+    worker.finish = resolve;
+  });
+  const timer = setTimeout(() => finishStart(worker, 'Addon worker did not start'), 20000);
+
+  child.stderr?.on('data', (buf: Buffer) => {
+    stderr = (stderr + buf.toString()).slice(-800);
+  });
+  child.on('message', (msg: any) => {
+    if (worker.stopping || worker.token !== generation) return;
+    if (msg?.type === 'call') {
+      void answerCall(worker, msg);
+      return;
+    }
+    if (msg?.type === 'event') {
+      applyAddonEvent(worker, msg);
+      return;
+    }
+    if (msg?.type === 'ready') {
+      worker.ready = true;
+      clearTimeout(timer);
+      finishStart(worker, null);
+      return;
+    }
+    if (msg?.type === 'failed') {
+      clearTimeout(timer);
+      if (!worker.ready) finishStart(worker, String(msg.error || 'Addon failed'));
+      else markWorkerStopped(worker, String(msg.error || 'Addon failed'));
+      return;
+    }
+    if (msg?.type === 'activate-error') {
+      const error = String(msg.error || 'Addon failed');
+      loadErrors.set(worker.id, error);
+      ctx?.log('warn', `${worker.name}: ${error}`);
+      ctx?.broadcast('addons:changed');
+      return;
+    }
+    if (msg?.type === 'action-result') {
+      const waiter = worker.actions.get(msg.requestId);
+      if (!waiter) return;
+      worker.actions.delete(msg.requestId);
+      if (msg.ok) waiter.resolve(msg.result);
+      else waiter.reject(new Error(msg.error || 'Addon action failed'));
+    }
+  });
+  child.on('exit', (code) => {
+    clearTimeout(timer);
+    if (!worker.ready) {
+      const detail = stderr.trim().slice(0, 300);
+      finishStart(worker, detail || `Addon worker exited (${code})`);
+      return;
+    }
+    if (!worker.stopping) markWorkerStopped(worker, `Addon worker exited (${code})`);
+  });
+
+  try {
+    child.postMessage({
+      type: 'load',
+      mainFile,
+      addonId: manifest.id,
+      addonName: manifest.name,
+      version: ctx?.version || '',
+      downloads: plain(ctx?.listDownloads() || []),
     });
   } catch (err) {
-    info.error = err instanceof Error ? err.message : String(err);
-    loadErrors.set(manifest.id, info.error);
-    ctx?.log('warn', `${manifest.name} failed: ${info.error}`);
+    clearTimeout(timer);
+    finishStart(worker, err instanceof Error ? err.message : String(err));
   }
-  return info;
+
+  return outcome.then((error) => {
+    if (token !== generation || worker.stopping) return;
+    if (error) {
+      loadErrors.set(manifest.id, error);
+      ctx?.log('warn', `${manifest.name}: ${error}`);
+      stopWorker(manifest.id);
+      return;
+    }
+    loadErrors.delete(manifest.id);
+    ctx?.log('info', `${manifest.name}: worker started`);
+  });
+}
+
+async function reloadNow(): Promise<void> {
+  const token = ++generation;
+  for (const id of [...workers.keys()]) stopWorker(id);
+  pages.clear();
+  const records = readState();
+  await Promise.all(
+    records.map(async (record) => {
+      if (!record.enabled || token !== generation) return;
+      const dir = path.join(rootDir(), record.dirName);
+      let manifest: Manifest;
+      try {
+        manifest = readManifest(dir);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        loadErrors.set(record.id, error);
+        ctx?.log('warn', `${record.id}: ${error}`);
+        return;
+      }
+      if (token !== generation) return;
+      await launchWorker(record, manifest, token);
+    })
+  );
+  if (token !== generation) return;
+  pushPages();
+}
+
+function reloadAddons(): Promise<void> {
+  const run = reloadChain.then(() => reloadNow());
+  reloadChain = run.catch(() => undefined);
+  return run;
 }
 
 export function listInstalled(): InstalledAddon[] {
@@ -401,37 +510,23 @@ export function renderAddonPage(addonId: string, pageId: string): string | null 
   </script></head><body>${page.html}</body></html>`;
 }
 
-export function touchLibrary() {
-  for (const addon of loaded.values()) {
-    for (const fn of addon.libraryListeners) {
-      try {
-        fn();
-      } catch (err) {
-        ctx?.log('warn', `${addon.manifest.name}: ${err instanceof Error ? err.message : String(err)}`);
-      }
+function postToWorkers(msg: unknown) {
+  for (const worker of workers.values()) {
+    if (worker.stopping) continue;
+    try {
+      worker.child.postMessage(msg);
+    } catch {
+      // ignore
     }
   }
+}
+
+export function touchLibrary() {
+  postToWorkers({ type: 'library-changed' });
 }
 
 export function touchDownloads() {
-  for (const addon of loaded.values()) {
-    for (const fn of addon.downloadListeners) {
-      try {
-        fn();
-      } catch (err) {
-        ctx?.log('warn', `${addon.manifest.name}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-}
-
-export function reloadAddons() {
-  for (const id of [...loaded.keys()]) unload(id);
-  pages.clear();
-  for (const record of readState()) {
-    if (record.enabled) loadOne(record);
-  }
-  pushPages();
+  postToWorkers({ type: 'downloads-changed', items: plain(ctx?.listDownloads() || []) });
 }
 
 async function readCatalogFile(): Promise<CatalogAddon[]> {
@@ -520,11 +615,11 @@ async function materializeStoreAddon(entry: CatalogAddon): Promise<string> {
   }
 }
 
-function remember(record: RecordedAddon) {
+async function remember(record: RecordedAddon) {
   const all = readState().filter((item) => item.id !== record.id);
   all.push(record);
   writeState(all);
-  reloadAddons();
+  await reloadAddons();
 }
 
 export async function installFromStore(id: string): Promise<InstalledAddon[]> {
@@ -533,7 +628,7 @@ export async function installFromStore(id: string): Promise<InstalledAddon[]> {
   if (!entry) throw new Error('That addon is not in the approved store');
   const dirName = await materializeStoreAddon(entry);
   const manifest = readManifest(path.join(rootDir(), dirName));
-  remember({ id: manifest.id, enabled: true, source: 'store', dirName });
+  await remember({ id: manifest.id, enabled: true, source: 'store', dirName });
   return listInstalled();
 }
 
@@ -601,42 +696,72 @@ export async function installFromDialog(): Promise<InstalledAddon[]> {
       fs.rmSync(finalDir, { recursive: true, force: true });
       fs.renameSync(path.join(rootDir(), 'pending'), finalDir);
     }
-    remember({ id: manifest.id, enabled: true, source: 'file', dirName });
+    await remember({ id: manifest.id, enabled: true, source: 'file', dirName });
     return listInstalled();
   } finally {
     if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
-export function setEnabled(id: string, enabled: boolean): InstalledAddon[] {
+export async function setEnabled(id: string, enabled: boolean): Promise<InstalledAddon[]> {
   const all = readState();
   const record = all.find((item) => item.id === id);
   if (!record) throw new Error('Addon is not installed');
   record.enabled = !!enabled;
   writeState(all);
-  reloadAddons();
+  await reloadAddons();
   return listInstalled();
 }
 
-export function removeAddon(id: string): InstalledAddon[] {
+export async function removeAddon(id: string): Promise<InstalledAddon[]> {
   const all = readState();
   const record = all.find((item) => item.id === id);
   if (!record) return listInstalled();
-  unload(id);
+  stopWorker(id);
+  loadErrors.delete(id);
+  clearPages(id);
   fs.rmSync(path.join(rootDir(), record.dirName), { recursive: true, force: true });
   writeState(all.filter((item) => item.id !== id));
   pushPages();
   return listInstalled();
 }
 
-export async function handleAddonAction(addonId: string, action: string, payload: unknown) {
-  const fn = actionHandlers.get(String(addonId || ''));
-  if (!fn) throw new Error('This addon is not running');
-  return plain(await fn(String(action || ''), payload));
+export function handleAddonAction(addonId: string, action: string, payload: unknown) {
+  const worker = workers.get(String(addonId || ''));
+  if (!worker || !worker.ready || worker.stopping) throw new Error('This addon is not running');
+  const requestId = ++actionSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      worker.actions.delete(requestId);
+      reject(new Error('Addon action timed out'));
+    }, 60000);
+    worker.actions.set(requestId, {
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    });
+    try {
+      worker.child.postMessage({
+        type: 'action',
+        requestId,
+        action: String(action || ''),
+        payload: plain(payload),
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      worker.actions.delete(requestId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
 }
 
 export function startAddons(next: AddonContext) {
   ctx = next;
   fs.mkdirSync(rootDir(), { recursive: true });
-  reloadAddons();
+  void reloadAddons();
 }
