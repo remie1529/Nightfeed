@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.33
+
+### Added
+- Addons can register an admin Telegram command
+- Plex Media Server Control is in the addon store. It shows whether Plex is running, who is watching, and can start, stop, kill, or restart it. Telegram: /plex
+
 ## 2.4.32
 
 ### Changed

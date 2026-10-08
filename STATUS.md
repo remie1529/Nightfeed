@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.32 — Idle Nightfeed restarts itself above 2 GB of RAM.
+**Current:** v2.4.33 — Plex control is in the addon store, including Telegram.
+
+# Status v2.4.33
+
+## Added
+- An addon can register an admin Telegram command with api.telegram.command
+- Plex Media Server Control shows status, viewers, and start, stop, kill, restart, and open web
 
 # Status v2.4.32
 

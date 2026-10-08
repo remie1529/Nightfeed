@@ -82,6 +82,12 @@ interface AddonWorker {
   done: boolean;
   finish: ((error: string | null) => void) | null;
   actions: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>;
+  telegram: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>;
+}
+
+interface TelegramCommand {
+  addonId: string;
+  description: string;
 }
 
 let ctx: AddonContext | null = null;
@@ -91,6 +97,7 @@ const loadErrors = new Map<string, string>();
 let generation = 0;
 let reloadChain: Promise<void> = Promise.resolve();
 let actionSeq = 0;
+const telegramCommands = new Map<string, TelegramCommand>();
 
 function rootDir(): string {
   if (!ctx) throw new Error('Addons are not ready');
@@ -183,9 +190,18 @@ function clearPages(id: string) {
   if (changed) pushPages();
 }
 
-function rejectActions(worker: AddonWorker, error: string) {
-  for (const waiter of worker.actions.values()) waiter.reject(new Error(error));
-  worker.actions.clear();
+function rejectWaiters(
+  waiters: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>,
+  error: string
+) {
+  for (const waiter of waiters.values()) waiter.reject(new Error(error));
+  waiters.clear();
+}
+
+function clearTelegramCommands(addonId: string) {
+  for (const [command, owner] of telegramCommands) {
+    if (owner.addonId === addonId) telegramCommands.delete(command);
+  }
 }
 
 function stopWorker(id: string) {
@@ -193,7 +209,9 @@ function stopWorker(id: string) {
   if (!worker) return;
   worker.stopping = true;
   workers.delete(id);
-  rejectActions(worker, 'Addon worker stopped');
+  clearTelegramCommands(id);
+  rejectWaiters(worker.actions, 'Addon worker stopped');
+  rejectWaiters(worker.telegram, 'Addon worker stopped');
   try {
     worker.child.postMessage({ type: 'deactivate' });
   } catch {
@@ -256,6 +274,15 @@ function applyAddonEvent(worker: AddonWorker, msg: any) {
   }
   if (msg.event === 'openMovie') {
     ctx?.broadcast('addons:navigate', { kind: 'movie', id: Number(msg.id) });
+    return;
+  }
+  if (msg.event === 'telegram') {
+    const command = String(msg.command || '').toLowerCase().replace(/[^a-z0-9-]/g, '');
+    if (!command || command.length > 32) return;
+    telegramCommands.set(command, {
+      addonId,
+      description: String(msg.description || '').slice(0, 120),
+    });
   }
 }
 
@@ -287,7 +314,9 @@ function markWorkerStopped(worker: AddonWorker, error: string) {
   if (worker.stopping || worker.token !== generation) return;
   workers.delete(worker.id);
   worker.stopping = true;
-  rejectActions(worker, error);
+  clearTelegramCommands(worker.id);
+  rejectWaiters(worker.actions, error);
+  rejectWaiters(worker.telegram, error);
   try {
     worker.child.kill();
   } catch {
@@ -324,6 +353,7 @@ function launchWorker(record: RecordedAddon, manifest: Manifest, token: number):
     done: false,
     finish: null,
     actions: new Map(),
+    telegram: new Map(),
   };
   if (token !== generation) {
     try {
@@ -377,6 +407,14 @@ function launchWorker(record: RecordedAddon, manifest: Manifest, token: number):
       worker.actions.delete(msg.requestId);
       if (msg.ok) waiter.resolve(msg.result);
       else waiter.reject(new Error(msg.error || 'Addon action failed'));
+      return;
+    }
+    if (msg?.type === 'telegram-result') {
+      const waiter = worker.telegram.get(msg.requestId);
+      if (!waiter) return;
+      worker.telegram.delete(msg.requestId);
+      if (msg.ok) waiter.resolve(msg.text);
+      else waiter.reject(new Error(msg.error || 'Addon command failed'));
     }
   });
   child.on('exit', (code) => {
@@ -755,6 +793,47 @@ export function handleAddonAction(addonId: string, action: string, payload: unkn
     } catch (err) {
       clearTimeout(timer);
       worker.actions.delete(requestId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+export function listTelegramCommands(): { command: string; description: string }[] {
+  return [...telegramCommands.entries()]
+    .map(([command, info]) => ({ command, description: info.description }))
+    .sort((a, b) => a.command.localeCompare(b.command));
+}
+
+/** Admin Telegram command owned by an addon. Null when this command is not registered. */
+export function handleTelegramCommand(command: string, args: string): Promise<string | null> {
+  const key = String(command || '').toLowerCase().replace(/^\//, '');
+  const owner = telegramCommands.get(key);
+  if (!owner) return Promise.resolve(null);
+  const worker = workers.get(owner.addonId);
+  if (!worker || !worker.ready || worker.stopping) {
+    return Promise.resolve('That addon is not running.');
+  }
+  const requestId = ++actionSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      worker.telegram.delete(requestId);
+      reject(new Error('Addon command timed out'));
+    }, 30000);
+    worker.telegram.set(requestId, {
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolve(String(value ?? ''));
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    });
+    try {
+      worker.child.postMessage({ type: 'telegram', requestId, command: key, args: String(args || '') });
+    } catch (err) {
+      clearTimeout(timer);
+      worker.telegram.delete(requestId);
       reject(err instanceof Error ? err : new Error(String(err)));
     }
   });

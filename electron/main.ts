@@ -2314,6 +2314,7 @@ async function checkForUpdates(manual: boolean): Promise<UpdateStatus> {
 
 function wireTelegram() {
   telegramBot.setSettingsGetter(() => getSettings());
+  telegramBot.setAddonCommandHandler((cmd, args) => addonHost.handleTelegramCommand(cmd, args));
   telegramBot.setHandlers({
     async help(chatId, _args, reply) {
       await reply(
@@ -2336,6 +2337,9 @@ function wireTelegram() {
           '/request-movie <name> — submit a movie request',
           '/approve <id>  /deny <id>  /requests',
           '/help — this list',
+          ...addonHost.listTelegramCommands().map((cmd) =>
+            `/${cmd.command}${cmd.description ? ` — ${cmd.description}` : ''}`
+          ),
         ].join('\n')
       );
     },
