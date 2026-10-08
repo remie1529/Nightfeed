@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.31 — Library refresh no longer floods the log.
+**Current:** v2.4.32 — Idle Nightfeed restarts itself above 2 GB of RAM.
+
+# Status v2.4.32
+
+## Changed
+- A soft reboot runs only when RAM stays above 2 GB and no download, refresh, hunt, or Live TV stream is active
 
 # Status v2.4.31
 

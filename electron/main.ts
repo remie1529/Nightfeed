@@ -114,6 +114,7 @@ import {
 import { uniqueRoots, showRootForSeason, getMovieRoot } from './services/paths';
 import { ensureTvShowNfo } from './services/nfo';
 import { activityLog, summarizeSettingsKeys } from './services/activity-log';
+import { startMemorySoftReboot } from './services/memory-restart';
 import * as addonHost from './services/addons';
 import { ensurePosterCached, resolveNfimgFile } from './services/poster-cache';
 import { randomBytes } from 'crypto';
@@ -210,6 +211,10 @@ let refreshTimer: NodeJS.Timeout | null = null;
 let autoDownloadRunning = false;
 /** Dedupes concurrent manual/scheduled refresh-all runs. */
 let refreshAllInFlight: Promise<Show[]> | null = null;
+/** Folder scan preview or import still running. */
+let libraryScanInFlight = 0;
+/** FTP upload or backup read/write still running. */
+let fileTransferInFlight = 0;
 
 const updateState: UpdateStatus = {
   checking: false,
@@ -1018,6 +1023,7 @@ async function maybeFtpUpload(localPath: string | undefined, label: string): Pro
   const settings = getSettings();
   if (!settings.ftpEnabled || !localPath) return;
   activityLog.info('ftp', `Upload start: ${label}`);
+  fileTransferInFlight += 1;
   try {
     await uploadViaPool(settings, localPath);
     activityLog.info('ftp', `Upload ok: ${label}`);
@@ -1029,6 +1035,8 @@ async function maybeFtpUpload(localPath: string | undefined, label: string): Pro
       `Upload failed: ${label}: ${err instanceof Error ? err.message : String(err)}`
     );
     notify(`FTP upload failed: ${err instanceof Error ? err.message : String(err)}`, 'warn');
+  } finally {
+    fileTransferInFlight = Math.max(0, fileTransferInFlight - 1);
   }
 }
 
@@ -1840,6 +1848,23 @@ function applySettingsSideEffects(next: AppSettings): void {
     void vpnManager.disconnect();
   }
   pushVpnStatus(next);
+}
+
+/** Why a memory soft reboot must wait, or null when the app is idle. */
+function memoryRestartBusy(): string | null {
+  if (refreshAllInFlight) return 'library refresh';
+  if (autoDownloadRunning) return 'torrent hunt';
+  if (libraryScanInFlight > 0) return 'folder scan';
+  if (fileTransferInFlight > 0) return 'file transfer';
+  if (downloadEngine.list().some((item) => item.status === 'downloading' || item.status === 'queued')) {
+    return 'downloads';
+  }
+  if (liveTv.isInUse()) return 'Live TV';
+  if (vpnManager.isConnecting()) return 'VPN connecting';
+  if (updateState.downloaded) return 'an update is ready to install';
+  if (updateState.progress != null) return 'update download';
+  if (updateState.checking) return 'update check';
+  return null;
 }
 
 function scheduleRefresh() {
@@ -3109,7 +3134,9 @@ function registerIpc() {
   // Manual folder mass-import (never auto-runs)
   ipcMain.handle('library:scanPreview', async (_e, scope: LibraryScanScope) => {
     const settings = getSettings();
+    libraryScanInFlight += 1;
     activityLog.info('library', `Folder scan preview (${scope || 'both'})`);
+    try {
     const { preview, usedWorker } = await scanPreviewViaPool({
       scope: scope || 'both',
       tvRoots: tvRoots(settings),
@@ -3131,17 +3158,25 @@ function registerIpc() {
       { worker: usedWorker ? 'library-worker' : 'main-fallback' }
     );
     return preview;
+    } finally {
+      libraryScanInFlight = Math.max(0, libraryScanInFlight - 1);
+    }
   });
 
   ipcMain.handle('library:scanImport', async (_e, items: FolderScanImportItem[]) => {
     const selected = (items || []).filter((i) => i.selected && i.matchId);
+    libraryScanInFlight += 1;
     activityLog.info('library', `Folder scan import start: ${selected.length} selected`);
+    try {
     const result = await runFolderScanImport(items || []);
     activityLog.info(
       'library',
       `Folder scan import done: added ${result.added}, skipped ${result.skipped}, failed ${result.failed}`
     );
     return result;
+    } finally {
+      libraryScanInFlight = Math.max(0, libraryScanInFlight - 1);
+    }
   });
 
 
@@ -3859,10 +3894,14 @@ function registerIpc() {
       filters: [{ name: 'JSON backup', extensions: ['json'] }],
     });
     if (canceled || !filePath) return { ok: false, canceled: true };
-    const fs = await import('fs/promises');
+    fileTransferInFlight += 1;
+    try {
     await writeBackupJsonViaPool(filePath, data);
     activityLog.info('backup', 'Exported backup', { path: filePath });
     return { ok: true, path: filePath };
+    } finally {
+      fileTransferInFlight = Math.max(0, fileTransferInFlight - 1);
+    }
   });
 
   ipcMain.handle('backup:import', async () => {
@@ -3872,7 +3911,8 @@ function registerIpc() {
       properties: ['openFile'],
     });
     if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
-    const fs = await import('fs/promises');
+    fileTransferInFlight += 1;
+    try {
     let parsed: unknown;
     try {
       parsed = await readBackupJsonViaPool(filePaths[0]);
@@ -3903,6 +3943,9 @@ function registerIpc() {
       ),
     });
     return { ok: true, ...counts, path: filePaths[0] };
+    } finally {
+      fileTransferInFlight = Math.max(0, fileTransferInFlight - 1);
+    }
   });
 
     ipcMain.handle('telegram:status', () => telegramBot.getStatus(getSettings()));
@@ -4425,6 +4468,11 @@ app.whenReady().then(async () => {
   applyLoginItem(!!settings.launchOnStartup);
   applyCrashRestartTask(!!settings.restartOnCrash);
   scheduleRefresh();
+  startMemorySoftReboot({
+    isBusy: memoryRestartBusy,
+    log: (message) => activityLog.info('app', message),
+    notify: (message) => notify(message, 'info'),
+  });
   void autoConnectVpnOnLaunch();
   signalUiReady();
   activityLog.info('app', 'UI ready');
