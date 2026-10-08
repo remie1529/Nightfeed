@@ -17,6 +17,7 @@ type HostMsg =
   | { type: 'library-changed' }
   | { type: 'downloads-changed'; items: unknown[] }
   | { type: 'action'; requestId: number; action: string; payload: unknown }
+  | { type: 'telegram'; requestId: number; command: string; args: string }
   | { type: 'deactivate' };
 
 const port = (process as NodeJS.Process & {
@@ -43,6 +44,7 @@ function messageOf(err: unknown): string {
 
 let downloads: unknown[] = [];
 let actionHandler: ((action: string, payload: unknown) => unknown) | null = null;
+const telegramHandlers = new Map<string, (args: string) => unknown>();
 let deactivate: (() => void) | undefined;
 const libraryListeners: Array<() => void> = [];
 const downloadListeners: Array<() => void> = [];
@@ -133,6 +135,21 @@ function createApi(version: string) {
         post({ type: 'event', event: 'openMovie', id: Number(id) });
       },
     },
+    telegram: {
+      command(name: string, spec: { description?: string; run?: (args: string) => unknown } | ((args: string) => unknown)) {
+        const command = String(name || '').toLowerCase().replace(/^\//, '').replace(/[^a-z0-9-]/g, '');
+        if (!command) throw new Error('Telegram command name is empty');
+        const run = typeof spec === 'function' ? spec : spec && spec.run;
+        if (typeof run !== 'function') throw new Error('Telegram command needs a function');
+        telegramHandlers.set(command, run);
+        post({
+          type: 'event',
+          event: 'telegram',
+          command,
+          description: String((typeof spec === 'object' && spec && spec.description) || '').slice(0, 120),
+        });
+      },
+    },
     events: {
       onLibraryChanged(fn: () => void) {
         if (typeof fn === 'function') libraryListeners.push(fn);
@@ -206,6 +223,24 @@ parent.on('message', (event) => {
   if (msg.type === 'downloads-changed') {
     downloads = Array.isArray(msg.items) ? msg.items : [];
     runListeners(downloadListeners);
+    return;
+  }
+  if (msg.type === 'telegram') {
+    void (async () => {
+      try {
+        const fn = telegramHandlers.get(String(msg.command || ''));
+        if (!fn) throw new Error('This addon does not handle that command');
+        const text = await fn(String(msg.args || ''));
+        post({
+          type: 'telegram-result',
+          requestId: msg.requestId,
+          ok: true,
+          text: String(text == null ? '' : text).slice(0, 3500),
+        });
+      } catch (err) {
+        post({ type: 'telegram-result', requestId: msg.requestId, ok: false, error: messageOf(err) });
+      }
+    })();
     return;
   }
   if (msg.type === 'action') {

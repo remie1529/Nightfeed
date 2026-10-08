@@ -7,6 +7,14 @@
       "description": "Library stats for TV shows and movies, in the Nightfeed style.",
       "author": "Nightfeed",
       "dir": "approved/library-count"
+    },
+    {
+      "id": "nightfeed.plex-control",
+      "name": "Plex Media Server Control",
+      "version": "1.0.0",
+      "description": "See if Plex Media Server is running, start or stop it, and check who is watching. Telegram: /plex",
+      "author": "Nightfeed",
+      "dir": "approved/plex-control"
     }
   ]
 }

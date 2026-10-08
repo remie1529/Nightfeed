@@ -94,6 +94,21 @@ const result = await window.nightfeed.call('add', { kind: 'show', id: 123 });
 
 `index.js` receives that through `onAction`. The frame cannot read Nightfeed’s own screens. Use `openShow` and `openMovie` when the title is already in the library.
 
+### Telegram
+
+Admin chats can run a command that the addon registers. Request-only chats cannot.
+
+```js
+api.telegram.command('plex', {
+  description: 'Plex server status, start, stop, kill, or restart',
+  async run(args) {
+    return 'Plex is running';
+  },
+});
+```
+
+`/plex start` arrives as `args === 'start'`. Built-in Nightfeed commands such as `/status` stay with Nightfeed. Do not put bot tokens or passwords in the reply.
+
 ### Events
 
 - `api.events.onLibraryChanged(fn)` runs after the show or movie library changes. It returns an unsubscribe function.
