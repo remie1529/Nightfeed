@@ -137,6 +137,22 @@ button.danger:hover:not(:disabled) { background: rgba(196, 92, 92, 0.16); }
 .sessions li:first-child { border-top: 0; }
 .sessions span { color: var(--text-dim); }
 
+.token-panel { margin-top: 1rem; }
+.steps { margin: 0.4rem 0 0.8rem; padding-left: 1.2rem; color: var(--text-dim); }
+.steps li { margin: 0.25rem 0; }
+.token-row { display: flex; gap: 0.45rem; flex-wrap: wrap; }
+.token-row input {
+  flex: 1 1 220px;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: #0e0e0e;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.7rem;
+}
+.token-row input:focus { outline: 1px solid var(--accent-dim); border-color: var(--accent-dim); }
+
 @media (max-width: 720px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sessions li { flex-direction: column; gap: 0.15rem; }

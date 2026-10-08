@@ -22,6 +22,22 @@ function preferencesPath() {
   return path.join(base, 'Plex Media Server', 'Preferences.xml');
 }
 
+function tokenFile() {
+  const base = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  return path.join(base, 'Nightfeed', 'plex-control-token.txt');
+}
+
+function normalizeToken(raw) {
+  const text = String(raw || '').trim();
+  const fromUrl = text.match(/X-Plex-Token=([^&\s"']+)/i);
+  const token = decodeURIComponent(fromUrl ? fromUrl[1] : text);
+  if (!token) return '';
+  if (!/^[A-Za-z0-9._~-]{8,200}$/.test(token)) {
+    throw new Error('That does not look like a Plex token. Paste only the X-Plex-Token value.');
+  }
+  return token;
+}
+
 function parseDotNetDate(value) {
   if (!value) return null;
   const match = String(value).match(/Date\((\d+)\)/);
@@ -64,10 +80,41 @@ function readPreferences() {
     return {
       friendlyName: readAttr(xml, 'FriendlyName'),
       token: readAttr(xml, 'PlexOnlineToken'),
-      version: '',
     };
   } catch {
-    return { friendlyName: '', token: '', version: '' };
+    return { friendlyName: '', token: '' };
+  }
+}
+
+function readSavedToken() {
+  try {
+    return normalizeToken(fs.readFileSync(tokenFile(), 'utf8'));
+  } catch {
+    return '';
+  }
+}
+
+function tokenInfo() {
+  const prefs = readPreferences();
+  const saved = readSavedToken();
+  if (saved) return { token: saved, source: 'saved', friendlyName: prefs.friendlyName };
+  if (prefs.token) return { token: prefs.token, source: 'plex', friendlyName: prefs.friendlyName };
+  return { token: '', source: '', friendlyName: prefs.friendlyName };
+}
+
+function saveToken(raw) {
+  const token = normalizeToken(raw);
+  if (!token) throw new Error('Paste a Plex token first.');
+  const file = tokenFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, token, { encoding: 'utf8', mode: 0o600 });
+}
+
+function clearToken() {
+  try {
+    fs.unlinkSync(tokenFile());
+  } catch {
+    // already gone
   }
 }
 
@@ -176,7 +223,7 @@ function parseSessions(payload) {
 }
 
 async function serverInfo(running) {
-  const prefs = readPreferences();
+  const auth = tokenInfo();
   let version = '';
   let sessions = [];
   let sessionsNote = '';
@@ -188,22 +235,23 @@ async function serverInfo(running) {
     } catch {
       version = '';
     }
-    if (prefs.token) {
+    if (auth.token) {
       try {
-        const body = await fetchJson('http://127.0.0.1:32400/status/sessions', prefs.token);
+        const body = await fetchJson('http://127.0.0.1:32400/status/sessions', auth.token);
         sessions = parseSessions(body);
       } catch (err) {
         sessionsNote = err && err.message ? err.message : 'Could not read sessions';
       }
     } else {
-      sessionsNote = 'No local Plex token was found, so now playing is hidden.';
+      sessionsNote = 'Paste a Plex token below to show who is watching.';
     }
   }
   return {
-    friendlyName: prefs.friendlyName || 'Plex Media Server',
+    friendlyName: auth.friendlyName || 'Plex Media Server',
     version,
     sessions,
     sessionsNote,
+    tokenSource: auth.source,
   };
 }
 
@@ -223,6 +271,7 @@ async function snapshot(note) {
     version: info.version,
     sessions: info.sessions,
     sessionsNote: info.sessionsNote,
+    tokenSource: info.tokenSource,
     note: note || '',
     checkedAt: new Date().toISOString(),
   };
@@ -296,7 +345,9 @@ function telegramText(status) {
       lines.push('- ' + item.title + (who ? ' (' + who + ')' : '') + (item.progress ? ' ' + item.progress : ''));
     }
   } else if (status.running) {
-    lines.push('', status.sessionsNote || 'Nobody is watching.');
+    lines.push('', status.tokenSource
+      ? (status.sessionsNote || 'Nobody is watching.')
+      : 'Nobody is watching, or no Plex token is saved. Add it on the Plex tab in Nightfeed.');
   }
   if (status.note) lines.push('', status.note);
   lines.push('', '/plex status | start | stop | kill | restart | web');
@@ -321,6 +372,8 @@ async function runCommand(args) {
 
 module.exports = {
   snapshot,
+  saveToken,
+  clearToken,
   startServer,
   stopServer,
   restartServer,
