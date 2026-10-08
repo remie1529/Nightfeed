@@ -716,6 +716,12 @@ class LiveTvServer {
   private xmltvByChannel = new Map<string, string>();
   private refreshTimer: NodeJS.Timeout | null = null;
   private ffmpegPath: string | null = null;
+  private refreshing = false;
+
+  /** A tuner is streaming, or the channel list is being refreshed. */
+  isInUse(): boolean {
+    return this.slots.size > 0 || this.refreshing;
+  }
 
   sync(settings: AppSettings): void {
     this.ffmpegPath = detectFfmpeg(settings.liveTvFfmpegPath);
@@ -825,6 +831,7 @@ class LiveTvServer {
 
   async refreshSources(): Promise<LiveTvChannel[]> {
     const s = getSettings();
+    this.refreshing = true;
     try {
       const { channels, xmltv, usedWorker } = await refreshLiveTvViaPool({
         settings: s,
@@ -845,6 +852,8 @@ class LiveTvServer {
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
       throw err;
+    } finally {
+      this.refreshing = false;
     }
   }
 

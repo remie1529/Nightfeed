@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.32
+
+### Changed
+- When Nightfeed is using more than 2 GB and nothing is downloading, refreshing, or playing on Live TV, it restarts itself to release that memory
+
 ## 2.4.31
 
 ### Fixed
