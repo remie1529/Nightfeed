@@ -28,7 +28,23 @@ async function render(note) {
   }
 }
 
-async function perform(action) {
+async function perform(action, payload) {
+  if (action === 'save-token') {
+    try {
+      plex.saveToken(payload && payload.token);
+      await render('Token saved.');
+      return { ok: true };
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err);
+      await render(message);
+      return { ok: false, error: message };
+    }
+  }
+  if (action === 'clear-token') {
+    plex.clearToken();
+    await render('Saved token removed.');
+    return { ok: true };
+  }
   if (action === 'refresh') {
     await render('');
     return { ok: true };
@@ -66,7 +82,7 @@ module.exports = {
   activate(api) {
     apiRef = api;
     api.ui.addPage({ id: 'plex', title: 'Plex', html: '<p>Loading…</p>' });
-    api.ui.onAction((action) => perform(String(action || '')));
+    api.ui.onAction((action, payload) => perform(String(action || ''), payload));
     if (api.telegram && typeof api.telegram.command === 'function') {
       api.telegram.command('plex', {
         description: 'Plex server: status, start, stop, kill, restart, web',

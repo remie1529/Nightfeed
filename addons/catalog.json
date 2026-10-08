@@ -11,7 +11,7 @@
     {
       "id": "nightfeed.plex-control",
       "name": "Plex Media Server Control",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "See if Plex Media Server is running, start or stop it, and check who is watching. Telegram: /plex",
       "author": "Nightfeed",
       "dir": "approved/plex-control"

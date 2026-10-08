@@ -80,5 +80,51 @@
   }
   root.appendChild(watching);
 
+  const tokenPanel = el('section', 'panel token-panel');
+  tokenPanel.appendChild(el('h2', '', 'Plex token'));
+  if (status.tokenSource === 'saved') {
+    tokenPanel.appendChild(el('p', 'empty', 'Using the token saved in Nightfeed. It is not shown here.'));
+  } else if (status.tokenSource === 'plex') {
+    tokenPanel.appendChild(el('p', 'empty', 'Using the token Plex already stored on this PC. Paste another one only if now playing stays empty.'));
+  } else {
+    tokenPanel.appendChild(el('p', 'empty', 'Nightfeed looked in Plex’s Preferences.xml and did not find a token. Paste one to show who is watching.'));
+  }
+  const steps = el('ol', 'steps');
+  [
+    'On this PC, open Plex in the browser and sign in.',
+    'Open any movie or episode, choose the … menu, then Get Info, then View XML.',
+    'In the address bar, copy the text after X-Plex-Token=.',
+    'Paste it below and choose Save token. You can paste the whole address.',
+  ].forEach((line) => steps.appendChild(el('li', '', line)));
+  tokenPanel.appendChild(steps);
+  const row = el('div', 'token-row');
+  const input = document.createElement('input');
+  input.type = 'password';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.placeholder = 'X-Plex-Token';
+  input.disabled = !!state.busy;
+  const save = el('button', 'primary', 'Save token');
+  save.type = 'button';
+  save.disabled = !!state.busy;
+  save.onclick = async () => {
+    save.disabled = true;
+    await window.nightfeed.call('save-token', { token: input.value });
+  };
+  row.appendChild(input);
+  row.appendChild(save);
+  if (status.tokenSource === 'saved') {
+    const clear = el('button', '', 'Remove saved token');
+    clear.type = 'button';
+    clear.disabled = !!state.busy;
+    clear.onclick = async () => {
+      clear.disabled = true;
+      await window.nightfeed.call('clear-token', {});
+    };
+    row.appendChild(clear);
+  }
+  tokenPanel.appendChild(row);
+  root.appendChild(tokenPanel);
+
   root.appendChild(el('p', 'hint', 'Telegram: /plex status, start, stop, kill, restart, web'));
 })();
