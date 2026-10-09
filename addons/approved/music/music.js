@@ -36,11 +36,74 @@ function saveSongs(folder, songs) {
   fs.writeFileSync(libraryPath(folder), JSON.stringify({ songs }, null, 2), 'utf8');
 }
 
+let libraryChain = Promise.resolve();
+
+function withLibrary(fn) {
+  const run = libraryChain.then(fn, fn);
+  libraryChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 function rememberSong(folder, song) {
-  const songs = loadSongs(folder).filter((item) => item.id !== song.id);
-  songs.unshift(song);
-  saveSongs(folder, songs);
-  return songs;
+  return withLibrary(() => {
+    const songs = loadSongs(folder).filter((item) => item.id !== song.id);
+    songs.unshift(song);
+    saveSongs(folder, songs);
+    return songs;
+  });
+}
+
+function updateSong(folder, id, patch) {
+  return withLibrary(() => {
+    const songs = loadSongs(folder);
+    const index = songs.findIndex((item) => item && item.id === id);
+    if (index < 0) return songs;
+    songs[index] = Object.assign({}, songs[index], patch);
+    saveSongs(folder, songs);
+    return songs;
+  });
+}
+
+function spotifyTrackId(id) {
+  const text = String(id || '').replace(/^spotify:track:/, '').trim();
+  return /^[A-Za-z0-9]{22}$/.test(text) ? text : '';
+}
+
+function needsTrackCover(song) {
+  return !!(song && song.coverSource !== 'track' && spotifyTrackId(song.id));
+}
+
+function savedSong(folder, track) {
+  const songs = loadSongs(folder);
+  const id = String((track && track.id) || '');
+  const title = String((track && track.title) || '').trim().toLowerCase();
+  const artist = String((track && track.artist) || '').trim().toLowerCase();
+  return songs.find((song) => {
+    if (!song || !song.filePath || !fs.existsSync(song.filePath)) return false;
+    if (id && song.id === id) return true;
+    return title
+      && String(song.title || '').trim().toLowerCase() === title
+      && String(song.artist || '').trim().toLowerCase() === artist;
+  }) || null;
+}
+
+async function fetchTrackCover(id) {
+  const trackId = spotifyTrackId(id);
+  if (!trackId) return '';
+  try {
+    const res = await fetch(
+      'https://open.spotify.com/oembed?url=' + encodeURIComponent('https://open.spotify.com/track/' + trackId),
+      {
+        headers: { 'user-agent': 'Nightfeed', accept: 'application/json' },
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+    if (!res.ok) return '';
+    const data = await res.json();
+    return String((data && data.thumbnail_url) || '');
+  } catch {
+    return '';
+  }
 }
 
 function coverFrom(entity) {
@@ -67,6 +130,7 @@ function mapEmbedTrack(item, album, fallbackCover) {
     year: Number(String((item && item.releaseDate && item.releaseDate.isoString) || '').slice(0, 4)) || 0,
     durationMs: Number(item && item.duration) || 0,
     coverUrl: coverFrom(item) || fallbackCover || '',
+    coverSource: coverFrom(item) ? 'track' : (fallbackCover ? 'playlist' : ''),
     filePath: '',
   };
 }
@@ -99,9 +163,8 @@ async function fetchSpotify(input) {
     if (!track.title) throw new Error('That Spotify track could not be read');
     return [track];
   }
-  const cover = coverFrom(entity);
   const tracks = (entity.trackList || [])
-    .map((item) => mapEmbedTrack(item, entity.name || '', cover))
+    .map((item) => mapEmbedTrack(item, entity.name || '', ''))
     .filter((track) => track.title);
   if (!tracks.length) throw new Error('That playlist has no tracks');
   return tracks.slice(0, 100);
@@ -428,7 +491,7 @@ async function downloadOnce(track, folder, bin, ffmpeg) {
     filePath: dest,
     downloadedAt: new Date().toISOString(),
   };
-  rememberSong(folder, song);
+  await rememberSong(folder, song);
   return song;
 }
 
@@ -474,6 +537,10 @@ module.exports = {
   fetchSpotify,
   ensureYtDlp,
   ensureFfmpeg,
+  needsTrackCover,
+  savedSong,
+  fetchTrackCover,
+  updateSong,
   downloadTrack,
   loadSongs,
   openFile,
