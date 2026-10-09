@@ -103,7 +103,7 @@ import { uploadFinishedFile } from './services/ftp';
 import { uploadViaPool } from './services/ftp-pool';
 import { writeBackupJsonViaPool, readBackupJsonViaPool } from './services/backup-pool';
 import { vpnManager } from './services/vpn';
-import { liveTv, withLogoPreview } from './services/live-tv';
+import { ensureFfmpeg, liveTv, withLogoPreview } from './services/live-tv';
 import {
   applyCrashRestartTask,
   clearSessionLock,
@@ -2314,7 +2314,7 @@ async function checkForUpdates(manual: boolean): Promise<UpdateStatus> {
 
 function wireTelegram() {
   telegramBot.setSettingsGetter(() => getSettings());
-  telegramBot.setAddonCommandHandler((cmd, args) => addonHost.handleTelegramCommand(cmd, args));
+  telegramBot.setAddonCommandHandler((cmd, args, meta) => addonHost.handleTelegramCommand(cmd, args, meta));
   telegramBot.setHandlers({
     async help(chatId, _args, reply) {
       await reply(
@@ -2337,7 +2337,7 @@ function wireTelegram() {
           '/request-movie <name> — submit a movie request',
           '/approve <id>  /deny <id>  /requests',
           '/help — this list',
-          ...addonHost.listTelegramCommands().map((cmd) =>
+          ...addonHost.listTelegramCommands('admin').map((cmd) =>
             `/${cmd.command}${cmd.description ? ` — ${cmd.description}` : ''}`
           ),
         ].join('\n')
@@ -2352,6 +2352,9 @@ function wireTelegram() {
           '/request-movie <name> — request a movie',
           '/status — your recent requests',
           '/help — this list',
+          ...addonHost.listTelegramCommands('requests').map((cmd) =>
+            `/${cmd.command}${cmd.description ? ` — ${cmd.description}` : ''}`
+          ),
         ].join('\n')
       );
     },
@@ -2782,8 +2785,18 @@ function wireWebPortal() {
 }
 
 
+function musicRequestKey(title: string): number {
+  let hash = 2166136261;
+  const text = title.trim().toLowerCase();
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % 1_900_000_000 + 1;
+}
+
 async function submitPendingMediaRequest(input: {
-  mediaType: 'show' | 'movie';
+  mediaType: 'show' | 'movie' | 'music';
   mediaId: number;
   title: string;
   year?: number | null;
@@ -2857,7 +2870,7 @@ async function submitPendingMediaRequest(input: {
     source: req.source || '',
   });
 
-  const typeLabel = input.mediaType === 'movie' ? 'Movie' : 'TV show';
+  const typeLabel = input.mediaType === 'movie' ? 'Movie' : input.mediaType === 'music' ? 'Music' : 'TV show';
   const who =
     input.source === 'web'
       ? `Web${input.requesterClientId ? ` · ${input.requesterClientId.slice(0, 8)}` : ''}`
@@ -2939,6 +2952,29 @@ async function resolveTelegramRequest(
       id: req.id,
       mediaType: req.mediaType,
     });
+    if (req.mediaType === 'music') {
+      const updated: TelegramRequest = {
+        ...req,
+        status: 'approved',
+        resolvedAt: new Date().toISOString(),
+        resolvedByChatId: adminChatId,
+      };
+      upsertTelegramRequest(updated);
+      emitRequestsChanged();
+      addonHost.notifyMusicRequest(updated, 'approved');
+      try {
+        await telegramBot.notifyChat(
+          settings,
+          req.requesterChatId,
+          `<b>Approved</b>\n${escapeHtml(req.title)}\nDownloading…`,
+          req.posterUrl
+        );
+      } catch {
+        // ignore
+      }
+      return { ok: true, message: `Approved music: ${req.title} — downloading…` };
+    }
+
     if (req.mediaType === 'show') {
       const show = await addShowWithPolicy(req.mediaId, 'manual');
       // Kick off search+download with Telegram notify tags on each item.
@@ -3355,6 +3391,10 @@ function registerIpc() {
   ipcMain.handle('addons:remove', (_e, id: string) => addonHost.removeAddon(String(id || '')));
   ipcMain.handle('addons:action', (_e, addonId: string, action: string, payload: unknown) =>
     addonHost.handleAddonAction(String(addonId || ''), String(action || ''), payload)
+  );
+  ipcMain.handle('addons:settings', () => addonHost.listSettingSections());
+  ipcMain.handle('addons:setSetting', (_e, addonId: string, fieldId: string, value: string) =>
+    addonHost.setAddonSetting(String(addonId || ''), String(fieldId || ''), String(value || ''))
   );
 
   ipcMain.handle(
@@ -4230,6 +4270,56 @@ app.whenReady().then(async () => {
     notify: (message) => notify(message),
     log: (level, message) => activityLog[level]('addon', message),
     broadcast: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+    submitMusicRequest: async (input) => {
+      const title = String(input?.title || '').trim();
+      if (!title) return { ok: false, message: 'Say which song or playlist to request.' };
+      return submitPendingMediaRequest({
+        mediaType: 'music',
+        mediaId: musicRequestKey(title),
+        title,
+        year: input?.year ?? null,
+        overview: input?.overview,
+        posterUrl: input?.posterUrl || null,
+        requesterChatId: Number(input?.requesterChatId) || 0,
+        requesterName: input?.requesterName,
+        source: 'telegram',
+      });
+    },
+    ensureFfmpeg: async () => (await ensureFfmpeg(getSettings().liveTvFfmpegPath)) || '',
+    completeMusicRequest: (id) => {
+      const req = getTelegramRequest(String(id || ''));
+      if (!req || req.mediaType !== 'music') return { ok: false, message: 'Unknown request' };
+      upsertTelegramRequest({
+        ...req,
+        status: 'downloaded',
+        resolvedAt: req.resolvedAt || new Date().toISOString(),
+      });
+      emitRequestsChanged();
+      if (req.requesterChatId) {
+        void telegramBot.notifyChat(
+          getSettings(),
+          req.requesterChatId,
+          `<b>Saved</b>\n${escapeHtml(req.title)}`,
+          req.posterUrl
+        ).catch(() => undefined);
+      }
+      return { ok: true, message: 'Marked downloaded' };
+    },
+    failMusicRequest: (id, message) => {
+      const req = getTelegramRequest(String(id || ''));
+      if (!req || req.mediaType !== 'music') return { ok: false, message: 'Unknown request' };
+      const reason = String(message || 'Download failed').slice(0, 300);
+      activityLog.warn('addon', `Music download failed: ${req.title} — ${reason}`);
+      if (req.requesterChatId) {
+        void telegramBot.notifyChat(
+          getSettings(),
+          req.requesterChatId,
+          `<b>Could not download</b>\n${escapeHtml(req.title)}\n${escapeHtml(reason)}`,
+          req.posterUrl
+        ).catch(() => undefined);
+      }
+      return { ok: true, message: reason };
+    },
   });
   createWindow();
   writeSessionLock();

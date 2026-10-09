@@ -133,13 +133,21 @@ export class TelegramBot {
   /** Fresh settings getter so poll uses latest allow-lists. */
   private getSettings: (() => AppSettings) | null = null;
   /** Admin commands registered by addons. Return null if this addon does not own the command. */
-  private addonCommand: ((cmd: string, args: string) => Promise<string | null>) | null = null;
+  private addonCommand: ((
+    cmd: string,
+    args: string,
+    meta: { role: 'admin' | 'requests'; chatId: number; fromName?: string }
+  ) => Promise<string | null>) | null = null;
 
   setHandlers(handlers: TelegramHandlers) {
     this.handlers = handlers;
   }
 
-  setAddonCommandHandler(fn: ((cmd: string, args: string) => Promise<string | null>) | null) {
+  setAddonCommandHandler(fn: ((
+    cmd: string,
+    args: string,
+    meta: { role: 'admin' | 'requests'; chatId: number; fromName?: string }
+  ) => Promise<string | null>) | null) {
     this.addonCommand = fn;
   }
 
@@ -510,6 +518,13 @@ export class TelegramBot {
         else if (this.handlers.help) await this.handlers.help(chatId, args, reply, meta);
         break;
       default:
+        if (this.addonCommand) {
+          const text = await this.addonCommand(cmd, args, { role: 'requests', chatId, fromName: meta.fromName });
+          if (text != null) {
+            await reply(chatId, text);
+            break;
+          }
+        }
         await reply(
           chatId,
           `Unknown command /${cmd}. Requests chats can use /request-show, /request-movie, /status, /help.`
@@ -603,7 +618,7 @@ export class TelegramBot {
         break;
       default:
         if (this.addonCommand) {
-          const text = await this.addonCommand(cmd, args);
+          const text = await this.addonCommand(cmd, args, { role: 'admin', chatId, fromName: meta.fromName });
           if (text != null) {
             await reply(chatId, text);
             break;

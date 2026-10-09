@@ -112,7 +112,7 @@ export default function Requests({ refreshToken }: { refreshToken: number }) {
                 <Poster path={r.posterUrl || null} alt={r.title} width={48} height={72} />
                 <div className="request-body">
                   <div className="request-title">
-                    {r.mediaType === 'movie' ? 'Movie' : 'TV'}: {r.title}
+                    {r.mediaType === 'movie' ? 'Movie' : r.mediaType === 'music' ? 'Music' : 'TV'}: {r.title}
                     {r.year ? ` (${r.year})` : ''}
                   </div>
                   <div className="request-meta">
@@ -159,7 +159,7 @@ export default function Requests({ refreshToken }: { refreshToken: number }) {
                 <Poster path={r.posterUrl || null} alt={r.title} width={40} height={60} />
                 <div className="request-body">
                   <div className="request-title">
-                    {r.mediaType === 'movie' ? 'Movie' : 'TV'}: {r.title}
+                    {r.mediaType === 'movie' ? 'Movie' : r.mediaType === 'music' ? 'Music' : 'TV'}: {r.title}
                     {r.year ? ` (${r.year})` : ''}
                   </div>
                   <div className="request-meta">

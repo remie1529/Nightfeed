@@ -17,7 +17,9 @@ type HostMsg =
   | { type: 'library-changed' }
   | { type: 'downloads-changed'; items: unknown[] }
   | { type: 'action'; requestId: number; action: string; payload: unknown }
-  | { type: 'telegram'; requestId: number; command: string; args: string }
+  | { type: 'telegram'; requestId: number; command: string; args: string; chatId?: number; fromName?: string }
+  | { type: 'request'; action: string; request: unknown }
+  | { type: 'settings-changed'; values: Record<string, string> }
   | { type: 'deactivate' };
 
 const port = (process as NodeJS.Process & {
@@ -44,7 +46,9 @@ function messageOf(err: unknown): string {
 
 let downloads: unknown[] = [];
 let actionHandler: ((action: string, payload: unknown) => unknown) | null = null;
-const telegramHandlers = new Map<string, (args: string) => unknown>();
+const telegramHandlers = new Map<string, (args: string, meta?: { chatId?: number; fromName?: string }) => unknown>();
+let requestListener: ((request: unknown, action: string) => unknown) | null = null;
+let settingsListener: ((values: Record<string, string>) => unknown) | null = null;
 let deactivate: (() => void) | undefined;
 const libraryListeners: Array<() => void> = [];
 const downloadListeners: Array<() => void> = [];
@@ -82,6 +86,9 @@ function createApi(version: string) {
       version,
       notify(message: string) {
         post({ type: 'event', event: 'notify', message: String(message || '').slice(0, 240) });
+      },
+      ffmpegPath() {
+        return callMain('ensureFfmpeg', []);
       },
     },
     log: {
@@ -136,18 +143,57 @@ function createApi(version: string) {
       },
     },
     telegram: {
-      command(name: string, spec: { description?: string; run?: (args: string) => unknown } | ((args: string) => unknown)) {
+      command(
+        name: string,
+        spec: {
+          description?: string;
+          audience?: string;
+          run?: (args: string, meta?: { chatId?: number; fromName?: string }) => unknown;
+        } | ((args: string) => unknown)
+      ) {
         const command = String(name || '').toLowerCase().replace(/^\//, '').replace(/[^a-z0-9-]/g, '');
         if (!command) throw new Error('Telegram command name is empty');
         const run = typeof spec === 'function' ? spec : spec && spec.run;
         if (typeof run !== 'function') throw new Error('Telegram command needs a function');
+        const audience = typeof spec === 'object' && spec && (spec.audience === 'requests' || spec.audience === 'all')
+          ? spec.audience
+          : 'admin';
         telegramHandlers.set(command, run);
         post({
           type: 'event',
           event: 'telegram',
           command,
           description: String((typeof spec === 'object' && spec && spec.description) || '').slice(0, 120),
+          audience,
         });
+      },
+    },
+    settings: {
+      define(fields: unknown) {
+        post({ type: 'event', event: 'settings', fields });
+      },
+      get(id: string) {
+        return callMain('getSetting', [id]);
+      },
+      onChanged(fn: (values: Record<string, string>) => unknown) {
+        if (typeof fn === 'function') settingsListener = fn;
+      },
+    },
+    requests: {
+      submit(input: unknown) {
+        return callMain('submitMusicRequest', [input]);
+      },
+      complete(id: string) {
+        return callMain('completeMusicRequest', [id]);
+      },
+      fail(id: string, message: string) {
+        return callMain('failMusicRequest', [id, message]);
+      },
+      onResolved(fn: (request: unknown, action: string) => unknown) {
+        if (typeof fn === 'function') {
+          requestListener = fn;
+          post({ type: 'event', event: 'requests-listen' });
+        }
       },
     },
     events: {
@@ -216,6 +262,24 @@ parent.on('message', (event) => {
     else waiter.reject(new Error(msg.error || 'Addon call failed'));
     return;
   }
+  if (msg.type === 'settings-changed') {
+    if (settingsListener) {
+      try {
+        settingsListener(msg.values || {});
+      } catch (err) {
+        post({ type: 'event', event: 'log', level: 'warn', message: messageOf(err).slice(0, 500) });
+      }
+    }
+    return;
+  }
+  if (msg.type === 'request') {
+    if (requestListener) {
+      void Promise.resolve(requestListener(msg.request, String(msg.action || ''))).catch((err) => {
+        post({ type: 'event', event: 'log', level: 'warn', message: messageOf(err).slice(0, 500) });
+      });
+    }
+    return;
+  }
   if (msg.type === 'library-changed') {
     runListeners(libraryListeners);
     return;
@@ -230,7 +294,10 @@ parent.on('message', (event) => {
       try {
         const fn = telegramHandlers.get(String(msg.command || ''));
         if (!fn) throw new Error('This addon does not handle that command');
-        const text = await fn(String(msg.args || ''));
+        const text = await fn(String(msg.args || ''), {
+          chatId: Number(msg.chatId) || 0,
+          fromName: String(msg.fromName || ''),
+        });
         post({
           type: 'telegram-result',
           requestId: msg.requestId,

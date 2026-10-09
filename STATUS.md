@@ -1,6 +1,13 @@
 # Nightfeed status
 
-**Current:** v2.4.33 — Plex control is in the addon store, including Telegram.
+**Current:** v2.4.34 — Music is in the addon store, with a Settings folder, a Music tab, and Telegram requests.
+
+# Status v2.4.34
+
+## Added
+- Music tab downloads songs and Spotify playlists into a folder chosen in Settings
+- `/request-music` uses the Requests list. Admins use `/music playlist`
+- Addons can define Settings fields and Telegram commands for request chats
 
 # Status v2.4.33
 

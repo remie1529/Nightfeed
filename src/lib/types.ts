@@ -388,7 +388,7 @@ export interface DownloadItem {
 }
 
 export type TelegramRequestStatus = 'pending' | 'approved' | 'denied' | 'downloaded';
-export type TelegramRequestMediaType = 'show' | 'movie';
+export type TelegramRequestMediaType = 'show' | 'movie' | 'music';
 
 export interface TelegramRequest {
   id: string;

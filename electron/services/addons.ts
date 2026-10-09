@@ -70,6 +70,24 @@ interface AddonContext {
   log: (level: 'info' | 'warn', message: string) => void;
   version: string;
   broadcast: (channel: string, payload?: unknown) => void;
+  submitMusicRequest?: (input: {
+    title?: string;
+    overview?: string;
+    posterUrl?: string | null;
+    year?: number | null;
+    requesterChatId?: number;
+    requesterName?: string;
+  }) => Promise<unknown>;
+  completeMusicRequest?: (id: string) => unknown;
+  failMusicRequest?: (id: string, message: string) => unknown;
+  ensureFfmpeg?: () => Promise<string>;
+}
+
+interface AddonSettingField {
+  id: string;
+  label: string;
+  type: 'folder' | 'text';
+  description?: string;
 }
 
 interface AddonWorker {
@@ -83,11 +101,13 @@ interface AddonWorker {
   finish: ((error: string | null) => void) | null;
   actions: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>;
   telegram: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>;
+  listensRequests: boolean;
 }
 
 interface TelegramCommand {
   addonId: string;
   description: string;
+  audience: 'admin' | 'requests' | 'all';
 }
 
 let ctx: AddonContext | null = null;
@@ -98,6 +118,7 @@ let generation = 0;
 let reloadChain: Promise<void> = Promise.resolve();
 let actionSeq = 0;
 const telegramCommands = new Map<string, TelegramCommand>();
+const settingSchemas = new Map<string, { addonName: string; fields: AddonSettingField[] }>();
 
 function rootDir(): string {
   if (!ctx) throw new Error('Addons are not ready');
@@ -202,6 +223,25 @@ function clearTelegramCommands(addonId: string) {
   for (const [command, owner] of telegramCommands) {
     if (owner.addonId === addonId) telegramCommands.delete(command);
   }
+  settingSchemas.delete(addonId);
+}
+
+function settingsFile(): string {
+  return path.join(rootDir(), 'settings.json');
+}
+
+function readAddonSettings(): Record<string, Record<string, string>> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) as Record<string, Record<string, string>>;
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeAddonSettings(all: Record<string, Record<string, string>>) {
+  fs.mkdirSync(rootDir(), { recursive: true });
+  fs.writeFileSync(settingsFile(), JSON.stringify(all, null, 2), 'utf8');
 }
 
 function stopWorker(id: string) {
@@ -279,10 +319,27 @@ function applyAddonEvent(worker: AddonWorker, msg: any) {
   if (msg.event === 'telegram') {
     const command = String(msg.command || '').toLowerCase().replace(/[^a-z0-9-]/g, '');
     if (!command || command.length > 32) return;
+    const audience = msg.audience === 'requests' || msg.audience === 'all' ? msg.audience : 'admin';
     telegramCommands.set(command, {
       addonId,
       description: String(msg.description || '').slice(0, 120),
+      audience,
     });
+    return;
+  }
+  if (msg.event === 'requests-listen') {
+    worker.listensRequests = true;
+    return;
+  }
+  if (msg.event === 'settings') {
+    const fields = (Array.isArray(msg.fields) ? msg.fields : []).slice(0, 12).map((field: any) => ({
+      id: String(field?.id || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40),
+      label: String(field?.label || field?.id || 'Setting').slice(0, 80),
+      type: field?.type === 'text' ? 'text' as const : 'folder' as const,
+      description: String(field?.description || '').slice(0, 240),
+    })).filter((field: AddonSettingField) => field.id);
+    settingSchemas.set(addonId, { addonName, fields });
+    ctx?.broadcast('addons:changed');
   }
 }
 
@@ -296,7 +353,21 @@ async function answerCall(worker: AddonWorker, msg: { requestId: number; method?
     else if (msg.method === 'addMovie') result = plain(await ctx!.addMovie(Number(args[0])));
     else if (msg.method === 'removeShow') result = plain(await ctx!.removeShow(Number(args[0])));
     else if (msg.method === 'removeMovie') result = plain(await ctx!.removeMovie(Number(args[0])));
-    else throw new Error('Unknown addon call');
+    else if (msg.method === 'getSetting') {
+      const all = readAddonSettings();
+      result = String(all[worker.id]?.[String(args[0] || '')] || '');
+    } else if (msg.method === 'submitMusicRequest') {
+      if (!ctx?.submitMusicRequest) throw new Error('Music requests need a newer Nightfeed');
+      result = plain(await ctx.submitMusicRequest((args[0] || {}) as any));
+    } else if (msg.method === 'completeMusicRequest') {
+      if (!ctx?.completeMusicRequest) throw new Error('Music requests need a newer Nightfeed');
+      result = plain(ctx.completeMusicRequest(String(args[0] || '')));
+    } else if (msg.method === 'failMusicRequest') {
+      if (!ctx?.failMusicRequest) throw new Error('Music requests need a newer Nightfeed');
+      result = plain(ctx.failMusicRequest(String(args[0] || ''), String(args[1] || '')));
+    } else if (msg.method === 'ensureFfmpeg') {
+      result = ctx?.ensureFfmpeg ? String(await ctx.ensureFfmpeg() || '') : '';
+    } else throw new Error('Unknown addon call');
     if (worker.stopping) return;
     worker.child.postMessage({ type: 'call-result', requestId: msg.requestId, ok: true, result });
   } catch (err) {
@@ -354,6 +425,7 @@ function launchWorker(record: RecordedAddon, manifest: Manifest, token: number):
     finish: null,
     actions: new Map(),
     telegram: new Map(),
+    listensRequests: false,
   };
   if (token !== generation) {
     try {
@@ -798,17 +870,75 @@ export function handleAddonAction(addonId: string, action: string, payload: unkn
   });
 }
 
-export function listTelegramCommands(): { command: string; description: string }[] {
+export function listTelegramCommands(role?: 'admin' | 'requests'): { command: string; description: string }[] {
   return [...telegramCommands.entries()]
+    .filter(([, info]) => {
+      if (!role) return true;
+      if (role === 'admin') return info.audience !== 'requests';
+      return info.audience === 'requests' || info.audience === 'all';
+    })
     .map(([command, info]) => ({ command, description: info.description }))
     .sort((a, b) => a.command.localeCompare(b.command));
 }
 
-/** Admin Telegram command owned by an addon. Null when this command is not registered. */
-export function handleTelegramCommand(command: string, args: string): Promise<string | null> {
+export function listSettingSections(): {
+  addonId: string;
+  addonName: string;
+  fields: AddonSettingField[];
+  values: Record<string, string>;
+}[] {
+  const stored = readAddonSettings();
+  return [...settingSchemas.entries()].map(([addonId, schema]) => ({
+    addonId,
+    addonName: schema.addonName,
+    fields: schema.fields,
+    values: stored[addonId] || {},
+  }));
+}
+
+export function setAddonSetting(addonId: string, fieldId: string, value: string): Record<string, string> {
+  const schema = settingSchemas.get(addonId);
+  const field = schema?.fields.find((item) => item.id === fieldId);
+  if (!field) throw new Error('Unknown addon setting');
+  const all = readAddonSettings();
+  const next = { ...(all[addonId] || {}), [fieldId]: String(value || '').slice(0, 500) };
+  all[addonId] = next;
+  writeAddonSettings(all);
+  const worker = workers.get(addonId);
+  if (worker && !worker.stopping) {
+    try {
+      worker.child.postMessage({ type: 'settings-changed', values: next });
+    } catch {
+      // ignore
+    }
+  }
+  return next;
+}
+
+export function notifyMusicRequest(request: unknown, action: 'approved' | 'denied' = 'approved') {
+  const payload = plain(request);
+  for (const worker of workers.values()) {
+    if (!worker.listensRequests || worker.stopping) continue;
+    try {
+      worker.child.postMessage({ type: 'request', action, request: payload });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Addon Telegram command. Null when this command is not registered for the chat role. */
+export function handleTelegramCommand(
+  command: string,
+  args: string,
+  meta?: { role?: 'admin' | 'requests'; chatId?: number; fromName?: string }
+): Promise<string | null> {
   const key = String(command || '').toLowerCase().replace(/^\//, '');
   const owner = telegramCommands.get(key);
+  const role = meta?.role === 'requests' ? 'requests' : 'admin';
   if (!owner) return Promise.resolve(null);
+  if (owner.audience === 'admin' && role !== 'admin') return Promise.resolve(null);
+  if (owner.audience === 'requests' && role !== 'requests') return Promise.resolve(null);
   const worker = workers.get(owner.addonId);
   if (!worker || !worker.ready || worker.stopping) {
     return Promise.resolve('That addon is not running.');
@@ -830,7 +960,14 @@ export function handleTelegramCommand(command: string, args: string): Promise<st
       },
     });
     try {
-      worker.child.postMessage({ type: 'telegram', requestId, command: key, args: String(args || '') });
+      worker.child.postMessage({
+        type: 'telegram',
+        requestId,
+        command: key,
+        args: String(args || ''),
+        chatId: Number(meta?.chatId) || 0,
+        fromName: String(meta?.fromName || ''),
+      });
     } catch (err) {
       clearTimeout(timer);
       worker.telegram.delete(requestId);
