@@ -32,6 +32,12 @@ async function folder() {
   return String(await apiRef.settings.get('musicRoot') || '').trim();
 }
 
+async function linkPlaylistAlbum() {
+  if (!apiRef.settings || typeof apiRef.settings.get !== 'function') return true;
+  const value = String(await apiRef.settings.get('linkPlaylistAlbum') || '').trim().toLowerCase();
+  return value !== '0' && value !== 'false' && value !== 'off';
+}
+
 async function view(extra) {
   const seq = ++viewSeq;
   const root = await folder();
@@ -84,6 +90,9 @@ async function downloadInput(input, note) {
     ? await music.fetchSpotify(input)
     : [{ id: '', title: String(input || '').trim(), artist: '', album: '', year: 0, durationMs: 0, coverUrl: '', filePath: '' }];
   if (!tracks[0] || !tracks[0].title) throw new Error('Nothing to download');
+  if (ref && ref.kind === 'playlist' && !(await linkPlaylistAlbum())) {
+    for (const track of tracks) track.album = '';
+  }
   let ffmpeg = '';
   let done = 0;
   let downloaded = 0;
@@ -195,7 +204,33 @@ module.exports = {
           type: 'folder',
           description: 'Downloaded songs are saved in this folder.',
         },
+        {
+          id: 'linkPlaylistAlbum',
+          label: 'Link playlist as album',
+          type: 'bool',
+          description: 'Songs downloaded from a Spotify playlist use that playlist name as the album.',
+        },
+        {
+          id: 'clearAlbums',
+          label: 'Remove album from saved songs',
+          type: 'action',
+          description: 'Clears the album name on songs already in the music folder, including the file tag.',
+        },
       ]);
+      if (typeof api.settings.onAction === 'function') {
+        api.settings.onAction(async (id) => {
+          if (id !== 'clearAlbums') return '';
+          const root = await folder();
+          if (!root) return 'Set the music folder first.';
+          const ffmpeg = await music.ensureFfmpeg(await ffmpegPath());
+          const count = await music.clearSavedAlbums(root, ffmpeg);
+          const message = count
+            ? 'Removed the album from ' + count + ' song' + (count === 1 ? '' : 's') + '.'
+            : 'No saved songs have an album.';
+          await view({ notice: message });
+          return message;
+        });
+      }
       if (typeof api.settings.onChanged === 'function') {
         api.settings.onChanged(() => {
           view().catch(() => undefined);

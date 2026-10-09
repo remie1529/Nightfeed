@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.35
+
+### Added
+- Music settings include “Link playlist as album”. Turn it off and a Spotify playlist download does not use the playlist name as the album
+- Music settings include “Remove album from saved songs”, which clears that name on songs already in the folder and in the MP3 tag
+- Addon settings can be a checkbox or a button
+
 ## 2.4.34
 
 ### Added

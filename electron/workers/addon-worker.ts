@@ -20,6 +20,7 @@ type HostMsg =
   | { type: 'telegram'; requestId: number; command: string; args: string; chatId?: number; fromName?: string }
   | { type: 'request'; action: string; request: unknown }
   | { type: 'settings-changed'; values: Record<string, string> }
+  | { type: 'setting-action'; requestId: number; fieldId: string }
   | { type: 'deactivate' };
 
 const port = (process as NodeJS.Process & {
@@ -49,6 +50,7 @@ let actionHandler: ((action: string, payload: unknown) => unknown) | null = null
 const telegramHandlers = new Map<string, (args: string, meta?: { chatId?: number; fromName?: string }) => unknown>();
 let requestListener: ((request: unknown, action: string) => unknown) | null = null;
 let settingsListener: ((values: Record<string, string>) => unknown) | null = null;
+let settingsAction: ((id: string) => unknown) | null = null;
 let deactivate: (() => void) | undefined;
 const libraryListeners: Array<() => void> = [];
 const downloadListeners: Array<() => void> = [];
@@ -178,6 +180,9 @@ function createApi(version: string) {
       onChanged(fn: (values: Record<string, string>) => unknown) {
         if (typeof fn === 'function') settingsListener = fn;
       },
+      onAction(fn: (id: string) => unknown) {
+        if (typeof fn === 'function') settingsAction = fn;
+      },
     },
     requests: {
       submit(input: unknown) {
@@ -306,6 +311,23 @@ parent.on('message', (event) => {
         });
       } catch (err) {
         post({ type: 'telegram-result', requestId: msg.requestId, ok: false, error: messageOf(err) });
+      }
+    })();
+    return;
+  }
+  if (msg.type === 'setting-action') {
+    void (async () => {
+      try {
+        if (!settingsAction) throw new Error('This addon has no settings action');
+        const text = await settingsAction(String(msg.fieldId || ''));
+        post({
+          type: 'action-result',
+          requestId: msg.requestId,
+          ok: true,
+          result: text == null ? '' : String(text).slice(0, 500),
+        });
+      } catch (err) {
+        post({ type: 'action-result', requestId: msg.requestId, ok: false, error: messageOf(err) });
       }
     })();
     return;

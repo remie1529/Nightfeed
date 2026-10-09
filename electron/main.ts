@@ -3396,6 +3396,9 @@ function registerIpc() {
   ipcMain.handle('addons:setSetting', (_e, addonId: string, fieldId: string, value: string) =>
     addonHost.setAddonSetting(String(addonId || ''), String(fieldId || ''), String(value || ''))
   );
+  ipcMain.handle('addons:settingAction', (_e, addonId: string, fieldId: string) =>
+    addonHost.runSettingAction(String(addonId || ''), String(fieldId || ''))
+  );
 
   ipcMain.handle(
     'library:setEpisodeStatus',

@@ -73,6 +73,21 @@ function needsTrackCover(song) {
   return !!(song && song.coverSource !== 'track' && spotifyTrackId(song.id));
 }
 
+async function clearSavedAlbums(folder, ffmpeg) {
+  const songs = loadSongs(folder).filter((song) => String((song && song.album) || '').trim());
+  for (const song of songs) {
+    if (ffmpeg && song.filePath && fs.existsSync(song.filePath)) {
+      try {
+        await tagFile(ffmpeg, song.filePath, Object.assign({}, song, { album: '' }), true);
+      } catch {
+        // The library entry still loses the album name.
+      }
+    }
+    await updateSong(folder, song.id, { album: '' });
+  }
+  return songs.length;
+}
+
 function savedSong(folder, track) {
   const songs = loadSongs(folder);
   const id = String((track && track.id) || '');
@@ -397,13 +412,14 @@ function tagValue(value) {
   return String(value || '').replace(/[\r\n]/g, ' ').slice(0, 180);
 }
 
-async function tagFile(ffmpeg, filePath, track) {
+async function tagFile(ffmpeg, filePath, track, clearAlbum) {
   if (!ffmpeg || !filePath || !fs.existsSync(filePath) || !/\.mp3$/i.test(filePath)) return;
   const tmp = filePath.replace(/\.mp3$/i, '') + '.tag.mp3';
-  const args = ['-y', '-i', filePath, '-c', 'copy'];
+  const args = ['-y', '-i', filePath, '-c', 'copy', '-id3v2_version', '3'];
   if (track.title) args.push('-metadata', 'title=' + tagValue(track.title));
   if (track.artist) args.push('-metadata', 'artist=' + tagValue(track.artist));
   if (track.album) args.push('-metadata', 'album=' + tagValue(track.album));
+  else if (clearAlbum) args.push('-metadata', 'album=');
   if (track.year) args.push('-metadata', 'date=' + String(track.year));
   args.push(tmp);
   await execFileAsync(ffmpeg, args, { windowsHide: true, timeout: 60000 });
@@ -539,6 +555,7 @@ module.exports = {
   ensureFfmpeg,
   needsTrackCover,
   savedSong,
+  clearSavedAlbums,
   fetchTrackCover,
   updateSong,
   downloadTrack,

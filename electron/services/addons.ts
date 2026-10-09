@@ -86,7 +86,7 @@ interface AddonContext {
 interface AddonSettingField {
   id: string;
   label: string;
-  type: 'folder' | 'text';
+  type: 'folder' | 'text' | 'bool' | 'action';
   description?: string;
 }
 
@@ -335,7 +335,7 @@ function applyAddonEvent(worker: AddonWorker, msg: any) {
     const fields = (Array.isArray(msg.fields) ? msg.fields : []).slice(0, 12).map((field: any) => ({
       id: String(field?.id || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40),
       label: String(field?.label || field?.id || 'Setting').slice(0, 80),
-      type: field?.type === 'text' ? 'text' as const : 'folder' as const,
+      type: field?.type === 'text' || field?.type === 'bool' || field?.type === 'action' ? field.type : 'folder' as const,
       description: String(field?.description || '').slice(0, 240),
     })).filter((field: AddonSettingField) => field.id);
     settingSchemas.set(addonId, { addonName, fields });
@@ -899,7 +899,7 @@ export function listSettingSections(): {
 export function setAddonSetting(addonId: string, fieldId: string, value: string): Record<string, string> {
   const schema = settingSchemas.get(addonId);
   const field = schema?.fields.find((item) => item.id === fieldId);
-  if (!field) throw new Error('Unknown addon setting');
+  if (!field || field.type === 'action') throw new Error('Unknown addon setting');
   const all = readAddonSettings();
   const next = { ...(all[addonId] || {}), [fieldId]: String(value || '').slice(0, 500) };
   all[addonId] = next;
@@ -913,6 +913,39 @@ export function setAddonSetting(addonId: string, fieldId: string, value: string)
     }
   }
   return next;
+}
+
+/** Run a button defined by an addon's settings schema. */
+export function runSettingAction(addonId: string, fieldId: string) {
+  const schema = settingSchemas.get(addonId);
+  const field = schema?.fields.find((item) => item.id === fieldId);
+  if (!field || field.type !== 'action') throw new Error('Unknown addon setting');
+  const worker = workers.get(addonId);
+  if (!worker || !worker.ready || worker.stopping) throw new Error('This addon is not running');
+  const requestId = ++actionSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      worker.actions.delete(requestId);
+      reject(new Error('Addon action timed out'));
+    }, 600000);
+    worker.actions.set(requestId, {
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolve(String(value ?? ''));
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    });
+    try {
+      worker.child.postMessage({ type: 'setting-action', requestId, fieldId });
+    } catch (err) {
+      clearTimeout(timer);
+      worker.actions.delete(requestId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
 }
 
 export function notifyMusicRequest(request: unknown, action: 'approved' | 'denied' = 'approved') {

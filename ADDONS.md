@@ -111,7 +111,7 @@ api.settings.define([
 const folder = await api.settings.get('musicRoot');
 ```
 
-`type` is `folder` or `text`. Values are saved for that addon only.
+`type` is `folder`, `text`, `bool`, or `action`. A `bool` is a checkbox. Nightfeed stores `1` or `0`, and a missing value is treated as on by the Music addon. An `action` is a button. Handle it with `api.settings.onAction(function (id) { ... })` and return the text Nightfeed shows under the button. Folder and text values are saved for that addon only.
 
 ### Requests
 
