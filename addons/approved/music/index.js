@@ -5,6 +5,7 @@ let busy = '';
 let selectedId = '';
 let queue = Promise.resolve();
 let viewSeq = 0;
+let coverJob = null;
 
 function publish(extra) {
   const payload = Object.assign({
@@ -83,20 +84,66 @@ async function downloadInput(input, note) {
     ? await music.fetchSpotify(input)
     : [{ id: '', title: String(input || '').trim(), artist: '', album: '', year: 0, durationMs: 0, coverUrl: '', filePath: '' }];
   if (!tracks[0] || !tracks[0].title) throw new Error('Nothing to download');
-  busy = 'Preparing the downloader…';
-  await view({ notice: note || '' });
-  const ffmpeg = await music.ensureFfmpeg(await ffmpegPath());
-  await music.ensureYtDlp();
+  let ffmpeg = '';
   let done = 0;
+  let downloaded = 0;
+  let skipped = 0;
   for (const track of tracks) {
     done += 1;
+    const existing = music.savedSong(root, track);
+    if (existing) {
+      skipped += 1;
+      await applyTrackCover(root, existing);
+      busy = 'Already saved ' + done + '/' + tracks.length + ': ' + track.title;
+      await view({ notice: note || '' });
+      continue;
+    }
+    if (!ffmpeg) {
+      busy = 'Preparing the downloader…';
+      await view({ notice: note || '' });
+      ffmpeg = await music.ensureFfmpeg(await ffmpegPath());
+      await music.ensureYtDlp();
+    }
+    await applyTrackCover(root, track);
+    downloaded += 1;
     await music.downloadTrack(track, root, ffmpeg, async (attempt) => {
       busy = (attempt > 1 ? 'Trying again (' + attempt + '/3): ' : 'Downloading ' + done + '/' + tracks.length + ': ') + track.title;
       await view({ notice: note || '' });
     });
   }
   busy = '';
-  await view({ notice: 'Saved ' + tracks.length + ' song' + (tracks.length === 1 ? '' : 's') + '.' });
+  const savedText = 'Saved ' + downloaded + ' song' + (downloaded === 1 ? '' : 's');
+  const skippedText = 'Skipped ' + skipped + ' already saved';
+  const notice = downloaded && skipped
+    ? savedText + '. ' + skippedText + '.'
+    : skipped
+      ? skippedText + '.'
+      : savedText + '.';
+  await view({ notice: notice });
+}
+
+async function applyTrackCover(root, track) {
+  if (!music.needsTrackCover(track)) return;
+  const cover = await music.fetchTrackCover(track.id);
+  if (!cover) return;
+  track.coverUrl = cover;
+  track.coverSource = 'track';
+  if (track.filePath) await music.updateSong(root, track.id, { coverUrl: cover, coverSource: 'track' });
+}
+
+function startCoverRefresh() {
+  if (coverJob) return coverJob;
+  coverJob = (async () => {
+    const root = await folder();
+    const pending = music.loadSongs(root).filter((song) => music.needsTrackCover(song));
+    for (const song of pending) {
+      await applyTrackCover(root, song);
+      await view();
+    }
+  })().finally(() => {
+    coverJob = null;
+  });
+  return coverJob;
 }
 
 async function perform(action, payload) {
@@ -209,6 +256,8 @@ module.exports = {
         }));
       });
     }
-    view().catch((err) => api.log.warn(err && err.message ? err.message : String(err)));
+    view()
+      .then(() => startCoverRefresh())
+      .catch((err) => api.log.warn(err && err.message ? err.message : String(err)));
   },
 };

@@ -8,6 +8,7 @@
 - Music tab downloads songs and Spotify playlists into a folder chosen in Settings
 - Music 1.1.0 installs yt-dlp and ffmpeg into app data when a download needs them
 - Music 1.2.0 retries a song up to three times and converts a saved audio file to MP3 when the first pass stops short
+- Music 1.3.0 skips songs already saved and replaces playlist artwork with the song cover, including songs already in the folder
 - `/request-music` uses the Requests list. Admins use `/music playlist`
 - Addons can define Settings fields and Telegram commands for request chats
 
