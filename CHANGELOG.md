@@ -10,6 +10,7 @@
 
 ### Changed
 - Music 1.1.0 downloads yt-dlp and ffmpeg into Nightfeed’s app data when they are missing
+- Music 1.2.0 tries a song up to three times when the file does not save, and finishes the MP3 itself if the first pass only saved the audio
 
 ## 2.4.33
 

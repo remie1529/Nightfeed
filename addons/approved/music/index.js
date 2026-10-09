@@ -85,15 +85,15 @@ async function downloadInput(input, note) {
   if (!tracks[0] || !tracks[0].title) throw new Error('Nothing to download');
   busy = 'Preparing the downloader…';
   await view({ notice: note || '' });
-  const ffmpeg = await ffmpegPath();
-  if (!ffmpeg) throw new Error('Nightfeed could not download ffmpeg. Check the network, then try again.');
+  const ffmpeg = await music.ensureFfmpeg(await ffmpegPath());
   await music.ensureYtDlp();
   let done = 0;
   for (const track of tracks) {
     done += 1;
-    busy = 'Downloading ' + done + '/' + tracks.length + ': ' + track.title;
-    await view({ notice: note || '' });
-    await music.downloadTrack(track, root, ffmpeg);
+    await music.downloadTrack(track, root, ffmpeg, async (attempt) => {
+      busy = (attempt > 1 ? 'Trying again (' + attempt + '/3): ' : 'Downloading ' + done + '/' + tracks.length + ': ') + track.title;
+      await view({ notice: note || '' });
+    });
   }
   busy = '';
   await view({ notice: 'Saved ' + tracks.length + ' song' + (tracks.length === 1 ? '' : 's') + '.' });

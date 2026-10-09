@@ -1,5 +1,7 @@
 const { execFile, spawn } = require('child_process');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const path = require('path');
 const { promisify } = require('util');
 
@@ -177,6 +179,157 @@ function localFfmpeg() {
   return candidates.find((file) => file && fs.existsSync(file)) || '';
 }
 
+const FFMPEG_ZIP = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
+let ffmpegInstall = null;
+
+function appDataDir(name) {
+  const base = process.env.APPDATA || process.env.TEMP || process.cwd();
+  return path.join(base, 'Nightfeed', name);
+}
+
+function findFile(dir, name) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return '';
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const hit = findFile(full, name);
+      if (hit) return hit;
+    } else if (entry.name.toLowerCase() === name.toLowerCase()) {
+      return full;
+    }
+  }
+  return '';
+}
+
+function downloadToFile(url, dest, hops = 0) {
+  return new Promise((resolve, reject) => {
+    if (hops > 8) {
+      reject(new Error('Too many redirects'));
+      return;
+    }
+    const lib = url.startsWith('https:') ? https : http;
+    const req = lib.get(url, { headers: { 'user-agent': 'Nightfeed' } }, (res) => {
+      const code = res.statusCode || 0;
+      if (code >= 300 && code < 400 && res.headers.location) {
+        res.resume();
+        downloadToFile(new URL(res.headers.location, url).toString(), dest, hops + 1).then(resolve, reject);
+        return;
+      }
+      if (code !== 200) {
+        res.resume();
+        reject(new Error('Download failed (HTTP ' + code + ')'));
+        return;
+      }
+      const file = fs.createWriteStream(dest);
+      res.pipe(file);
+      file.on('finish', () => file.close(() => resolve()));
+      file.on('error', reject);
+    });
+    req.setTimeout(300000, () => req.destroy(new Error('Download timed out')));
+    req.on('error', reject);
+  });
+}
+
+async function installFfmpeg(dest) {
+  const dir = path.dirname(dest);
+  const zip = path.join(dir, 'ffmpeg-essentials.zip');
+  const extract = path.join(dir, 'extract');
+  fs.mkdirSync(dir, { recursive: true });
+  await downloadToFile(FFMPEG_ZIP, zip);
+  await execFileAsync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-Command',
+      "Expand-Archive -LiteralPath '" + zip.replace(/'/g, "''") + "' -DestinationPath '" + extract.replace(/'/g, "''") + "' -Force",
+    ],
+    { windowsHide: true, timeout: 180000 }
+  );
+  const exe = findFile(extract, 'ffmpeg.exe');
+  if (!exe) throw new Error('Nightfeed could not download ffmpeg. Check the network, then try again.');
+  fs.copyFileSync(exe, dest);
+  const probe = findFile(extract, 'ffprobe.exe');
+  if (probe) fs.copyFileSync(probe, path.join(dir, 'ffprobe.exe'));
+  if (!fs.existsSync(dest)) throw new Error('Nightfeed could not download ffmpeg. Check the network, then try again.');
+  return dest;
+}
+
+async function ensureFfmpeg(explicit) {
+  if (explicit && fs.existsSync(explicit)) return explicit;
+  const dest = path.join(appDataDir('ffmpeg'), 'ffmpeg.exe');
+  if (fs.existsSync(dest)) return dest;
+  const local = localFfmpeg();
+  if (local) return local;
+  if (!ffmpegInstall) {
+    ffmpegInstall = installFfmpeg(dest).finally(() => {
+      ffmpegInstall = null;
+    });
+  }
+  return ffmpegInstall;
+}
+
+function safeName(track) {
+  const raw = [track.artist, track.title].filter(Boolean).join(' - ') || track.title || 'song';
+  return raw.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120) || 'song';
+}
+
+function targetFile(folder, track) {
+  const base = safeName(track);
+  const plain = path.join(folder, base + '.mp3');
+  if (!fs.existsSync(plain)) return plain;
+  const extra = String(track.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 12);
+  return path.join(folder, base + (extra ? ' (' + extra + ')' : ' (2)') + '.mp3');
+}
+
+function runTool(bin, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, { windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(() => reject(new Error('The download took too long')));
+    }, timeoutMs);
+    child.stdout.on('data', (buf) => {
+      stdout = (stdout + buf.toString()).slice(-8000);
+    });
+    child.stderr.on('data', (buf) => {
+      stderr = (stderr + buf.toString()).slice(-4000);
+    });
+    child.on('error', (err) => finish(() => reject(err)));
+    child.on('close', (code) => finish(() => resolve({ code: code || 0, stdout, stderr })));
+  });
+}
+
+function shortReason(stderr) {
+  const lines = String(stderr || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const error = [...lines].reverse().find((line) => /^ERROR:/i.test(line)) || lines[lines.length - 1] || '';
+  return error.replace(/^ERROR:\s*/i, '').slice(0, 240);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function canRetry(err) {
+  const message = err && err.message ? err.message : String(err);
+  if (/music folder/i.test(message)) return false;
+  if (/did not start/i.test(message)) return false;
+  return true;
+}
+
 function tagValue(value) {
   return String(value || '').replace(/[\r\n]/g, ' ').slice(0, 180);
 }
@@ -203,59 +356,101 @@ async function tagFile(ffmpeg, filePath, track) {
   }
 }
 
-async function downloadTrack(track, folder, ffmpegPath) {
-  if (!folder) throw new Error('Set the music folder in Settings first');
-  fs.mkdirSync(folder, { recursive: true });
-  const bin = await ensureYtDlp();
-  const ffmpeg = (ffmpegPath && fs.existsSync(ffmpegPath) ? ffmpegPath : '') || localFfmpeg();
-  if (!ffmpeg) {
-    throw new Error('Nightfeed could not download ffmpeg. Check the network, then try again.');
+async function convertToMp3(ffmpeg, source, dest) {
+  if (path.resolve(source) === path.resolve(dest)) return dest;
+  if (source.toLowerCase().endsWith('.mp3')) {
+    fs.renameSync(source, dest);
+    return dest;
   }
+  await execFileAsync(ffmpeg, ['-y', '-i', source, '-vn', '-c:a', 'libmp3lame', '-q:a', '2', dest], {
+    windowsHide: true,
+    timeout: 180000,
+  });
+  fs.rmSync(source, { force: true });
+  return dest;
+}
+
+async function downloadOnce(track, folder, bin, ffmpeg) {
   const query = [track.artist, track.title].filter(Boolean).join(' - ').slice(0, 180);
-  const args = [
-    '-x',
-    '--audio-format',
-    'mp3',
-    '--no-playlist',
-    '--print',
-    'after_move:filepath',
-    '-o',
-    path.join(folder, '%(title)s.%(ext)s'),
-  ];
-  if (ffmpeg) args.push('--ffmpeg-location', ffmpeg);
-  args.push('ytsearch1:' + query);
-  let stdout = '';
+  const token = 'nf-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  const produced = () => fs.readdirSync(folder)
+    .filter((name) => name.startsWith(token + '.'))
+    .map((name) => path.join(folder, name))
+    .filter((file) => fs.existsSync(file) && fs.statSync(file).size > 10000);
+  let result;
   try {
-    const result = await execFileAsync(bin, args, {
-      windowsHide: true,
-      timeout: 300000,
-      maxBuffer: 2 * 1024 * 1024,
-    });
-    stdout = result.stdout;
+    result = await runTool(bin, [
+      '-x',
+      '--audio-format',
+      'mp3',
+      '--ffmpeg-location',
+      ffmpeg,
+      '--no-playlist',
+      '--no-mtime',
+      '-o',
+      path.join(folder, token + '.%(ext)s'),
+      'ytsearch1:' + query,
+    ], 300000);
   } catch (err) {
-    const message = err && err.message ? err.message : String(err);
-    if (/ffmpeg/i.test(message)) {
-      throw new Error('Nightfeed could not prepare ffmpeg for this song. Check the network, then try again.');
-    }
-    throw err instanceof Error ? err : new Error(message);
+    for (const file of produced()) fs.rmSync(file, { force: true });
+    throw err;
   }
-  const filePath = String(stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '';
-  if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error('The song did not save. Check that yt-dlp can reach the network.');
+  const files = produced();
+  const mp3 = files.find((file) => file.toLowerCase().endsWith('.mp3'));
+  const source = mp3 || files.find((file) => /\.(m4a|webm|opus|ogg|flac|wav)$/i.test(file));
+  if (!source) {
+    for (const file of files) fs.rmSync(file, { force: true });
+    const reason = shortReason(result.stderr);
+    throw new Error(reason || 'The song did not save. Trying again when the network allows it.');
+  }
+  const dest = targetFile(folder, track);
+  try {
+    await convertToMp3(ffmpeg, source, dest);
+  } catch (err) {
+    for (const file of produced()) fs.rmSync(file, { force: true });
+    throw err;
+  }
+  for (const file of produced()) {
+    if (path.resolve(file) !== path.resolve(dest)) fs.rmSync(file, { force: true });
+  }
+  if (!fs.existsSync(dest) || fs.statSync(dest).size < 10000) {
+    fs.rmSync(dest, { force: true });
+    throw new Error('The song did not save. Trying again when the network allows it.');
   }
   try {
-    await tagFile(ffmpeg, filePath, track);
+    await tagFile(ffmpeg, dest, track);
   } catch {
     // The audio file is already saved. Tags are optional.
   }
   const song = {
     ...track,
     id: track.id || query.toLowerCase(),
-    filePath,
+    filePath: dest,
     downloadedAt: new Date().toISOString(),
   };
   rememberSong(folder, song);
   return song;
+}
+
+async function downloadTrack(track, folder, ffmpegPath, onAttempt) {
+  if (!folder) throw new Error('Set the music folder in Settings first');
+  fs.mkdirSync(folder, { recursive: true });
+  const bin = await ensureYtDlp();
+  const ffmpeg = await ensureFfmpeg(ffmpegPath);
+  let last = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (typeof onAttempt === 'function') {
+      await onAttempt(attempt);
+    }
+    try {
+      return await downloadOnce(track, folder, bin, ffmpeg);
+    } catch (err) {
+      last = err;
+      if (attempt === 3 || !canRetry(err)) break;
+      await delay(2000 * attempt);
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last || 'The song did not save'));
 }
 
 function assertFile(filePath) {
@@ -278,6 +473,7 @@ module.exports = {
   spotifyRef,
   fetchSpotify,
   ensureYtDlp,
+  ensureFfmpeg,
   downloadTrack,
   loadSongs,
   openFile,
