@@ -6,6 +6,7 @@
 
 ## Added
 - Music tab downloads songs and Spotify playlists into a folder chosen in Settings
+- Music 1.1.0 installs yt-dlp and ffmpeg into app data when a download needs them
 - `/request-music` uses the Requests list. Admins use `/music playlist`
 - Addons can define Settings fields and Telegram commands for request chats
 
