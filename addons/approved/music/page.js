@@ -83,8 +83,8 @@
   const header = el('div');
   header.appendChild(el('h1', '', 'Music'));
   header.appendChild(el('p', 'intro', state.folder
-    ? 'Songs saved in ' + state.folder + '. A Spotify link fills in the song list. yt-dlp saves the audio as MP3. A playlist keeps the tracks on that page, up to 100.'
-    : 'Set the music folder under Settings, in the Music section. Downloads use yt-dlp.'));
+    ? 'Songs saved in ' + state.folder + '. A Spotify link fills in the song list. Nightfeed saves each track as an MP3 and downloads the tools it needs. A playlist keeps the tracks on that page, up to 100.'
+    : 'Set the music folder under Settings, in the Music section.'));
   root.appendChild(header);
   if (state.error) root.appendChild(el('div', 'banner', state.error));
   if (state.notice) root.appendChild(el('div', 'note', state.notice));

@@ -105,16 +105,66 @@ async function fetchSpotify(input) {
   return tracks.slice(0, 100);
 }
 
-async function findYtDlp() {
-  for (const name of ['yt-dlp.exe', 'yt-dlp']) {
-    try {
-      await execFileAsync(name, ['--version'], { windowsHide: true, timeout: 8000 });
-      return name;
-    } catch {
-      // try the next name
-    }
+const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
+let ytdlpInstall = null;
+
+function toolDir() {
+  const base = process.env.APPDATA || process.env.TEMP || process.cwd();
+  return path.join(base, 'Nightfeed', 'yt-dlp');
+}
+
+async function exeWorks(file) {
+  try {
+    await execFileAsync(file, ['--version'], { windowsHide: true, timeout: 20000 });
+    return true;
+  } catch {
+    return false;
   }
-  throw new Error('yt-dlp is not installed. Install yt-dlp, then try the download again.');
+}
+
+async function installYtDlp(dest) {
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const part = dest + '.part';
+  let res;
+  try {
+    res = await fetch(YTDLP_URL, {
+      headers: { 'user-agent': 'Nightfeed' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(180000),
+    });
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    throw new Error('Nightfeed could not download yt-dlp. Check the network, then try again. ' + message);
+  }
+  if (!res.ok) {
+    throw new Error('Nightfeed could not download yt-dlp (HTTP ' + res.status + '). Check the network, then try again.');
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 1000000) {
+    throw new Error('Nightfeed could not download yt-dlp. Check the network, then try again.');
+  }
+  fs.writeFileSync(part, buf);
+  if (fs.existsSync(dest)) fs.rmSync(dest, { force: true });
+  fs.renameSync(part, dest);
+  if (!(await exeWorks(dest))) {
+    fs.rmSync(dest, { force: true });
+    throw new Error('Nightfeed downloaded yt-dlp, but it did not start.');
+  }
+  return dest;
+}
+
+async function ensureYtDlp() {
+  const dest = path.join(toolDir(), 'yt-dlp.exe');
+  if (await exeWorks(dest)) return dest;
+  for (const name of ['yt-dlp.exe', 'yt-dlp']) {
+    if (await exeWorks(name)) return name;
+  }
+  if (!ytdlpInstall) {
+    ytdlpInstall = installYtDlp(dest).finally(() => {
+      ytdlpInstall = null;
+    });
+  }
+  return ytdlpInstall;
 }
 
 function localFfmpeg() {
@@ -156,8 +206,11 @@ async function tagFile(ffmpeg, filePath, track) {
 async function downloadTrack(track, folder, ffmpegPath) {
   if (!folder) throw new Error('Set the music folder in Settings first');
   fs.mkdirSync(folder, { recursive: true });
-  const bin = await findYtDlp();
+  const bin = await ensureYtDlp();
   const ffmpeg = (ffmpegPath && fs.existsSync(ffmpegPath) ? ffmpegPath : '') || localFfmpeg();
+  if (!ffmpeg) {
+    throw new Error('Nightfeed could not download ffmpeg. Check the network, then try again.');
+  }
   const query = [track.artist, track.title].filter(Boolean).join(' - ').slice(0, 180);
   const args = [
     '-x',
@@ -182,7 +235,7 @@ async function downloadTrack(track, folder, ffmpegPath) {
   } catch (err) {
     const message = err && err.message ? err.message : String(err);
     if (/ffmpeg/i.test(message)) {
-      throw new Error('ffmpeg is required to save an MP3. Install ffmpeg, or open Nightfeed so it can download one, then try again.');
+      throw new Error('Nightfeed could not prepare ffmpeg for this song. Check the network, then try again.');
     }
     throw err instanceof Error ? err : new Error(message);
   }
@@ -224,6 +277,7 @@ function playFile(filePath) {
 module.exports = {
   spotifyRef,
   fetchSpotify,
+  ensureYtDlp,
   downloadTrack,
   loadSongs,
   openFile,

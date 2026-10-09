@@ -8,6 +8,9 @@
 - Telegram admins use `/music` and `/music playlist <link>`. Request chats use `/request-music`. Approve it in Requests or with `/approve` and the download starts
 - Addons can add their own Settings fields, submit requests, and register Telegram commands for admins, request chats, or both
 
+### Changed
+- Music 1.1.0 downloads yt-dlp and ffmpeg into Nightfeed’s app data when they are missing
+
 ## 2.4.33
 
 ### Added

@@ -83,7 +83,11 @@ async function downloadInput(input, note) {
     ? await music.fetchSpotify(input)
     : [{ id: '', title: String(input || '').trim(), artist: '', album: '', year: 0, durationMs: 0, coverUrl: '', filePath: '' }];
   if (!tracks[0] || !tracks[0].title) throw new Error('Nothing to download');
+  busy = 'Preparing the downloader…';
+  await view({ notice: note || '' });
   const ffmpeg = await ffmpegPath();
+  if (!ffmpeg) throw new Error('Nightfeed could not download ffmpeg. Check the network, then try again.');
+  await music.ensureYtDlp();
   let done = 0;
   for (const track of tracks) {
     done += 1;
