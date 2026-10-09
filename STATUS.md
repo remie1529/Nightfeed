@@ -1,6 +1,13 @@
 # Nightfeed status
 
-**Current:** v2.4.34 — Music is in the addon store, with a Settings folder, a Music tab, and Telegram requests.
+**Current:** v2.4.35 — Music can keep or skip the playlist name as the album, and can clear it on songs already saved.
+
+# Status v2.4.35
+
+## Added
+- Settings has “Link playlist as album” for Music
+- Settings can clear the album on songs already in the music folder
+- Addon settings support a checkbox and a button
 
 # Status v2.4.34
 

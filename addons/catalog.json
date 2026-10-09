@@ -19,7 +19,7 @@
     {
       "id": "nightfeed.music",
       "name": "Music",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "description": "Download songs and Spotify playlists into a music folder. Nightfeed installs the download tools it needs. Request tracks from Telegram.",
       "author": "Nightfeed",
       "dir": "approved/music"

@@ -28,6 +28,8 @@ const api = {
   getAddonSettings: () => ipcRenderer.invoke('addons:settings'),
   setAddonSetting: (addonId: string, fieldId: string, value: string) =>
     ipcRenderer.invoke('addons:setSetting', addonId, fieldId, value),
+  runAddonSettingAction: (addonId: string, fieldId: string) =>
+    ipcRenderer.invoke('addons:settingAction', addonId, fieldId),
   onAddonNavigate: (cb: (nav: { kind?: string; id?: number }) => void) => {
     const listener = (_: unknown, nav: { kind?: string; id?: number }) => cb(nav);
     ipcRenderer.on('addons:navigate', listener);

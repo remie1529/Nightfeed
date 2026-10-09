@@ -205,6 +205,8 @@ function AddonSettingsSection() {
     fields: Array<{ id: string; label: string; type: string; description?: string }>;
     values: Record<string, string>;
   }>>([]);
+  const [actionBusy, setActionBusy] = useState('');
+  const [actionNote, setActionNote] = useState<Record<string, string>>({});
 
   const load = () => {
     window.torrentAPI.getAddonSettings?.()
@@ -223,7 +225,55 @@ function AddonSettingsSection() {
     <>
       {sections.map((section) => (
         <SettingsSection key={section.addonId} title={section.addonName} defaultOpen>
-          {section.fields.map((field) => (
+          {section.fields.map((field) => field.type === 'bool' ? (
+            <div className="field" key={field.id}>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={section.values[field.id] !== '0'}
+                  onChange={(e) => {
+                    const value = e.target.checked ? '1' : '0';
+                    setSections((prev) => prev.map((item) => (
+                      item.addonId === section.addonId
+                        ? { ...item, values: { ...item.values, [field.id]: value } }
+                        : item
+                    )));
+                    void window.torrentAPI.setAddonSetting?.(section.addonId, field.id, value)
+                      ?.catch(() => undefined);
+                  }}
+                />
+                {field.label}
+              </label>
+              {field.description ? <div className="hint">{field.description}</div> : null}
+            </div>
+          ) : field.type === 'action' ? (
+            <div className="field" key={field.id}>
+              <button
+                type="button"
+                disabled={actionBusy === section.addonId + ':' + field.id}
+                onClick={() => {
+                  const key = section.addonId + ':' + field.id;
+                  setActionBusy(key);
+                  setActionNote((prev) => ({ ...prev, [key]: '' }));
+                  void window.torrentAPI.runAddonSettingAction?.(section.addonId, field.id)
+                    .then((message) => {
+                      setActionNote((prev) => ({ ...prev, [key]: String(message || 'Done.') }));
+                    })
+                    .catch((err) => {
+                      const message = err instanceof Error ? err.message : String(err);
+                      setActionNote((prev) => ({ ...prev, [key]: message }));
+                    })
+                    .finally(() => setActionBusy(''));
+                }}
+              >
+                {actionBusy === section.addonId + ':' + field.id ? 'Working…' : field.label}
+              </button>
+              {field.description ? <div className="hint">{field.description}</div> : null}
+              {actionNote[section.addonId + ':' + field.id] ? (
+                <div className="hint">{actionNote[section.addonId + ':' + field.id]}</div>
+              ) : null}
+            </div>
+          ) : (
             <div className="field" key={field.id}>
               <label>{field.label}</label>
               <div className="row">
