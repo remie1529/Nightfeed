@@ -198,6 +198,76 @@ const empty: AppSettings = {
   liveTvFakeEpgDays: 2,
 };
 
+function AddonSettingsSection() {
+  const [sections, setSections] = useState<Array<{
+    addonId: string;
+    addonName: string;
+    fields: Array<{ id: string; label: string; type: string; description?: string }>;
+    values: Record<string, string>;
+  }>>([]);
+
+  const load = () => {
+    window.torrentAPI.getAddonSettings?.()
+      .then((rows: unknown) => setSections(Array.isArray(rows) ? rows as typeof sections : []))
+      .catch(() => setSections([]));
+  };
+
+  useEffect(() => {
+    load();
+    return window.torrentAPI.onAddonsChanged?.(() => load());
+  }, []);
+
+  if (!sections.length) return null;
+
+  return (
+    <>
+      {sections.map((section) => (
+        <SettingsSection key={section.addonId} title={section.addonName} defaultOpen>
+          {section.fields.map((field) => (
+            <div className="field" key={field.id}>
+              <label>{field.label}</label>
+              <div className="row">
+                <input
+                  value={section.values[field.id] || ''}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSections((prev) => prev.map((item) => (
+                      item.addonId === section.addonId
+                        ? { ...item, values: { ...item.values, [field.id]: value } }
+                        : item
+                    )));
+                  }}
+                  onBlur={(e) => {
+                    void window.torrentAPI.setAddonSetting?.(section.addonId, field.id, e.target.value)
+                      ?.catch(() => undefined);
+                  }}
+                  placeholder={field.type === 'folder' ? 'Choose a folder' : ''}
+                />
+                {field.type === 'folder' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        const picked = await window.torrentAPI.pickLibraryFolder();
+                        if (!picked) return;
+                        await window.torrentAPI.setAddonSetting?.(section.addonId, field.id, picked);
+                        load();
+                      })();
+                    }}
+                  >
+                    Browse
+                  </button>
+                ) : null}
+              </div>
+              {field.description ? <div className="hint">{field.description}</div> : null}
+            </div>
+          ))}
+        </SettingsSection>
+      ))}
+    </>
+  );
+}
+
 export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } = {}) {
   const [settings, setLocal] = useState<AppSettings>(empty);
   const [saved, setSaved] = useState(false);
@@ -1613,6 +1683,8 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
         {backupMsg && <div className="hint" style={{ color: 'var(--ok, #6c6)' }}>{backupMsg}</div>}
       </div>
         </SettingsSection>
+
+        <AddonSettingsSection />
 
         <SettingsSection title="About Nightfeed" defaultOpen>
         <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem', lineHeight: 1.55 }}>

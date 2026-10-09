@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.34
+
+### Added
+- Music is in the addon store. It adds a Music tab, a music folder on the Settings screen, and a song screen with cover, artist, album, year, and length
+- A Spotify playlist or track link supplies the song list. yt-dlp saves each track as an MP3 in that folder
+- Telegram admins use `/music` and `/music playlist <link>`. Request chats use `/request-music`. Approve it in Requests or with `/approve` and the download starts
+- Addons can add their own Settings fields, submit requests, and register Telegram commands for admins, request chats, or both
+
 ## 2.4.33
 
 ### Added

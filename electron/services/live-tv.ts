@@ -134,7 +134,7 @@ function ensureBundledProbe(dir: string): void {
   }
 }
 
-function ensureFfmpeg(explicit?: string): Promise<string | null> {
+export function ensureFfmpeg(explicit?: string): Promise<string | null> {
   const found = detectFfmpeg(explicit);
   if (found) {
     const dir = path.join(app.getPath('userData'), 'ffmpeg');

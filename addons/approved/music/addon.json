@@ -1,0 +1,10 @@
+{
+  "id": "nightfeed.music",
+  "name": "Music",
+  "version": "1.0.0",
+  "description": "Download songs and Spotify playlists into a music folder. Request tracks from Telegram.",
+  "author": "Nightfeed",
+  "api": 1,
+  "main": "index.js",
+  "files": ["index.js", "music.js", "page.js", "style.css"]
+}

@@ -57,6 +57,7 @@ module.exports = {
 
 - `api.app.version` is the Nightfeed version string.
 - `api.app.notify(message)` shows a toast.
+- `api.app.ffmpegPath()` returns the ffmpeg Nightfeed uses. On Windows it downloads one into app data when none is installed.
 
 ### Log
 
@@ -94,9 +95,50 @@ const result = await window.nightfeed.call('add', { kind: 'show', id: 123 });
 
 `index.js` receives that through `onAction`. The frame cannot read Nightfeed’s own screens. Use `openShow` and `openMovie` when the title is already in the library.
 
+### Settings
+
+An addon can add fields to the Nightfeed Settings screen.
+
+```js
+api.settings.define([
+  {
+    id: 'musicRoot',
+    label: 'Music folder',
+    type: 'folder',
+    description: 'Downloaded songs are saved here.',
+  },
+]);
+const folder = await api.settings.get('musicRoot');
+```
+
+`type` is `folder` or `text`. Values are saved for that addon only.
+
+### Requests
+
+A music-style request uses the same Requests list as TV and movies.
+
+```js
+await api.requests.submit({
+  title: 'Artist - Song',
+  requesterChatId: meta.chatId,
+  requesterName: meta.fromName,
+});
+api.requests.onResolved(async (request, action) => {
+  if (action !== 'approved') return;
+  try {
+    // download request.title, then:
+    await api.requests.complete(request.id);
+  } catch (err) {
+    await api.requests.fail(request.id, err.message);
+  }
+});
+```
+
+Approving it in Requests or with `/approve <id>` tells the addon. `complete` marks it downloaded and tells the requester. `fail` tells the requester it did not save. Denying it does not start a download.
+
 ### Telegram
 
-Admin chats can run a command that the addon registers. Request-only chats cannot.
+A command is for admin chats unless `audience` says otherwise. `requests` is request chats only. `all` is both.
 
 ```js
 api.telegram.command('plex', {
@@ -107,7 +149,7 @@ api.telegram.command('plex', {
 });
 ```
 
-`/plex start` arrives as `args === 'start'`. Built-in Nightfeed commands such as `/status` stay with Nightfeed. Do not put bot tokens or passwords in the reply.
+`/plex start` arrives as `args === 'start'`. The second argument is `{ chatId, fromName }`. Set `audience` to `admin` (the default), `requests`, or `all`. Built-in Nightfeed commands such as `/status` stay with Nightfeed. Do not put bot tokens or passwords in the reply.
 
 ### Events
 
