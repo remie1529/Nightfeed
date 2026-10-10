@@ -106,6 +106,7 @@ export default function MovieDetail({
       await window.torrentAPI.startMovieDownload({
         tmdbId,
         magnet: result.magnet,
+        ignoreMinSize: true,
         candidates: results.map((r) => ({
           magnet: r.magnet,
           infoHash: r.infoHash,

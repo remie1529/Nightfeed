@@ -573,6 +573,15 @@ function qualityRules(
   };
 }
 
+/** A torrent the user picked in Get is not rejected for being under the size floor. */
+function qualityRulesForPick(rules: QualityRules, ignoreMinSize?: boolean): QualityRules {
+  if (!ignoreMinSize) return rules;
+  return {
+    ...rules,
+    minSizeMb: { '720p': 0, '1080p': 0, '2160p': 0 },
+  };
+}
+
 function currentLibraryResolution(
   localPath: string | undefined,
   stored?: Resolution | null
@@ -3578,6 +3587,7 @@ function registerIpc() {
         episodeTitle: string;
         magnet: string;
         candidates?: TorrentCandidate[];
+        ignoreMinSize?: boolean;
       }
     ) => {
       assertVpnAllowsTorrents();
@@ -3598,7 +3608,7 @@ function registerIpc() {
         episodeTitle: payload.episodeTitle,
         candidates,
         triedInfoHashes: triedList,
-        quality: qualityRules('episode', preferred, show),
+        quality: qualityRulesForPick(qualityRules('episode', preferred, show), payload.ignoreMinSize),
       });
       const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
       const startTitle = item?.name || payload.episodeTitle || show.name;
@@ -3880,6 +3890,7 @@ function registerIpc() {
         tmdbId: number;
         magnet: string;
         candidates?: TorrentCandidate[];
+        ignoreMinSize?: boolean;
       }
     ) => {
       assertVpnAllowsTorrents();
@@ -3903,7 +3914,7 @@ function registerIpc() {
         movieLibraryRoot: mRoots[0],
         candidates,
         triedInfoHashes: triedList,
-        quality: qualityRules('movie', preferred),
+        quality: qualityRulesForPick(qualityRules('movie', preferred), payload.ignoreMinSize),
       });
       const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
       const startTitle = item?.name || movie.title;

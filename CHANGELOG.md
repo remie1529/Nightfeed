@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.36
+
+### Changed
+- A torrent chosen with Get is kept even when the file is smaller than the minimum size for that resolution. Download best and auto-download still use that minimum
+
 ## 2.4.35
 
 ### Added

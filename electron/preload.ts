@@ -85,6 +85,7 @@ const api = {
     episodeTitle: string;
     magnet: string;
     candidates?: Array<{ magnet: string; infoHash?: string; title?: string }>;
+    ignoreMinSize?: boolean;
   }) => ipcRenderer.invoke('download:start', payload),
   getDownloads: () => ipcRenderer.invoke('download:list'),
   pauseDownload: (id: string) => ipcRenderer.invoke('download:pause', id),
@@ -111,6 +112,7 @@ const api = {
     tmdbId: number;
     magnet: string;
     candidates?: Array<{ magnet: string; infoHash?: string; title?: string }>;
+    ignoreMinSize?: boolean;
   }) => ipcRenderer.invoke('download:startMovie', payload),
 
   getTelegramStatus: () => ipcRenderer.invoke('telegram:status'),
