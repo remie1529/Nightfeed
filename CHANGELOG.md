@@ -7,6 +7,9 @@
 - Music settings include “Remove album from saved songs”, which clears that name on songs already in the folder and in the MP3 tag
 - Addon settings can be a checkbox or a button
 
+### Changed
+- Music is no longer in the addon store
+
 ## 2.4.34
 
 ### Added

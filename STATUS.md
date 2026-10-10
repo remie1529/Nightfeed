@@ -1,6 +1,6 @@
 # Nightfeed status
 
-**Current:** v2.4.35 — Music can keep or skip the playlist name as the album, and can clear it on songs already saved.
+**Current:** v2.4.35 — Music is a local addon only and is not in the store.
 
 # Status v2.4.35
 
