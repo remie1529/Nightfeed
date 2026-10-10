@@ -183,6 +183,7 @@ export default function ShowDetail({
         episode: searchEp.episodeNumber,
         episodeTitle: searchEp.name,
         magnet: result.magnet,
+        ignoreMinSize: true,
         candidates: results.map((r) => ({
           magnet: r.magnet,
           infoHash: r.infoHash,

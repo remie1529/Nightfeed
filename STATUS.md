@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.35 — Music is a local addon only and is not in the store.
+**Current:** v2.4.36 — Get keeps a chosen torrent even when it is under the minimum file size.
+
+# Status v2.4.36
+
+## Changed
+- Pressing Get and choosing a torrent ignores the minimum file size for that resolution
 
 # Status v2.4.35
 
