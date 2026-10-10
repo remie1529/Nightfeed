@@ -15,14 +15,6 @@
       "description": "See if Plex Media Server is running, start or stop it, and check who is watching. Telegram: /plex",
       "author": "Nightfeed",
       "dir": "approved/plex-control"
-    },
-    {
-      "id": "nightfeed.music",
-      "name": "Music",
-      "version": "1.4.0",
-      "description": "Download songs and Spotify playlists into a music folder. Nightfeed installs the download tools it needs. Request tracks from Telegram.",
-      "author": "Nightfeed",
-      "dir": "approved/music"
     }
   ]
 }
