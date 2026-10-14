@@ -3198,7 +3198,9 @@ function registerIpc() {
       incoming.mcpPort = Number.isFinite(n) ? Math.max(1, Math.min(65535, Math.floor(n))) : 47321;
     }
     if (typeof incoming.mcpToken === 'string') {
-      incoming.mcpToken = incoming.mcpToken.trim().slice(0, 200);
+      const token = incoming.mcpToken.trim().slice(0, 200);
+      if (token.length >= 16) incoming.mcpToken = token;
+      else delete incoming.mcpToken;
     }
     if (incoming.webPortalBind != null && incoming.webPortalBind !== 'lan') {
       incoming.webPortalBind = 'localhost';
@@ -3231,8 +3233,9 @@ function registerIpc() {
       keys: summarizeSettingsKeys(incoming as Record<string, unknown>),
     });
     applySettingsSideEffects(next);
-    mainWindow?.webContents.send('settings:changed', next);
-    return next;
+    const saved = getSettings();
+    mainWindow?.webContents.send('settings:changed', saved);
+    return saved;
   });
 
   ipcMain.handle('dialog:pickFolder', async () => {
@@ -4625,6 +4628,8 @@ app.whenReady().then(async () => {
       return { ok: true, message: reason };
     },
   });
+  const booted = ensureMcpSecret(getSettings());
+  nightfeedMcp.sync(booted);
   createWindow();
   writeSessionLock();
   wireTelegram();

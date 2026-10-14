@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.38 — Nightfeed starts with the MCP server packed into the app.
+**Current:** v2.4.39 — The MCP token is created at startup and shown in Settings.
+
+# Status v2.4.39
+
+## Fixed
+- Settings shows the MCP token instead of an empty box
 
 # Status v2.4.38
 

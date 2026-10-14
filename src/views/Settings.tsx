@@ -348,6 +348,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
   const [mcpInfo, setMcpInfo] = useState<{
     running: boolean;
     url: string;
+    token: string;
     bridgePath: string;
     error: string;
   } | null>(null);
@@ -416,6 +417,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
       void refreshTg();
       void refreshVpn();
       void refreshPortal();
+      void refreshMcp();
     }, 4000);
     const off = window.torrentAPI.onUpdateStatus?.((s) => setUpdateStatus(s as UpdateStatus));
     const offVpn = window.torrentAPI.onVpnStatus?.((s) => setVpnStatus(s as VpnStatus));
@@ -1703,7 +1705,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
       </div>
       <div className="field">
         <label>Token</label>
-        <input readOnly value={settings.mcpToken || ''} />
+        <input readOnly value={settings.mcpToken || mcpInfo?.token || ''} />
         <div className="hint">Nightfeed creates this token. HTTP agents send it as Authorization: Bearer.</div>
       </div>
       <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
