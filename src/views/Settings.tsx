@@ -173,6 +173,9 @@ const empty: AppSettings = {
   webPortalBind: 'localhost',
   webPortalAdminPasswordHash: '',
   webPortalSessionSecret: '',
+  mcpEnabled: true,
+  mcpPort: 47321,
+  mcpToken: '',
   liveTvEnabled: false,
   liveTvPort: 34400,
   liveTvBind: 'lan',
@@ -342,6 +345,13 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
   const [vpnBusy, setVpnBusy] = useState(false);
   const [webPortalPassword, setWebPortalPassword] = useState('');
   const [portalStatus, setPortalStatus] = useState<WebPortalStatus | null>(null);
+  const [mcpInfo, setMcpInfo] = useState<{
+    running: boolean;
+    url: string;
+    bridgePath: string;
+    error: string;
+  } | null>(null);
+  const [mcpCopied, setMcpCopied] = useState(false);
 
   const refreshTg = async () => {
     try {
@@ -356,6 +366,15 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
     try {
       const s = (await window.torrentAPI.getWebPortalStatus?.()) as WebPortalStatus | undefined;
       if (s) setPortalStatus(s);
+    } catch {
+      // ignore
+    }
+  };
+
+  const refreshMcp = async () => {
+    try {
+      const s = await window.torrentAPI.getMcpStatus?.();
+      if (s) setMcpInfo(s as NonNullable<typeof mcpInfo>);
     } catch {
       // ignore
     }
@@ -392,6 +411,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
     refreshTg();
     void refreshVpn();
     void refreshPortal();
+    void refreshMcp();
     const id = setInterval(() => {
       void refreshTg();
       void refreshVpn();
@@ -425,6 +445,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
       setTimeout(() => setSaved(false), 1800);
       await refreshTg();
       await refreshPortal();
+      await refreshMcp();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -1656,6 +1677,60 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
           Source (M3U / Xtream / direct URL), which channels go to Plex, and the Plex tuner/guide URLs are on
           the <strong>Live TV</strong> tab.
         </div>
+        </SettingsSection>
+
+        <SettingsSection title="AI agents (MCP)" defaultOpen>
+      <div className="field">
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={!!settings.mcpEnabled}
+            onChange={(e) => setLocal({ ...settings, mcpEnabled: e.target.checked })}
+          />
+          Let AI agents control Nightfeed
+        </label>
+        <div className="hint">
+          Listens on this computer only. Agents can search, add, and download. They cannot read bot tokens or passwords.
+        </div>
+      </div>
+      <div className="field">
+        <label>Port</label>
+        <input
+          type="number"
+          value={settings.mcpPort || 47321}
+          onChange={(e) => setLocal({ ...settings, mcpPort: Number(e.target.value) || 47321 })}
+        />
+      </div>
+      <div className="field">
+        <label>Token</label>
+        <input readOnly value={settings.mcpToken || ''} />
+        <div className="hint">Nightfeed creates this token. HTTP agents send it as Authorization: Bearer.</div>
+      </div>
+      <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => {
+            const bridge = mcpInfo?.bridgePath || '';
+            const block = JSON.stringify({
+              mcpServers: {
+                nightfeed: { command: 'node', args: [bridge] },
+              },
+            }, null, 2);
+            void navigator.clipboard.writeText(block);
+            setMcpCopied(true);
+            setTimeout(() => setMcpCopied(false), 1600);
+          }}
+        >
+          {mcpCopied ? 'Copied' : 'Copy agent config'}
+        </button>
+      </div>
+      {mcpInfo ? (
+        <div className="hint">
+          {mcpInfo.running ? `Running at ${mcpInfo.url}` : 'Turn this on and click Save settings.'}
+          {mcpInfo.error ? ` ${mcpInfo.error}` : ''}
+          {mcpInfo.bridgePath ? ` Bridge: ${mcpInfo.bridgePath}` : ''}
+        </div>
+      ) : null}
         </SettingsSection>
 
         <SettingsSection title="Updates" defaultOpen>

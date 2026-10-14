@@ -104,6 +104,7 @@ import { uploadViaPool } from './services/ftp-pool';
 import { writeBackupJsonViaPool, readBackupJsonViaPool } from './services/backup-pool';
 import { vpnManager } from './services/vpn';
 import { ensureFfmpeg, liveTv, withLogoPreview } from './services/live-tv';
+import { nightfeedMcp } from './services/mcp';
 import {
   applyCrashRestartTask,
   clearSessionLock,
@@ -1821,6 +1822,12 @@ function pickLanIpv4(): string | null {
   return null;
 }
 
+function ensureMcpSecret(settings: AppSettings): AppSettings {
+  if (!settings.mcpEnabled) return settings;
+  if ((settings.mcpToken || '').trim().length >= 16) return settings;
+  return setSettings({ mcpToken: randomBytes(24).toString('hex') });
+}
+
 function ensureWebPortalSecrets(settings: AppSettings): AppSettings {
   let next = settings;
   if (!(next.webPortalSessionSecret || '').trim()) {
@@ -1843,6 +1850,8 @@ function applySettingsSideEffects(next: AppSettings): void {
     enabled: !!portalSettings.webPortalEnabled,
   });
   liveTv.sync(next);
+  const mcpSettings = ensureMcpSecret(next);
+  nightfeedMcp.sync(mcpSettings);
   downloadEngine.applySettings({
     maxConnections: next.maxConnections,
     maxDownloadSpeedKBps: next.maxDownloadSpeedKBps,
@@ -3051,6 +3060,113 @@ async function resolveTelegramRequest(
   }
 }
 
+async function startPickedEpisode(payload: {
+  tmdbId: number;
+  season: number;
+  episode: number;
+  episodeTitle?: string;
+  magnet: string;
+  candidates?: TorrentCandidate[];
+  ignoreMinSize?: boolean;
+}) {
+  assertVpnAllowsTorrents();
+  const settings = getSettings();
+  const show = getShows().find((s) => s.tmdbId === payload.tmdbId);
+  if (!show) throw new Error('Show not found');
+  const triedList = loadTriedForEpisode(payload.tmdbId, payload.season, payload.episode);
+  const candidates = payload.candidates?.length
+    ? toCandidates(payload.candidates)
+    : toCandidates([{ magnet: payload.magnet }]);
+  const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
+  const episodeTitle = payload.episodeTitle || '';
+  const item = await downloadEngine.start({
+    magnet: payload.magnet,
+    show: showForDownload(show, payload.season),
+    libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
+    seasonNumber: payload.season,
+    episodeNumber: payload.episode,
+    episodeTitle,
+    candidates,
+    triedInfoHashes: triedList,
+    quality: qualityRulesForPick(qualityRules('episode', preferred, show), payload.ignoreMinSize),
+  });
+  const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
+  const startTitle = item?.name || episodeTitle || show.name;
+  activityLog.info(
+    'download',
+    `Start (manual): ${describeTorrentChoice(
+      {
+        title: startTitle,
+        magnet: payload.magnet,
+        infoHash: startHash,
+        resolution: detectResolution(startTitle),
+      },
+      {
+        preferred,
+        triedSkipped: triedList.length,
+        healthyCount: candidates.length,
+        mode: 'manual',
+      }
+    )}`,
+    { S: payload.season, E: payload.episode, infoHash: shortInfoHash(startHash) || startHash }
+  );
+  pushDownloads({ persist: 'now' });
+  return item;
+}
+
+async function startPickedMovie(payload: {
+  tmdbId: number;
+  magnet: string;
+  candidates?: TorrentCandidate[];
+  ignoreMinSize?: boolean;
+}) {
+  assertVpnAllowsTorrents();
+  const settings = getSettings();
+  const movie = getMovies().find((m) => m.tmdbId === payload.tmdbId);
+  if (!movie) throw new Error('Movie not found');
+  const mRoots = movieRoots(settings);
+  if (!mRoots.length) throw new Error('Set a movie library folder in Settings');
+  const triedList = loadTriedForMovie(payload.tmdbId);
+  const candidates = payload.candidates?.length
+    ? toCandidates(payload.candidates)
+    : toCandidates([{ magnet: payload.magnet }]);
+  const preferred = (movie.preferredResolution ||
+    settings.defaultMovieResolution ||
+    settings.defaultResolution) as Resolution;
+  const item = await downloadEngine.startMovie({
+    magnet: payload.magnet,
+    movie: movieForDownload(movie),
+    movieLibraryRoot: mRoots[0],
+    candidates,
+    triedInfoHashes: triedList,
+    quality: qualityRulesForPick(qualityRules('movie', preferred), payload.ignoreMinSize),
+  });
+  const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
+  const startTitle = item?.name || movie.title;
+  activityLog.info(
+    'download',
+    `Start movie (manual): ${describeTorrentChoice(
+      {
+        title: startTitle,
+        magnet: payload.magnet,
+        infoHash: startHash,
+        resolution: detectResolution(startTitle),
+      },
+      {
+        preferred,
+        triedSkipped: triedList.length,
+        healthyCount: candidates.length,
+        mode: 'manual',
+      }
+    )}`,
+    { infoHash: shortInfoHash(startHash) || startHash }
+  );
+  upsertMovie(withMovieLocalStatus(movie));
+  pushDownloads({ persist: 'now' });
+  emitMoviesChanged();
+  return item;
+}
+
 function registerIpc() {
   ipcMain.handle('settings:get', () => getSettings());
   ipcMain.handle('settings:set', (_e, partial: Partial<AppSettings> & { webPortalAdminPassword?: string }) => {
@@ -3076,6 +3192,13 @@ function registerIpc() {
     if (incoming.webPortalPort != null) {
       const n = Number(incoming.webPortalPort);
       incoming.webPortalPort = Number.isFinite(n) ? Math.max(1, Math.min(65535, Math.floor(n))) : 8787;
+    }
+    if (incoming.mcpPort != null) {
+      const n = Number(incoming.mcpPort);
+      incoming.mcpPort = Number.isFinite(n) ? Math.max(1, Math.min(65535, Math.floor(n))) : 47321;
+    }
+    if (typeof incoming.mcpToken === 'string') {
+      incoming.mcpToken = incoming.mcpToken.trim().slice(0, 200);
     }
     if (incoming.webPortalBind != null && incoming.webPortalBind !== 'lan') {
       incoming.webPortalBind = 'localhost';
@@ -3589,50 +3712,7 @@ function registerIpc() {
         candidates?: TorrentCandidate[];
         ignoreMinSize?: boolean;
       }
-    ) => {
-      assertVpnAllowsTorrents();
-      const settings = getSettings();
-      const show = getShows().find((s) => s.tmdbId === payload.tmdbId);
-      if (!show) throw new Error('Show not found');
-      const triedList = loadTriedForEpisode(payload.tmdbId, payload.season, payload.episode);
-      const candidates = payload.candidates?.length
-        ? toCandidates(payload.candidates)
-        : toCandidates([{ magnet: payload.magnet }]);
-      const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
-      const item = await downloadEngine.start({
-        magnet: payload.magnet,
-        show: showForDownload(show, payload.season),
-        libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
-        seasonNumber: payload.season,
-        episodeNumber: payload.episode,
-        episodeTitle: payload.episodeTitle,
-        candidates,
-        triedInfoHashes: triedList,
-        quality: qualityRulesForPick(qualityRules('episode', preferred, show), payload.ignoreMinSize),
-      });
-      const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
-      const startTitle = item?.name || payload.episodeTitle || show.name;
-      activityLog.info(
-        'download',
-        `Start (manual): ${describeTorrentChoice(
-          {
-            title: startTitle,
-            magnet: payload.magnet,
-            infoHash: startHash,
-            resolution: detectResolution(startTitle),
-          },
-          {
-            preferred,
-            triedSkipped: triedList.length,
-            healthyCount: candidates.length,
-            mode: 'manual',
-          }
-        )}`,
-        { S: payload.season, E: payload.episode, infoHash: shortInfoHash(startHash) || startHash }
-      );
-      pushDownloads({ persist: 'now' });
-      return item;
-    }
+    ) => startPickedEpisode(payload)
   );
 
   ipcMain.handle('download:list', () => downloadEngine.list());
@@ -3892,56 +3972,7 @@ function registerIpc() {
         candidates?: TorrentCandidate[];
         ignoreMinSize?: boolean;
       }
-    ) => {
-      assertVpnAllowsTorrents();
-      const settings = getSettings();
-      const movie = getMovies().find((m) => m.tmdbId === payload.tmdbId);
-      if (!movie) throw new Error('Movie not found');
-      const mRoots = movieRoots(settings);
-      if (!mRoots.length) {
-        throw new Error('Set a movie library folder in Settings');
-      }
-      const triedList = loadTriedForMovie(payload.tmdbId);
-      const candidates = payload.candidates?.length
-        ? toCandidates(payload.candidates)
-        : toCandidates([{ magnet: payload.magnet }]);
-      const preferred = (movie.preferredResolution ||
-        settings.defaultMovieResolution ||
-        settings.defaultResolution) as Resolution;
-      const item = await downloadEngine.startMovie({
-        magnet: payload.magnet,
-        movie: movieForDownload(movie),
-        movieLibraryRoot: mRoots[0],
-        candidates,
-        triedInfoHashes: triedList,
-        quality: qualityRulesForPick(qualityRules('movie', preferred), payload.ignoreMinSize),
-      });
-      const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
-      const startTitle = item?.name || movie.title;
-      activityLog.info(
-        'download',
-        `Start movie (manual): ${describeTorrentChoice(
-          {
-            title: startTitle,
-            magnet: payload.magnet,
-            infoHash: startHash,
-            resolution: detectResolution(startTitle),
-          },
-          {
-            preferred,
-            triedSkipped: triedList.length,
-            healthyCount: candidates.length,
-            mode: 'manual',
-          }
-        )}`,
-        { infoHash: shortInfoHash(startHash) || startHash }
-      );
-      // Mark downloading in store for UI
-      upsertMovie(withMovieLocalStatus(movie));
-      pushDownloads({ persist: 'now' });
-      emitMoviesChanged();
-      return item;
-    }
+    ) => startPickedMovie(payload)
   );
 
   ipcMain.handle('backup:export', async () => {
@@ -4200,6 +4231,265 @@ function registerIpc() {
     pushVpnStatus();
     return vpnManager.getStatus(getSettings());
   });
+
+  ipcMain.handle('mcp:status', () => nightfeedMcp.status(getSettings()));
+  nightfeedMcp.setApi(buildMcpApi());
+}
+
+function slimTorrents(results: Array<{ title?: string; resolution?: string | null; size?: number; seeders?: number; infoHash?: string; magnet?: string }> | undefined) {
+  return (results || []).slice(0, 20).map((item) => ({
+    title: item.title || '',
+    resolution: item.resolution || '',
+    size: item.size || 0,
+    seeders: item.seeders || 0,
+    infoHash: item.infoHash || '',
+    magnet: item.magnet || '',
+  }));
+}
+
+function buildMcpApi() {
+  return {
+    version: app.getVersion(),
+    status: () => {
+      const shows = getShows();
+      const movies = getMovies();
+      const downloads = downloadEngine.list();
+      const requests = getTelegramRequests().filter((item) => item.status === 'pending');
+      return {
+        version: app.getVersion(),
+        shows: shows.length,
+        movies: movies.length,
+        downloads: downloads.filter((item) => item.status === 'downloading' || item.status === 'queued').length,
+        pendingRequests: requests.length,
+      };
+    },
+    listShows: () => getShows().slice(0, 300).map((show) => ({
+      mazeId: show.tmdbId,
+      name: show.name,
+      status: show.status,
+      premiered: show.firstAirDate,
+      preferredResolution: show.preferredResolution || '',
+    })),
+    getShow: (mazeId: number) => {
+      const show = getShows().find((item) => item.tmdbId === mazeId);
+      if (!show) throw new Error('Show not found');
+      return {
+        mazeId: show.tmdbId,
+        name: show.name,
+        status: show.status,
+        overview: (show.overview || '').slice(0, 600),
+        premiered: show.firstAirDate,
+        preferredResolution: show.preferredResolution || '',
+        seasons: (show.seasons || []).map((season) => ({
+          season: season.seasonNumber,
+          episodes: (season.episodes || []).map((episode) => ({
+            episode: episode.episodeNumber,
+            name: episode.name,
+            airDate: episode.airDate,
+            status: episode.status,
+          })),
+        })),
+      };
+    },
+    searchShows: async (query: string) => {
+      const rows = await searchShowsMeta(query);
+      return (rows || []).slice(0, 12).map((item) => ({
+        mazeId: item.id,
+        name: item.name,
+        premiered: item.firstAirDate || '',
+      }));
+    },
+    addShow: (mazeId: number, policy: 'all' | 'future' | 'manual') => addShowWithPolicy(mazeId, policy),
+    removeShow: async (mazeId: number) => {
+      const show = getShows().find((item) => item.tmdbId === mazeId);
+      removeShow(mazeId);
+      emitLibraryChanged();
+      return { removed: show?.name || String(mazeId) };
+    },
+    setEpisodeStatus: async (mazeId: number, season: number, episode: number, status: 'missing' | 'downloaded' | 'ignored' | 'upcoming') => {
+      const show = getShows().find((item) => item.tmdbId === mazeId);
+      if (!show) throw new Error('Show not found');
+      setEpisodeOverride(mazeId, season, episode, status);
+      if (status === 'ignored') cancelActiveDownloadsForEpisode(mazeId, season, episode, 'ignored by agent');
+      emitLibraryChanged();
+      return { mazeId, season, episode, status };
+    },
+    searchEpisodeTorrents: async (mazeId: number, season: number, episode: number) => {
+      const settings = getSettings();
+      const show = getShows().find((item) => item.tmdbId === mazeId);
+      if (!show) throw new Error('Show not found');
+      const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
+      let airDate: string | null | undefined;
+      for (const seasonObj of show.seasons || []) {
+        const found = (seasonObj.episodes || []).find((item) => item.seasonNumber === season && item.episodeNumber === episode);
+        if (found) airDate = found.airDate;
+      }
+      const res = await searchEpisodeTorrents(settings, show.name, season, episode, preferred, {
+        imdbId: show.imdbId,
+        mazeId: show.tmdbId,
+        airDate,
+      });
+      return { query: res.query, error: res.error || '', results: slimTorrents(res.results) };
+    },
+    downloadEpisode: async (input: { mazeId: number; season: number; episode: number; magnet?: string; ignoreMinSize?: boolean }) => {
+      let magnet = input.magnet || '';
+      if (!magnet) {
+        const settings = getSettings();
+        const show = getShows().find((item) => item.tmdbId === input.mazeId);
+        if (!show) throw new Error('Show not found');
+        const preferred = (show.preferredResolution || settings.defaultResolution) as Resolution;
+        const res = await searchEpisodeTorrents(settings, show.name, input.season, input.episode, preferred, {
+          imdbId: show.imdbId,
+          mazeId: show.tmdbId,
+        });
+        magnet = res.results?.[0]?.magnet || '';
+        if (!magnet) throw new Error(res.error || 'No torrents found');
+      }
+      const show = getShows().find((item) => item.tmdbId === input.mazeId);
+      let episodeTitle = '';
+      for (const seasonObj of show?.seasons || []) {
+        const found = (seasonObj.episodes || []).find((item) => item.seasonNumber === input.season && item.episodeNumber === input.episode);
+        if (found) episodeTitle = found.name;
+      }
+      const item = await startPickedEpisode({
+        tmdbId: input.mazeId,
+        season: input.season,
+        episode: input.episode,
+        episodeTitle,
+        magnet,
+        ignoreMinSize: input.ignoreMinSize,
+      });
+      return { id: item.id, name: item.name, status: item.status };
+    },
+    listMovies: () => getMovies().slice(0, 300).map((movie) => ({
+      id: movie.tmdbId,
+      title: movie.title,
+      year: movie.releaseYear || null,
+      status: movie.status,
+      preferredResolution: movie.preferredResolution || '',
+    })),
+    getMovie: (id: number) => {
+      const movie = getMovies().find((item) => item.tmdbId === id);
+      if (!movie) throw new Error('Movie not found');
+      return {
+        id: movie.tmdbId,
+        title: movie.title,
+        year: movie.releaseYear || null,
+        status: movie.status,
+        overview: (movie.overview || '').slice(0, 600),
+        runtime: movie.runtime || null,
+        preferredResolution: movie.preferredResolution || '',
+        monitored: movie.monitored !== false,
+      };
+    },
+    searchMovies: async (query: string) => {
+      const rows = await searchMoviesMeta(query);
+      return (rows || []).slice(0, 12).map((item) => ({
+        id: item.id,
+        title: item.title,
+        year: item.releaseYear || null,
+      }));
+    },
+    addMovie: async (id: number) => {
+      const movie = await addMovieById(id);
+      return { id: movie.tmdbId, title: movie.title, year: movie.releaseYear || null };
+    },
+    removeMovie: async (id: number) => {
+      const movie = getMovies().find((item) => item.tmdbId === id);
+      removeMovie(id);
+      emitMoviesChanged();
+      return { removed: movie?.title || String(id) };
+    },
+    searchMovieTorrents: async (id: number) => {
+      const settings = getSettings();
+      const movie = getMovies().find((item) => item.tmdbId === id);
+      if (!movie) throw new Error('Movie not found');
+      const preferred = (movie.preferredResolution || settings.defaultMovieResolution || settings.defaultResolution) as Resolution;
+      const res = await searchMovieTorrents(settings, movie.title, movie.releaseYear, preferred, {
+        imdbId: movie.imdbId,
+        releaseDate: movie.releaseDate,
+      });
+      return { query: res.query, error: res.error || '', results: slimTorrents(res.results) };
+    },
+    downloadMovie: async (input: { id: number; magnet?: string; ignoreMinSize?: boolean }) => {
+      let magnet = input.magnet || '';
+      if (!magnet) {
+        const settings = getSettings();
+        const movie = getMovies().find((item) => item.tmdbId === input.id);
+        if (!movie) throw new Error('Movie not found');
+        const preferred = (movie.preferredResolution || settings.defaultMovieResolution || settings.defaultResolution) as Resolution;
+        const res = await searchMovieTorrents(settings, movie.title, movie.releaseYear, preferred, {
+          imdbId: movie.imdbId,
+          releaseDate: movie.releaseDate,
+        });
+        magnet = res.results?.[0]?.magnet || '';
+        if (!magnet) throw new Error(res.error || 'No torrents found');
+      }
+      const item = await startPickedMovie({
+        tmdbId: input.id,
+        magnet,
+        ignoreMinSize: input.ignoreMinSize,
+      });
+      return { id: item.id, name: item.name, status: item.status };
+    },
+    listDownloads: () => downloadEngine.list().map((item) => ({
+      id: item.id,
+      name: item.name,
+      status: item.status,
+      progress: item.progress,
+      downloadSpeed: item.downloadSpeed,
+      kind: item.kind || 'episode',
+    })),
+    pauseDownload: (id: string) => {
+      downloadEngine.pause(id);
+      pushDownloads({ persist: 'now' });
+      return { id, status: 'paused' };
+    },
+    resumeDownload: (id: string) => {
+      assertVpnAllowsTorrents();
+      downloadEngine.resume(id);
+      pushDownloads({ persist: 'now' });
+      return { id, status: 'resumed' };
+    },
+    cancelDownload: (id: string) => {
+      const item = downloadEngine.list().find((entry) => entry.id === id);
+      if (item) rememberTriedFromItem(item);
+      downloadEngine.cancel(id);
+      pushDownloads({ persist: 'now' });
+      return { id, status: 'cancelled' };
+    },
+    listRequests: () => getTelegramRequests().slice(0, 40).map((item) => ({
+      id: item.id,
+      title: item.title,
+      mediaType: item.mediaType,
+      status: item.status,
+      year: item.year || null,
+    })),
+    resolveRequest: (id: string, action: 'approved' | 'denied') => resolveTelegramRequest(id, action, 0),
+    refreshShow: async (mazeId: number) => {
+      const show = getShows().find((item) => item.tmdbId === mazeId);
+      if (!show) throw new Error('Show not found');
+      const updated = await refreshOne(show);
+      await autoDownloadForShows([updated]);
+      emitLibraryChanged();
+      return { mazeId, name: updated.name };
+    },
+    refreshMovie: async (id: number) => {
+      const settings = getSettings();
+      const existing = getMovies().find((item) => item.tmdbId === id);
+      if (!existing) throw new Error('Movie not found');
+      const movie = await fetchMovieDetail(
+        id,
+        settings.movieLibraryRoot,
+        existing,
+        downloadingMovieIds(),
+        movieRoots(settings)
+      );
+      upsertMovie(movie);
+      emitMoviesChanged();
+      return { id: movie.tmdbId, title: movie.title, status: movie.status };
+    },
+  };
 }
 
 app.whenReady().then(async () => {
@@ -4615,6 +4905,7 @@ app.on('window-all-closed', () => {
     clearSessionLock();
     telegramBot.stop();
     webPortal.stop();
+    void nightfeedMcp.stop();
     liveTv.stop();
     void vpnManager.disconnect();
     downloadEngine.destroy();

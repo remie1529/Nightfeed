@@ -112,6 +112,11 @@ export function getSettings(): AppSettings {
   ) {
     merged.telegramDailyBriefingHour = 9;
   }
+  if (typeof merged.mcpEnabled !== 'boolean') merged.mcpEnabled = true;
+  if (typeof merged.mcpPort !== 'number' || merged.mcpPort < 1 || merged.mcpPort > 65535) {
+    merged.mcpPort = 47321;
+  }
+  if (typeof merged.mcpToken !== 'string') merged.mcpToken = '';
   if (!merged.defaultMovieResolution) {
     merged.defaultMovieResolution = merged.defaultResolution || '1080p';
   }

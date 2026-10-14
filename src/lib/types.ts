@@ -148,6 +148,9 @@ export interface AppSettings {
   /** Present when a password has been set (hash never shown in UI). */
   webPortalAdminPasswordHash?: string;
   webPortalSessionSecret?: string;
+  mcpEnabled: boolean;
+  mcpPort: number;
+  mcpToken: string;
   liveTvEnabled: boolean;
   liveTvPort: number;
   liveTvBind: 'localhost' | 'lan';

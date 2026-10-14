@@ -199,6 +199,12 @@ export interface AppSettings {
   webPortalAdminPasswordHash: string;
   /** HMAC secret for admin session cookies. */
   webPortalSessionSecret: string;
+  /** Local MCP server so an AI agent can control this Nightfeed. */
+  mcpEnabled: boolean;
+  /** Loopback port for the MCP HTTP endpoint. */
+  mcpPort: number;
+  /** Bearer token required on every MCP request. Never log this. */
+  mcpToken: string;
   liveTvEnabled: boolean;
   liveTvPort: number;
   liveTvBind: 'localhost' | 'lan';
@@ -597,6 +603,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webPortalBind: 'localhost',
   webPortalAdminPasswordHash: '',
   webPortalSessionSecret: '',
+  mcpEnabled: true,
+  mcpPort: 47321,
+  mcpToken: '',
   liveTvEnabled: false,
   liveTvPort: 34400,
   liveTvBind: 'lan',

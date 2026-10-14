@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.36 — Get keeps a chosen torrent even when it is under the minimum file size.
+**Current:** v2.4.37 — An AI agent can control Nightfeed through a local MCP server.
+
+# Status v2.4.37
+
+## Added
+- MCP on 127.0.0.1 lets an agent list the library, add titles, and start downloads
+- Settings has the switch, port, token, and a config to copy
 
 # Status v2.4.36
 
