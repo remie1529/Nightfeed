@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.39
+
+### Fixed
+- The MCP token is created when Nightfeed starts and shown in Settings
+
 ## 2.4.38
 
 ### Fixed
