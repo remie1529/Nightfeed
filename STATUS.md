@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.37 — An AI agent can control Nightfeed through a local MCP server.
+**Current:** v2.4.38 — Nightfeed starts with the MCP server packed into the app.
+
+# Status v2.4.38
+
+## Fixed
+- Startup no longer crashes looking for mcp-protocol.js
 
 # Status v2.4.37
 
