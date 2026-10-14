@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.38
+
+### Fixed
+- Nightfeed starts again. The MCP helper is packed inside the app instead of being loaded as a missing file
+
 ## 2.4.37
 
 ### Added

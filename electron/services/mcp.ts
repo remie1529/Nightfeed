@@ -7,7 +7,8 @@ import { app } from 'electron';
 import type { AppSettings } from '../types';
 import { createNightfeedTools, type NightfeedMcpApi } from './mcp-tools';
 
-// Plain JS so the protocol can be tested without the Electron bundle.
+// Kept as a runtime file next to dist-electron/main.js. The packager does not
+// inline this require, so vite copies mcp-protocol.js beside the bundle.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const protocol = require('./mcp-protocol.js') as {
   createMcpHttpServer: (options: { token: () => string; tools: () => unknown[] }) => {

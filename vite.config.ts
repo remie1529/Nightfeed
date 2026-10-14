@@ -2,7 +2,20 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
+import fs from 'fs'
 import path from 'path'
+
+function copyMcpProtocol() {
+  return {
+    name: 'copy-mcp-protocol',
+    closeBundle() {
+      fs.copyFileSync(
+        path.resolve('electron/services/mcp-protocol.js'),
+        path.resolve('dist-electron/mcp-protocol.js')
+      )
+    },
+  }
+}
 
 const electronExternal = ['electron', 'electron-store', 'webtorrent', 'basic-ftp', 'koffi']
 
@@ -13,6 +26,7 @@ export default defineConfig({
       {
         entry: 'electron/main.ts',
         vite: {
+          plugins: [copyMcpProtocol()],
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
