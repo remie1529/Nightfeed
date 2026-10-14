@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.37
+
+### Added
+- Nightfeed can be controlled by an AI agent over MCP on this computer. Settings shows the switch, the token, and a config to copy. Agents can list and change the library, search torrents, and start downloads
+
 ## 2.4.36
 
 ### Changed

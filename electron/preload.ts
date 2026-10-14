@@ -122,6 +122,7 @@ const api = {
   resolveRequest: (id: string, action: 'approved' | 'denied') =>
     ipcRenderer.invoke('requests:resolve', id, action),
   getWebPortalStatus: () => ipcRenderer.invoke('webPortal:status'),
+  getMcpStatus: () => ipcRenderer.invoke('mcp:status'),
   pickFile: (filters?: Array<{ name: string; extensions: string[] }>) =>
     ipcRenderer.invoke('dialog:pickFile', filters),
   getLiveTvStatus: () => ipcRenderer.invoke('liveTv:status'),

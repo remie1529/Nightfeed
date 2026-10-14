@@ -50,6 +50,7 @@ Highlights below — see **[FEATURES.md](FEATURES.md)** for screenshots and deta
 - **OpenVPN** — Nightfeed starts Community `openvpn.exe` (not the GUI), auto-connect, torrent-only split tunnel, kill switch
 - **Live TV** — optional HDHomeRun tuner + XMLTV for Plex, plus custom channels from your library
 - **Addons** — approved addons in the in-app store, plus addons you install from a file. See [ADDONS.md](ADDONS.md) for how an addon is built and how it controls Nightfeed.
+- **MCP** — a local server so an AI agent can list the library, add titles, and start downloads. Settings shows the agent config.
 - **Reliability** — startup loading screen until backend ready; optional crash-restart via Task Scheduler; collapsible full-width Settings
 
 ---
