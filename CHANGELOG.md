@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.40
+
+### Fixed
+- A search for a numbered show such as 9-1-1 no longer accepts another series that only shares SxxExx. Short numbers have to be whole words, so “1997” and “2160p” no longer count as the show “9-1-1”
+
 ## 2.4.39
 
 ### Fixed
