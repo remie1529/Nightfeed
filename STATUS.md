@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.39 — The MCP token is created at startup and shown in Settings.
+**Current:** v2.4.40 — Numbered show names such as 9-1-1 no longer match unrelated torrents.
+
+# Status v2.4.40
+
+## Fixed
+- Show search requires short numbers to be whole words, so 9-1-1 S10E01 does not return South Park S10E01
 
 # Status v2.4.39
 

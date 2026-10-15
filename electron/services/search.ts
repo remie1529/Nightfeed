@@ -490,6 +490,14 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Short tokens and numbers must be whole words. "9" must not match inside "1997" or "2160p". */
+function tokenAppears(token: string, titleNorm: string): boolean {
+  if (token.length <= 3 || /^\d+$/.test(token)) {
+    return new RegExp(`(?:^|\\s)${escapeRegExp(token)}(?:\\s|$)`).test(titleNorm);
+  }
+  return titleNorm.includes(token);
+}
+
 /**
  * After SxxExx match, require the torrent title to match the show name — not just one
  * shared franchise word (e.g. reject "Monster The Ed Gein Story" when searching
@@ -534,8 +542,15 @@ export function titleMatchesShow(title: string, showName: string): boolean {
     return longTokens.every((t) => titleNorm.includes(t));
   }
 
+  // A show like 9-1-1 is also released as 911.
+  if (tokens.length >= 2 && tokens.every((t) => /^\d+$/.test(t))) {
+    const glued = tokens.join('');
+    if (new RegExp(`(?:^|\\s)${glued}(?:\\s|$)`).test(titleNorm)) return true;
+  }
+
   // Few long tokens: require every significant token (e.g. "Ed Gein" → ed + gein).
-  return tokens.every((t) => titleNorm.includes(t));
+  // Digits use a whole word so a year or codec cannot satisfy them.
+  return tokens.every((t) => tokenAppears(t, titleNorm));
 }
 
 /** Higher = closer show-name match; used to soft-rank exact-ish titles first. */
