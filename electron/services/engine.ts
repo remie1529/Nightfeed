@@ -40,6 +40,7 @@ type EpisodeStartOpts = {
   notifyChatId?: number;
   telegramRequestId?: string;
   quality?: QualityRules;
+  sourceTorrentPath?: string;
 };
 
 type MovieStartOpts = {
@@ -51,6 +52,7 @@ type MovieStartOpts = {
   notifyChatId?: number;
   telegramRequestId?: string;
   quality?: QualityRules;
+  sourceTorrentPath?: string;
 };
 
 type PendingJob = { kind: 'episode'; opts: EpisodeStartOpts } | { kind: 'movie'; opts: MovieStartOpts };
@@ -878,6 +880,7 @@ export class DownloadEngine extends EventEmitter {
       status: 'queued',
       savePath: workDir,
       magnet: opts.magnet,
+      sourceTorrentPath: opts.sourceTorrentPath,
       candidates: opts.candidates,
       triedInfoHashes: opts.triedInfoHashes ? [...opts.triedInfoHashes] : [],
       notifyChatId: opts.notifyChatId,
@@ -1008,6 +1011,7 @@ export class DownloadEngine extends EventEmitter {
       status: 'queued',
       savePath: workDir,
       magnet: opts.magnet,
+      sourceTorrentPath: opts.sourceTorrentPath,
       kind: 'movie',
       movieId: opts.movie.tmdbId,
       candidates: opts.candidates,

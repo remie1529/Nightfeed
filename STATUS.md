@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.40 — Numbered show names such as 9-1-1 no longer match unrelated torrents.
+**Current:** v2.4.41 — Downloads can take a magnet or a torrent file and file it into the matching library folder.
+
+# Status v2.4.41
+
+## Added
+- Downloads → Add torrent matches the name to a library show or movie, moves the video when finished, and deletes the .torrent file
 
 # Status v2.4.40
 

@@ -452,6 +452,8 @@ export interface DownloadItem {
   savePath: string;
   error?: string;
   magnet: string;
+  /** User-supplied .torrent path, deleted after a successful download. */
+  sourceTorrentPath?: string;
   /** 'movie' for movie downloads; omitted/episode for TV (backwards compatible). */
   kind?: 'episode' | 'movie';
   movieId?: number;
