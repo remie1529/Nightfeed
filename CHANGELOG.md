@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.42
+
+### Changed
+- Adding a magnet or torrent file adds the movie or show when it is not in the library yet. A name like “The Odyssey (2026)” is searched, added, and then downloaded
+
 ## 2.4.41
 
 ### Added

@@ -139,7 +139,7 @@ export default function Downloads() {
             </button>
           </div>
           <div className="hint">
-            Nightfeed matches the name to a show or movie already in the library, then moves the video into that folder when the download finishes. A torrent file is deleted after that.
+            Nightfeed reads the title and year, adds the movie or show when it is not in the library yet, then moves the video into that folder when the download finishes. A torrent file is deleted after that.
           </div>
           {addError && <div className="error-banner" style={{ marginTop: '0.75rem' }}>{addError}</div>}
         </div>
