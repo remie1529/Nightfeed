@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.41 — Downloads can take a magnet or a torrent file and file it into the matching library folder.
+**Current:** v2.4.42 — A magnet or torrent file adds the movie or show when it is not in the library yet.
+
+# Status v2.4.42
+
+## Changed
+- Downloads → Add torrent looks up the title and year and adds the movie or show before the download starts
 
 # Status v2.4.41
 

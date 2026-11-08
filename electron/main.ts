@@ -105,7 +105,14 @@ import { writeBackupJsonViaPool, readBackupJsonViaPool } from './services/backup
 import { vpnManager } from './services/vpn';
 import { ensureFfmpeg, liveTv, withLogoPreview } from './services/live-tv';
 import { nightfeedMcp } from './services/mcp';
-import { magnetDisplayName, matchManualTorrent, readTorrentFile } from './services/manual-torrent';
+import {
+  magnetDisplayName,
+  matchManualTorrent,
+  episodeTitleFromShow,
+  pickMovieHit,
+  pickShowHit,
+  readTorrentFile,
+} from './services/manual-torrent';
 import {
   applyCrashRestartTask,
   clearSessionLock,
@@ -3737,7 +3744,29 @@ function registerIpc() {
       if (!/^magnet:\?/i.test(magnet)) throw new Error('Paste a magnet link that starts with magnet:?');
       name = magnetDisplayName(magnet);
     }
-    const matched = matchManualTorrent(name, getShows(), getMovies());
+    let matched = matchManualTorrent(name, getShows(), getMovies());
+    if (matched.kind === 'lookup-movie') {
+      const found = await searchMoviesMeta(matched.title);
+      const hit = pickMovieHit(found, matched.title, matched.year);
+      if (!hit) {
+        const label = matched.year ? `${matched.title} (${matched.year})` : matched.title;
+        throw new Error(`Could not find a movie called “${label}”.`);
+      }
+      const movie = await addMovieById(hit.id);
+      matched = { kind: 'movie', movie };
+    } else if (matched.kind === 'lookup-show') {
+      const found = await searchShowsMeta(matched.title);
+      const hit = pickShowHit(found, matched.title);
+      if (!hit) throw new Error(`Could not find a show called “${matched.title}”.`);
+      const show = await addShowWithPolicy(hit.id, 'manual');
+      matched = {
+        kind: 'episode',
+        show,
+        season: matched.season,
+        episode: matched.episode,
+        episodeTitle: episodeTitleFromShow(show, matched.season, matched.episode),
+      };
+    }
     if (matched.kind === 'episode') {
       const settings = getSettings();
       if (!(tvRoots(settings)[0] || settings.libraryRoot)) {

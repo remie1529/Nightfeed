@@ -44,7 +44,7 @@ export function parseEpisodeTag(title: string): { season: number; episode: numbe
   return { season, episode };
 }
 
-function episodeTitle(show: Show, season: number, episode: number): string {
+export function episodeTitleFromShow(show: Show, season: number, episode: number): string {
   for (const seasonObj of show.seasons || []) {
     if (seasonObj.seasonNumber !== season) continue;
     const found = (seasonObj.episodes || []).find((item) => item.episodeNumber === episode);
@@ -53,13 +53,79 @@ function episodeTitle(show: Show, season: number, episode: number): string {
   return 'Episode';
 }
 
+export type ManualTorrentMatch =
+  | { kind: 'episode'; show: Show; season: number; episode: number; episodeTitle: string }
+  | { kind: 'movie'; movie: Movie }
+  | { kind: 'lookup-show'; title: string; season: number; episode: number }
+  | { kind: 'lookup-movie'; title: string; year: number | null };
+
+const RELEASE_CUT = /\b(?:19|20)\d{2}\b|\b(?:720|1080|2160)p\b|\b(?:bluray|blu-ray|web[- ]?dl|webrip|hdtv|dvdrip|brrip|hdrip)\b/i;
+
+function cleanTorrentText(name: string): string {
+  return String(name || '')
+    .replace(/[._]+/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** "The Odyssey (2026) [1080p] [BluRay]" -> title The Odyssey, year 2026. */
+export function movieGuessFromTorrentName(name: string): { title: string; year: number | null } {
+  let text = cleanTorrentText(name);
+  let year: number | null = null;
+  const paren = text.match(/\((19|20)\d{2}\)/);
+  if (paren) {
+    year = Number(paren[0].slice(1, 5));
+    text = text.replace(paren[0], ' ').replace(/\s+/g, ' ').trim();
+  }
+  const cut = text.search(RELEASE_CUT);
+  if (cut > 0) {
+    if (year == null) {
+      const found = text.slice(cut).match(/\b((?:19|20)\d{2})\b/);
+      if (found) year = Number(found[1]);
+    }
+    text = text.slice(0, cut).trim();
+  }
+  text = text.replace(/[\s\-–_:]+$/g, '').trim();
+  return { title: text, year };
+}
+
+export function showGuessFromTorrentName(name: string): string {
+  let text = cleanTorrentText(name);
+  text = text.replace(/\bS\d{1,2}E\d{1,3}\b/ig, ' ');
+  text = text.replace(/\b\d{1,2}x\d{1,3}\b/ig, ' ');
+  const cut = text.search(RELEASE_CUT);
+  if (cut > 0) text = text.slice(0, cut);
+  return text.replace(/[\s\-–_:()]+$/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function sameName(a: string, b: string): boolean {
+  const norm = (value: string) => value.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+  return norm(a) === norm(b);
+}
+
+export function pickMovieHit<T extends { title: string; releaseYear: number | null }>(
+  results: T[],
+  title: string,
+  year: number | null
+): T | null {
+  const same = results.filter((item) => sameName(item.title, title));
+  if (year) {
+    const dated = same.filter((item) => item.releaseYear === year);
+    return dated[0] || null;
+  }
+  return same[0] || null;
+}
+
+export function pickShowHit<T extends { name: string }>(results: T[], title: string): T | null {
+  return results.find((item) => sameName(item.name, title)) || null;
+}
+
 export function matchManualTorrent(
   name: string,
   shows: Show[],
   movies: Movie[]
-):
-  | { kind: 'episode'; show: Show; season: number; episode: number; episodeTitle: string }
-  | { kind: 'movie'; movie: Movie } {
+): ManualTorrentMatch {
   const title = String(name || '').trim();
   if (!title) throw new Error('This magnet has no title. Use a torrent file, or a magnet that includes the name.');
 
@@ -77,16 +143,18 @@ export function matchManualTorrent(
       if (!best || ranked > best.score) best = { show, score: ranked };
     }
     if (!best) {
-      throw new Error(
-        `This looks like S${String(tag.season).padStart(2, '0')}E${String(tag.episode).padStart(2, '0')} but no show in the library matches “${title}”. Add the show, then try again.`
-      );
+      const guessed = showGuessFromTorrentName(title);
+      if (!guessed) {
+        throw new Error('This magnet has no title. Use a torrent file, or a magnet that includes the name.');
+      }
+      return { kind: 'lookup-show', title: guessed, season: tag.season, episode: tag.episode };
     }
     return {
       kind: 'episode',
       show: best.show,
       season: tag.season,
       episode: tag.episode,
-      episodeTitle: episodeTitle(best.show, tag.season, tag.episode),
+      episodeTitle: episodeTitleFromShow(best.show, tag.season, tag.episode),
     };
   }
 
@@ -96,7 +164,11 @@ export function matchManualTorrent(
     releaseDates: movie.releaseDate ? [movie.releaseDate.slice(0, 10)] : [],
   }));
   if (!hits.length) {
-    throw new Error(`No movie in the library matches “${title}”. Add the movie, then try again.`);
+    const guessed = movieGuessFromTorrentName(title);
+    if (!guessed.title) {
+      throw new Error('This magnet has no title. Use a torrent file, or a magnet that includes the name.');
+    }
+    return { kind: 'lookup-movie', title: guessed.title, year: guessed.year };
   }
   const yearInTitle = title.match(/\b(19|20)\d{2}\b/);
   const year = yearInTitle ? Number(yearInTitle[0]) : 0;
