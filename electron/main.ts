@@ -105,6 +105,7 @@ import { writeBackupJsonViaPool, readBackupJsonViaPool } from './services/backup
 import { vpnManager } from './services/vpn';
 import { ensureFfmpeg, liveTv, withLogoPreview } from './services/live-tv';
 import { nightfeedMcp } from './services/mcp';
+import { magnetDisplayName, matchManualTorrent, readTorrentFile } from './services/manual-torrent';
 import {
   applyCrashRestartTask,
   clearSessionLock,
@@ -3068,6 +3069,7 @@ async function startPickedEpisode(payload: {
   magnet: string;
   candidates?: TorrentCandidate[];
   ignoreMinSize?: boolean;
+  sourceTorrentPath?: string;
 }) {
   assertVpnAllowsTorrents();
   const settings = getSettings();
@@ -3089,6 +3091,7 @@ async function startPickedEpisode(payload: {
     candidates,
     triedInfoHashes: triedList,
     quality: qualityRulesForPick(qualityRules('episode', preferred, show), payload.ignoreMinSize),
+    sourceTorrentPath: payload.sourceTorrentPath,
   });
   const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
   const startTitle = item?.name || episodeTitle || show.name;
@@ -3119,6 +3122,7 @@ async function startPickedMovie(payload: {
   magnet: string;
   candidates?: TorrentCandidate[];
   ignoreMinSize?: boolean;
+  sourceTorrentPath?: string;
 }) {
   assertVpnAllowsTorrents();
   const settings = getSettings();
@@ -3140,6 +3144,7 @@ async function startPickedMovie(payload: {
     candidates,
     triedInfoHashes: triedList,
     quality: qualityRulesForPick(qualityRules('movie', preferred), payload.ignoreMinSize),
+    sourceTorrentPath: payload.sourceTorrentPath,
   });
   const startHash = item?.infoHash || extractInfoHash(payload.magnet) || '';
   const startTitle = item?.name || movie.title;
@@ -3717,6 +3722,50 @@ function registerIpc() {
       }
     ) => startPickedEpisode(payload)
   );
+
+  ipcMain.handle('download:addManual', async (_e, payload: { magnet?: string; torrentPath?: string }) => {
+    assertVpnAllowsTorrents();
+    const torrentPath = String(payload?.torrentPath || '').trim();
+    let magnet = String(payload?.magnet || '').trim();
+    let name = '';
+    if (torrentPath) {
+      if (!fs.existsSync(torrentPath)) throw new Error('That torrent file was not found');
+      const parsed = readTorrentFile(torrentPath);
+      magnet = parsed.magnet;
+      name = parsed.name;
+    } else {
+      if (!/^magnet:\?/i.test(magnet)) throw new Error('Paste a magnet link that starts with magnet:?');
+      name = magnetDisplayName(magnet);
+    }
+    const matched = matchManualTorrent(name, getShows(), getMovies());
+    if (matched.kind === 'episode') {
+      const settings = getSettings();
+      if (!(tvRoots(settings)[0] || settings.libraryRoot)) {
+        throw new Error('Set a TV library folder in Settings');
+      }
+      const item = await startPickedEpisode({
+        tmdbId: matched.show.tmdbId,
+        season: matched.season,
+        episode: matched.episode,
+        episodeTitle: matched.episodeTitle,
+        magnet,
+        ignoreMinSize: true,
+        sourceTorrentPath: torrentPath || undefined,
+      });
+      return {
+        id: item.id,
+        kind: 'episode',
+        name: `${matched.show.name} S${pad2(matched.season)}E${pad2(matched.episode)}`,
+      };
+    }
+    const item = await startPickedMovie({
+      tmdbId: matched.movie.tmdbId,
+      magnet,
+      ignoreMinSize: true,
+      sourceTorrentPath: torrentPath || undefined,
+    });
+    return { id: item.id, kind: 'movie', name: matched.movie.title };
+  });
 
   ipcMain.handle('download:list', () => downloadEngine.list());
   ipcMain.handle('download:pause', (_e, id: string) => {
@@ -4783,6 +4832,14 @@ app.whenReady().then(async () => {
         upsertShow(withLocalStatuses(show));
       }
       emitLibraryChanged();
+    }
+    if (item?.sourceTorrentPath && /\.torrent$/i.test(item.sourceTorrentPath)) {
+      try {
+        fs.unlinkSync(item.sourceTorrentPath);
+        activityLog.info('download', `Removed torrent file: ${item.sourceTorrentPath}`);
+      } catch {
+        // The video is already in the library. A locked torrent file can stay.
+      }
     }
     if (item?.name) {
       activityLog.info('download', `Complete: ${item.name}`, {

@@ -37,6 +37,12 @@ function torrentHealth(item: DownloadItem): HealthLabel {
   return 'Dead';
 }
 
+function ipcMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  const cut = text.split('Error: ').pop() || text;
+  return cut.trim();
+}
+
 function healthClass(h: HealthLabel): string {
   switch (h) {
     case 'Excellent':
@@ -54,6 +60,42 @@ function healthClass(h: HealthLabel): string {
 
 export default function Downloads() {
   const [items, setItems] = useState<DownloadItem[]>([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [magnet, setMagnet] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const addMagnet = async () => {
+    const link = magnet.trim();
+    if (!link) return;
+    setAdding(true);
+    setAddError(null);
+    try {
+      await window.torrentAPI.addManualDownload({ magnet: link });
+      setMagnet('');
+      setShowAdd(false);
+    } catch (err) {
+      setAddError(ipcMessage(err));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const addTorrentFile = async () => {
+    setAddError(null);
+    const picked = await window.torrentAPI.pickFile?.([{ name: 'Torrent', extensions: ['torrent'] }]);
+    if (!picked) return;
+    setAdding(true);
+    try {
+      await window.torrentAPI.addManualDownload({ torrentPath: picked });
+      setMagnet('');
+      setShowAdd(false);
+    } catch (err) {
+      setAddError(ipcMessage(err));
+    } finally {
+      setAdding(false);
+    }
+  };
 
   useEffect(() => {
     window.torrentAPI.getDownloads().then((list) => setItems(list as DownloadItem[])).catch(() => undefined);
@@ -70,7 +112,38 @@ export default function Downloads() {
           <h1>Downloads</h1>
           <p>Up to 3 torrents download at once; the rest stay queued. Pause / resume / cancel anytime. Incomplete downloads resume after restart or update.</p>
         </div>
+        <button className="primary" onClick={() => { setShowAdd((open) => !open); setAddError(null); }}>
+          Add torrent
+        </button>
       </div>
+
+      {showAdd && (
+        <div className="card" style={{ marginBottom: '1rem', padding: '0.9rem 1rem' }}>
+          <div className="field">
+            <label>Magnet link</label>
+            <input
+              value={magnet}
+              placeholder="magnet:?xt=urn:btih:..."
+              onChange={(e) => setMagnet(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void addMagnet();
+              }}
+            />
+          </div>
+          <div className="toolbar">
+            <button className="primary" disabled={adding || !magnet.trim()} onClick={() => void addMagnet()}>
+              {adding ? 'Adding…' : 'Add magnet'}
+            </button>
+            <button disabled={adding} onClick={() => void addTorrentFile()}>
+              Add torrent file
+            </button>
+          </div>
+          <div className="hint">
+            Nightfeed matches the name to a show or movie already in the library, then moves the video into that folder when the download finishes. A torrent file is deleted after that.
+          </div>
+          {addError && <div className="error-banner" style={{ marginTop: '0.75rem' }}>{addError}</div>}
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div className="empty-state">

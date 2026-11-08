@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.41
+
+### Added
+- Downloads has Add torrent. Paste a magnet or choose a .torrent file. Nightfeed matches the name to a show or movie already in the library, moves the video into that folder when the download finishes, and deletes the .torrent file
+
 ## 2.4.40
 
 ### Fixed

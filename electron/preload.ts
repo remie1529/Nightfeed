@@ -88,6 +88,8 @@ const api = {
     ignoreMinSize?: boolean;
   }) => ipcRenderer.invoke('download:start', payload),
   getDownloads: () => ipcRenderer.invoke('download:list'),
+  addManualDownload: (payload: { magnet?: string; torrentPath?: string }) =>
+    ipcRenderer.invoke('download:addManual', payload),
   pauseDownload: (id: string) => ipcRenderer.invoke('download:pause', id),
   resumeDownload: (id: string) => ipcRenderer.invoke('download:resume', id),
   cancelDownload: (id: string) => ipcRenderer.invoke('download:cancel', id),

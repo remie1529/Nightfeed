@@ -17,7 +17,7 @@ function copyMcpProtocol() {
   }
 }
 
-const electronExternal = ['electron', 'electron-store', 'webtorrent', 'basic-ftp', 'koffi']
+const electronExternal = ['electron', 'electron-store', 'webtorrent', 'parse-torrent', 'basic-ftp', 'koffi']
 
 export default defineConfig({
   plugins: [
