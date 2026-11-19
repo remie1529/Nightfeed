@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus, ShowListItem } from '../lib/types';
+
+const PAGE_SIZE = 100;
 
 const LIBRARY_MODES: Array<{ id: NonNullable<LiveTvChannel['libraryMode']>; label: string }> = [
   { id: 'random-movies', label: 'Random movies' },
@@ -25,6 +27,12 @@ export default function LiveTvView() {
   const [customName, setCustomName] = useState('Nightfeed Mix');
   const [customMode, setCustomMode] = useState<NonNullable<LiveTvChannel['libraryMode']>>('random-mix');
   const [customShow, setCustomShow] = useState<number | ''>('');
+  const [page, setPage] = useState(0);
+  const [numDrafts, setNumDrafts] = useState<Record<string, string>>({});
+  const channelsRef = useRef<LiveTvChannel[]>(channels);
+  channelsRef.current = channels;
+  const persistChainRef = useRef<Promise<void>>(Promise.resolve());
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     const [s, st, ch, epg] = await Promise.all([
@@ -42,17 +50,34 @@ export default function LiveTvView() {
   }, []);
 
   useEffect(() => {
-    void load().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    let cancelled = false;
+    void load().catch((e) => {
+      if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+    });
     const t = setInterval(() => {
-      void window.torrentAPI.getLiveTvStatus?.().then((st) => setStatus(st as LiveTvStatus));
+      void window.torrentAPI
+        .getLiveTvStatus?.()
+        .then((st) => {
+          if (!cancelled && st) setStatus(st as LiveTvStatus);
+        })
+        .catch(() => undefined);
     }, 4000);
-    return () => clearInterval(t);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
   }, [load]);
 
   const saveSettings = async (partial: Partial<AppSettings>) => {
-    const next = (await window.torrentAPI.setSettings(partial)) as AppSettings;
-    setSettings(next);
-    setStatus((await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus);
+    setError(null);
+    try {
+      const next = (await window.torrentAPI.setSettings(partial)) as AppSettings;
+      setSettings(next);
+      setStatus((await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const refresh = async () => {
@@ -61,6 +86,7 @@ export default function LiveTvView() {
     try {
       const ch = (await window.torrentAPI.refreshLiveTv?.()) as LiveTvChannel[];
       setChannels(Array.isArray(ch) ? ch : []);
+      setNumDrafts({});
       setStatus((await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus);
       const epg = await window.torrentAPI.getLiveTvEpgOptions?.();
       setEpgOptions(Array.isArray(epg) ? (epg as LiveTvEpgOption[]) : []);
@@ -71,10 +97,19 @@ export default function LiveTvView() {
     }
   };
 
-  const persist = async (next: LiveTvChannel[]) => {
+  const persist = (next: LiveTvChannel[]) => {
+    channelsRef.current = next;
     setChannels(next);
-    await window.torrentAPI.setLiveTvChannels?.(next);
-    setStatus((await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus);
+    persistChainRef.current = persistChainRef.current
+      .then(async () => {
+        await window.torrentAPI.setLiveTvChannels?.(next);
+        const st = (await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus;
+        if (st) setStatus(st);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    return persistChainRef.current;
   };
 
   const groups = useMemo(() => {
@@ -95,14 +130,34 @@ export default function LiveTvView() {
     });
   }, [channels, query, group]);
 
-  const enabledCount = channels.filter((c) => c.enabled).length;
+  useEffect(() => {
+    setPage(0);
+  }, [query, group]);
+
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = useMemo(
+    () => visible.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
+    [visible, safePage]
+  );
+
+  const applyToVisible = (patch: Partial<LiveTvChannel>) => {
+    const visibleIds = new Set(visible.map((v) => v.id));
+    void persist(channels.map((c) => (visibleIds.has(c.id) ? { ...c, ...patch } : c)));
+  };
+
+  const enabledCount = useMemo(() => channels.filter((c) => c.enabled).length, [channels]);
   const s = settings;
 
   const copy = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(label);
-      setTimeout(() => setCopied(null), 1500);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
+        setCopied(null);
+      }, 1500);
     } catch {
       setCopied(null);
     }
@@ -316,8 +371,10 @@ export default function LiveTvView() {
         <button
           type="button"
           className="primary"
+          disabled={customMode === 'show' && customShow === ''}
           onClick={() => {
-            const id = `lib-${Date.now().toString(36)}`;
+            if (customMode === 'show' && customShow === '') return;
+            const id = `lib-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
             const number = channels.reduce((max, c) => Math.max(max, c.number || 0), 0) + 1;
             const ch: LiveTvChannel = {
               id,
@@ -406,41 +463,54 @@ export default function LiveTvView() {
         </select>
         <button
           type="button"
-          onClick={() =>
-            void persist(channels.map((c) => (visible.some((v) => v.id === c.id) ? { ...c, enabled: true } : c)))
-          }
+          onClick={() => applyToVisible({ enabled: true })}
         >
           Enable visible
         </button>
         <button
           type="button"
-          onClick={() =>
-            void persist(channels.map((c) => (visible.some((v) => v.id === c.id) ? { ...c, enabled: false } : c)))
-          }
+          onClick={() => applyToVisible({ enabled: false })}
         >
           Disable visible
         </button>
         <button
           type="button"
-          onClick={() =>
-            void persist(
-              channels.map((c) => (visible.some((v) => v.id === c.id) ? { ...c, fakeEpg: true } : c))
-            )
-          }
+          onClick={() => applyToVisible({ fakeEpg: true })}
         >
           Fake EPG on visible
         </button>
         <button
           type="button"
-          onClick={() =>
-            void persist(
-              channels.map((c) => (visible.some((v) => v.id === c.id) ? { ...c, fakeEpg: false } : c))
-            )
-          }
+          onClick={() => applyToVisible({ fakeEpg: false })}
         >
           Clear fake on visible
         </button>
       </div>
+      {visible.length > PAGE_SIZE && (
+        <div className="toolbar" style={{ marginBottom: 10 }}>
+          <span className="hint" style={{ margin: 0 }}>
+            Showing {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, visible.length)} of{' '}
+            {visible.length} matching channels
+          </span>
+          <button
+            type="button"
+            disabled={safePage === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            ← Prev
+          </button>
+          <span className="mono" style={{ fontSize: '0.82rem' }}>
+            Page {safePage + 1} / {pageCount}
+          </span>
+          <button
+            type="button"
+            disabled={safePage >= pageCount - 1}
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+          >
+            Next →
+          </button>
+        </div>
+      )}
       <div className="hint" style={{ marginBottom: 10 }}>
         Icon: URL or Browse a local image (Plex reads it from the XMLTV guide). EPG id: pick a guide channel or type
         one. Fake: repeating Live blocks when you don’t have a real mapping.
@@ -473,8 +543,9 @@ export default function LiveTvView() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((c) => {
+              {pageRows.map((c) => {
                 const iconSrc = c.logoPreview || (/^https?:\/\//i.test(c.logo) ? c.logo : '');
+                const numValue = numDrafts[c.id] !== undefined ? numDrafts[c.id] : String(c.number);
                 return (
                 <tr key={c.id}>
                   <td>
@@ -482,7 +553,7 @@ export default function LiveTvView() {
                       type="checkbox"
                       checked={c.enabled}
                       onChange={(e) =>
-                        void persist(channels.map((x) => (x.id === c.id ? { ...x, enabled: e.target.checked } : x)))
+                        void persist(channelsRef.current.map((x) => (x.id === c.id ? { ...x, enabled: e.target.checked } : x)))
                       }
                     />
                   </td>
@@ -490,12 +561,27 @@ export default function LiveTvView() {
                     <input
                       className="mono"
                       style={{ width: 64, padding: '0.25rem 0.35rem' }}
-                      value={c.number}
+                      value={numValue}
                       onChange={(e) => {
-                        const n = Number(e.target.value) || c.number;
-                        setChannels(channels.map((x) => (x.id === c.id ? { ...x, number: n } : x)));
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        setNumDrafts((prev) => ({ ...prev, [c.id]: raw }));
                       }}
-                      onBlur={() => void persist(channels)}
+                      onBlur={() => {
+                        const raw = numDrafts[c.id];
+                        setNumDrafts((prev) => {
+                          if (!(c.id in prev)) return prev;
+                          const copy = { ...prev };
+                          delete copy[c.id];
+                          return copy;
+                        });
+                        if (raw === undefined) return;
+                        const parsed = parseInt(raw, 10);
+                        const nextNum = Number.isFinite(parsed) && parsed >= 1 ? parsed : c.number;
+                        if (nextNum === c.number) return;
+                        void persist(
+                          channelsRef.current.map((x) => (x.id === c.id ? { ...x, number: nextNum } : x))
+                        );
+                      }}
                     />
                   </td>
                   <td>
@@ -509,12 +595,16 @@ export default function LiveTvView() {
                         type="button"
                         style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
                         onClick={async () => {
-                          const p = await window.torrentAPI.pickFile?.([
-                            { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
-                          ]);
-                          if (!p) return;
-                          const next = (await window.torrentAPI.setLiveTvIcon?.(c.id, p)) as LiveTvChannel[];
-                          if (Array.isArray(next)) setChannels(next);
+                          try {
+                            const p = await window.torrentAPI.pickFile?.([
+                              { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+                            ]);
+                            if (!p) return;
+                            const next = (await window.torrentAPI.setLiveTvIcon?.(c.id, p)) as LiveTvChannel[];
+                            if (Array.isArray(next)) setChannels(next);
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : String(e));
+                          }
                         }}
                       >
                         …
@@ -524,10 +614,13 @@ export default function LiveTvView() {
                   <td>
                     <input
                       value={c.name}
-                      onChange={(e) =>
-                        setChannels(channels.map((x) => (x.id === c.id ? { ...x, name: e.target.value } : x)))
-                      }
-                      onBlur={() => void persist(channels)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const next = channelsRef.current.map((x) => (x.id === c.id ? { ...x, name: v } : x));
+                        channelsRef.current = next;
+                        setChannels(next);
+                      }}
+                      onBlur={() => void persist(channelsRef.current)}
                     />
                   </td>
                   <td style={{ color: 'var(--text-dim)' }}>{c.group || '—'}</td>
@@ -537,18 +630,19 @@ export default function LiveTvView() {
                       list="nf-epg-ids"
                       placeholder="guide id"
                       value={c.tvgId}
-                      onChange={(e) =>
-                        setChannels(
-                          channels.map((x) =>
-                            x.id === c.id ? { ...x, tvgId: e.target.value, epgCustom: true } : x
-                          )
-                        )
-                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const next = channelsRef.current.map((x) =>
+                          x.id === c.id ? { ...x, tvgId: v, epgCustom: true } : x
+                        );
+                        channelsRef.current = next;
+                        setChannels(next);
+                      }}
                       onBlur={(e) => {
                         const value = e.target.value;
                         if (value === (c.tvgId || '') && !c.epgCustom) return;
                         void persist(
-                          channels.map((x) =>
+                          channelsRef.current.map((x) =>
                             x.id === c.id ? { ...x, tvgId: value, epgCustom: true } : x
                           )
                         );
@@ -562,7 +656,7 @@ export default function LiveTvView() {
                       title="Always use a fake repeating guide for this channel"
                       onChange={(e) =>
                         void persist(
-                          channels.map((x) => (x.id === c.id ? { ...x, fakeEpg: e.target.checked } : x))
+                          channelsRef.current.map((x) => (x.id === c.id ? { ...x, fakeEpg: e.target.checked } : x))
                         )
                       }
                     />

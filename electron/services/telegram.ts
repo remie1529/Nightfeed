@@ -1,5 +1,13 @@
 import { AppSettings, TelegramStatus } from '../types';
 import { sendTelegramMessageViaPool, sendTelegramPhotoViaPool } from './telegram-send-pool';
+import {
+  escapeHtml,
+  normalizeChatIdToken,
+  parseChatIds,
+  redactTelegramToken,
+} from './telegram-utils';
+
+export { escapeHtml, normalizeChatIdToken, parseChatIds, redactTelegramToken };
 
 type SendFn = (
   chatId: number | string,
@@ -45,35 +53,6 @@ export type TelegramHandlers = {
   /** Inline keyboard callback_query (approve:/deny:…). */
   callback?: CallbackHandler;
 };
-
-export function escapeHtml(s: string): string {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/** Normalize unicode dashes/minus and strip junk; keep signed numeric chat ids. */
-export function normalizeChatIdToken(raw: string): string | null {
-  if (raw == null) return null;
-  // Unicode minus/dashes → ASCII hyphen-minus; drop zero-width / BOM junk
-  let s = String(raw)
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/[\u2212\u2010-\u2015\uFE58\uFE63\uFF0D]/g, '-')
-    .trim();
-  if (!s) return null;
-  const m = s.match(/-?\d+/);
-  return m ? m[0] : null;
-}
-
-export function parseChatIds(raw: string): Set<string> {
-  const out = new Set<string>();
-  for (const token of (raw || '').split(/[\s,;]+/)) {
-    const id = normalizeChatIdToken(token);
-    if (id) out.add(id);
-  }
-  return out;
-}
 
 /** Resolve admin + requests lists with legacy telegramAllowedChatIds migration. */
 export function resolveTelegramChatLists(settings: AppSettings): {
@@ -192,7 +171,11 @@ export class TelegramBot {
         const live = this.getSettings ? this.getSettings() : settings;
         await this.pollOnce(live);
       } catch (err) {
-        this.lastError = err instanceof Error ? err.message : String(err);
+        const liveToken = (this.getSettings ? this.getSettings() : settings).telegramBotToken || '';
+        this.lastError = redactTelegramToken(
+          err instanceof Error ? err.message : String(err),
+          liveToken
+        );
       } finally {
         this.inFlight = false;
       }
@@ -244,10 +227,13 @@ export class TelegramBot {
         callback_query_id: callbackQueryId,
         text: text ? text.slice(0, 200) : undefined,
       }),
+      signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      throw new Error(`Telegram answerCallbackQuery failed: HTTP ${res.status} ${errBody.slice(0, 120)}`);
+      throw new Error(
+        `Telegram answerCallbackQuery failed: HTTP ${res.status} ${redactTelegramToken(errBody.slice(0, 120), token)}`
+      );
     }
   }
 
@@ -283,7 +269,10 @@ export class TelegramBot {
         if (photoUrl) await this.sendPhoto(token, id, photoUrl, text, extra);
         else await this.sendMessage(token, id, text, extra);
       } catch (err) {
-        this.lastError = err instanceof Error ? err.message : String(err);
+        this.lastError = redactTelegramToken(
+          err instanceof Error ? err.message : String(err),
+          token
+        );
       }
     }
   }
@@ -303,7 +292,10 @@ export class TelegramBot {
       this.lastError = null;
       return { ok: true };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactTelegramToken(
+        err instanceof Error ? err.message : String(err),
+        token
+      );
       this.lastError = message;
       return { ok: false, error: message };
     }
@@ -323,7 +315,7 @@ export class TelegramBot {
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         throw new Error(
-          `getUpdates HTTP ${res.status}: ${body.slice(0, 160).replace(token, maskToken(token))}`
+          `getUpdates HTTP ${res.status}: ${redactTelegramToken(body.slice(0, 160), token)}`
         );
       }
       const data = (await res.json()) as {
@@ -416,7 +408,10 @@ export class TelegramBot {
         callbackQueryId: cq.id,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactTelegramToken(
+        err instanceof Error ? err.message : String(err),
+        token
+      );
       this.lastError = message;
       try {
         await reply(chatId, `Error: ${message}`);
@@ -469,7 +464,10 @@ export class TelegramBot {
       }
       await this.dispatchAdminCommand(cmd, chatId, args, reply, meta);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactTelegramToken(
+        err instanceof Error ? err.message : String(err),
+        token
+      );
       this.lastError = message;
       try {
         await reply(chatId, `Error: ${message}`);

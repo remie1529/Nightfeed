@@ -33,6 +33,10 @@ export default function LogView({ onBack }: { onBack: () => void }) {
     return { body, matched: q ? shown.length : null };
   }, [raw, query, newestAtBottom]);
 
+  const refreshGenRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const applyPayload = useCallback((payload: LogPayload) => {
     setRaw(payload?.text || '');
     setMeta({
@@ -45,20 +49,28 @@ export default function LogView({ onBack }: { onBack: () => void }) {
   const refresh = useCallback(
     async (stick = true) => {
       if (stick) stickRef.current = true;
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      const gen = ++refreshGenRef.current;
       setBusy(true);
       setError('');
       try {
         const payload = (await window.torrentAPI.getLogTail?.({ lines: 2000 })) as LogPayload;
+        if (gen !== refreshGenRef.current) return;
         if (!payload) {
           const full = (await window.torrentAPI.getLog?.()) as LogPayload;
+          if (gen !== refreshGenRef.current) return;
           applyPayload(full || { text: '', path: '', truncated: false, size: 0 });
         } else {
           applyPayload(payload);
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (gen === refreshGenRef.current) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       } finally {
-        setBusy(false);
+        inFlightRef.current = false;
+        if (gen === refreshGenRef.current) setBusy(false);
       }
     },
     [applyPayload]
@@ -66,6 +78,10 @@ export default function LogView({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     void refresh(true);
+    return () => {
+      refreshGenRef.current += 1;
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -74,19 +90,25 @@ export default function LogView({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     if (!autoRefresh) return;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const off = window.torrentAPI.onLogChanged?.(() => {
-      const searching = !!queryRef.current.trim();
-      if (searching || (!stickRef.current && newestAtBottom)) {
-        void refresh(false);
-        return;
-      }
-      void refresh(true);
+      if (debounceTimer) return;
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        const searching = !!queryRef.current.trim();
+        if (searching || (!stickRef.current && newestAtBottom)) {
+          void refresh(false);
+          return;
+        }
+        void refresh(true);
+      }, 300);
     });
     const timer = setInterval(() => {
       const searching = !!queryRef.current.trim();
       void refresh(!searching && stickRef.current);
     }, 4000);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       off?.();
       clearInterval(timer);
     };
@@ -96,9 +118,10 @@ export default function LogView({ onBack }: { onBack: () => void }) {
     if (query.trim()) return;
     const el = preRef.current;
     if (!el || !stickRef.current) return;
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       el.scrollTop = newestAtBottom ? el.scrollHeight : 0;
     });
+    return () => cancelAnimationFrame(frame);
   }, [view.body, newestAtBottom, query]);
 
   const onScroll = () => {
@@ -115,7 +138,11 @@ export default function LogView({ onBack }: { onBack: () => void }) {
     try {
       await navigator.clipboard.writeText(view.body);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
+        setCopied(false);
+      }, 1600);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

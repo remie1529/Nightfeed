@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CalendarEpisode } from '../lib/types';
 import { epCode } from '../lib/format';
 
@@ -56,22 +56,30 @@ export default function CalendarView({
   const to = isoDate(addDays(weekStart, 6));
   const today = isoDate(new Date());
 
+  const loadGenRef = useRef(0);
+
   const load = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     setLoading(true);
     try {
       const list = (await window.torrentAPI.getCalendar?.(from, to)) as CalendarEpisode[] | undefined;
+      if (gen !== loadGenRef.current) return;
       setItems(Array.isArray(list) ? list : []);
       setError(null);
     } catch (e) {
+      if (gen !== loadGenRef.current) return;
       setItems([]);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   }, [from, to]);
 
   useEffect(() => {
     void load();
+    return () => {
+      loadGenRef.current += 1;
+    };
   }, [load, refreshToken]);
 
   const byDay = useMemo(() => {

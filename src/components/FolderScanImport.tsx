@@ -68,7 +68,8 @@ export default function FolderScanImport({
         if (!payload) return;
         const label = payload.label ? ` — ${payload.label}` : '';
         if (payload.total > 0) {
-          setProgress(`Importing ${payload.current}/${payload.total}${label}`);
+          const verb = payload.phase === 'scanning' ? 'Scanning' : 'Importing';
+          setProgress(`${verb} ${payload.current}/${payload.total}${label}`);
         } else {
           setProgress(payload.label || 'Working…');
         }
@@ -364,7 +365,7 @@ export default function FolderScanImport({
                                 <div style={{ color: 'var(--text-dim)', fontSize: '0.78rem' }}>
                                   {r.note}
                                 </div>
-                                {r.alternatives && r.alternatives.length > 1 && (
+                                {r.alternatives && r.alternatives.length > 0 && (
                                   <select
                                     style={{ marginTop: 4, maxWidth: 260, fontSize: '0.8rem' }}
                                     value={r.matchId ?? ''}
@@ -374,6 +375,7 @@ export default function FolderScanImport({
                                       if (alt) selectMatch(r.id, alt.id, alt.name, alt.year);
                                     }}
                                   >
+                                    {r.matchId == null && <option value="">Select a match…</option>}
                                     {r.alternatives.map((a) => (
                                       <option key={a.id} value={a.id}>
                                         {a.name}
@@ -412,8 +414,8 @@ export default function FolderScanImport({
                   </div>
                   {summary.addedTitles.length > 0 && (
                     <ul style={{ marginTop: 0, color: 'var(--text-dim)', fontSize: '0.9rem' }}>
-                      {summary.addedTitles.slice(0, 30).map((t) => (
-                        <li key={t}>{t}</li>
+                      {summary.addedTitles.slice(0, 30).map((t, idx) => (
+                        <li key={`${idx}:${t}`}>{t}</li>
                       ))}
                       {summary.addedTitles.length > 30 && (
                         <li>…and {summary.addedTitles.length - 30} more</li>

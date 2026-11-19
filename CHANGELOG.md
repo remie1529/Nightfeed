@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.4.45
+
+### Security
+- Enabled Electron renderer sandboxing (`sandbox: true`), restricted external links to `http:`/`https:`, and blocked top-level navigation inside the app window
+- Hardened the Web Request Portal with DOM XSS protection, URL/length validation, async `scrypt` login checks, login/request rate limiting, HMAC CSRF tokens + origin checks on admin actions, CSP and security headers, per-requester status isolation, and serialized server restarts
+- Replaced shell-interpolated PowerShell zip extraction in Addons and Live TV ffmpeg setup with safe `.NET ZipFile` extraction that blocks Zip-Slip path traversal, tightened addon directory/symlink/manifest checks, blocked cross-addon Telegram command hijacking, and prevented HTTPS-to-HTTP download downgrades
+- Redacted Telegram bot tokens and Jackett API keys across all error/log paths and enforced strict numeric Telegram chat IDs
+
+### Improved & Fixed
+- Added a root React Error Boundary with Reload / Continue recovery instead of a blank window on unexpected UI errors
+- Added bounded in-memory poster caching, eliminated redundant remote poster fetches, and added clean fallback art on image load errors
+- Paginated the Live TV channel table (100 rows/page), sped up bulk actions, fixed single-digit channel number editing, serialized channel saves, and preserved custom channel logo previews after refresh/save
+- Fixed event listener leaks, rapid-log redraw lag, stale async responses across Show/Movie details, Calendar, Trailer, and Downloads, per-row busy states in Addons, addon back-button titles, and folder-scan import progress labels
+
 ## 2.4.44
 
 ### Fixed

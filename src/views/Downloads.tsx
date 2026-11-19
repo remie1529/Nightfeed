@@ -23,8 +23,6 @@ function torrentHealth(item: DownloadItem): HealthLabel {
   if (speed > 0) {
     if (seeders >= 50) return 'Excellent';
     if (seeders >= 20) return 'Good';
-    if (seeders >= 8) return 'Fair';
-    if (seeders >= 1 || peers >= 1) return 'Fair';
     return 'Fair';
   }
   // Stalled download with no useful peers
@@ -98,12 +96,27 @@ export default function Downloads() {
   };
 
   useEffect(() => {
-    window.torrentAPI.getDownloads().then((list) => setItems(list as DownloadItem[])).catch(() => undefined);
+    let gotPush = false;
+    let cancelled = false;
     const off = window.torrentAPI.onDownloadsUpdate((list) => {
+      gotPush = true;
       setItems(list as DownloadItem[]);
     });
-    return () => off();
+    window.torrentAPI
+      .getDownloads()
+      .then((list) => {
+        if (!cancelled && !gotPush) setItems(list as DownloadItem[]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      off();
+    };
   }, []);
+
+  const runAction = (work: () => Promise<unknown>) => {
+    void work().catch((err) => setAddError(ipcMessage(err)));
+  };
 
   return (
     <div className="page">
@@ -214,12 +227,12 @@ export default function Downloads() {
                   <td style={{ textAlign: 'right' }}>
                     <div className="toolbar" style={{ justifyContent: 'flex-end' }}>
                       {item.status === 'paused' ? (
-                        <button onClick={() => window.torrentAPI.resumeDownload(item.id)}>Resume</button>
+                        <button onClick={() => runAction(() => window.torrentAPI.resumeDownload(item.id))}>Resume</button>
                       ) : item.status === 'downloading' || item.status === 'queued' ? (
-                        <button onClick={() => window.torrentAPI.pauseDownload(item.id)}>Pause</button>
+                        <button onClick={() => runAction(() => window.torrentAPI.pauseDownload(item.id))}>Pause</button>
                       ) : null}
                       {item.status !== 'done' && (
-                        <button className="danger" onClick={() => window.torrentAPI.cancelDownload(item.id)}>
+                        <button className="danger" onClick={() => runAction(() => window.torrentAPI.cancelDownload(item.id))}>
                           Cancel
                         </button>
                       )}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Poster from '../components/Poster';
 import StatusBadge from '../components/StatusBadge';
 import TrailerButton from '../components/TrailerButton';
@@ -27,10 +27,15 @@ export default function MovieDetail({
   const [searching, setSearching] = useState(false);
   const [starting, setStarting] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const loadGenRef = useRef(0);
 
   const load = async () => {
+    const gen = ++loadGenRef.current;
     const stored = (await window.torrentAPI.getMovie(tmdbId)) as Movie | null;
+    if (gen !== loadGenRef.current) return;
     const m = stored || ((await window.torrentAPI.previewMovie(tmdbId)) as Movie);
+    if (gen !== loadGenRef.current) return;
     setTracked(!!stored);
     setMovie(m);
   };
@@ -49,7 +54,15 @@ export default function MovieDetail({
   };
 
   useEffect(() => {
-    load().catch((e) => setError(e.message || String(e)));
+    setMovie(null);
+    setShowSearch(false);
+    setResults([]);
+    setSearchQuery('');
+    setError(null);
+    load().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      loadGenRef.current += 1;
+    };
   }, [tmdbId]);
 
   const refresh = async () => {
@@ -70,8 +83,13 @@ export default function MovieDetail({
   };
 
   const updateMovie = async (partial: Partial<Movie>) => {
-    const m = (await window.torrentAPI.updateMovie(tmdbId, partial)) as Movie;
-    setMovie(m);
+    setError(null);
+    try {
+      const m = (await window.torrentAPI.updateMovie(tmdbId, partial)) as Movie | null;
+      if (m) setMovie(m);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const openSearch = async () => {
@@ -79,6 +97,7 @@ export default function MovieDetail({
     setResults([]);
     setSearchQuery('');
     setSearching(true);
+    setError(null);
     try {
       const res = (await window.torrentAPI.searchMovieTorrents(tmdbId)) as {
         results: SearchResult[];
@@ -93,8 +112,10 @@ export default function MovieDetail({
       });
       setResults(list);
       setSearchQuery(res.query || '');
-    } catch {
+      if (res.error && !list.length) setError(res.error);
+    } catch (e) {
       setResults([]);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSearching(false);
     }
@@ -102,6 +123,7 @@ export default function MovieDetail({
 
   const startDownload = async (result: SearchResult) => {
     setStarting(result.magnet);
+    setError(null);
     try {
       await window.torrentAPI.startMovieDownload({
         tmdbId,
@@ -115,8 +137,8 @@ export default function MovieDetail({
       });
       setShowSearch(false);
       await refresh();
-    } catch {
-      // Download failures are written to the Log by the main process.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStarting(null);
     }
@@ -153,8 +175,19 @@ export default function MovieDetail({
   };
 
   const remove = async () => {
-    await window.torrentAPI.removeMovie(tmdbId);
-    onRemoved();
+    if (removing) return;
+    if (!window.confirm(`Remove "${movie?.title || 'this movie'}" from Nightfeed? Downloaded video files on disk are kept.`)) {
+      return;
+    }
+    setRemoving(true);
+    setError(null);
+    try {
+      await window.torrentAPI.removeMovie(tmdbId);
+      onRemoved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setRemoving(false);
+    }
   };
 
   if (!movie) {

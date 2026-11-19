@@ -1,6 +1,6 @@
 import http from 'http';
 import { URL } from 'url';
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'crypto';
+import { randomBytes, scrypt, scryptSync, timingSafeEqual, createHmac } from 'crypto';
 import type { AppSettings, TelegramRequest } from '../types';
 
 export type WebPortalSearchShow = {
@@ -74,6 +74,65 @@ export function verifyWebPortalPassword(password: string, stored: string): boole
   return timingSafeEqual(test, expected);
 }
 
+export async function verifyWebPortalPasswordAsync(password: string, stored: string): Promise<boolean> {
+  if (!stored || !password) return false;
+  const parts = stored.split(':');
+  if (parts[0] !== 'scrypt' || parts.length !== 3) return false;
+  const salt = parts[1];
+  const expected = Buffer.from(parts[2], 'hex');
+  if (!expected.length) return false;
+  return new Promise<boolean>((resolve) => {
+    scrypt(password, salt, 64, (err, derived) => {
+      if (err || !derived || derived.length !== expected.length) {
+        resolve(false);
+        return;
+      }
+      resolve(timingSafeEqual(derived, expected));
+    });
+  });
+}
+
+export function sanitizePortalUrl(raw: unknown, maxLen = 1024): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > maxLen) return null;
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+class SlidingRateLimiter {
+  private readonly hits = new Map<string, number[]>();
+  constructor(
+    private readonly maxHits: number,
+    private readonly windowMs: number
+  ) {}
+
+  allow(key: string): { ok: boolean; retryAfterSec: number } {
+    const now = Date.now();
+    const cutoff = now - this.windowMs;
+    const prev = (this.hits.get(key) || []).filter((t) => t > cutoff);
+    if (prev.length >= this.maxHits) {
+      const oldest = prev[0] || now;
+      const retryAfterSec = Math.max(1, Math.ceil((oldest + this.windowMs - now) / 1000));
+      this.hits.set(key, prev);
+      return { ok: false, retryAfterSec };
+    }
+    prev.push(now);
+    this.hits.set(key, prev);
+    if (this.hits.size > 500) {
+      for (const [k, list] of this.hits) {
+        if (!list.some((t) => t > cutoff)) this.hits.delete(k);
+      }
+    }
+    return { ok: true, retryAfterSec: 0 };
+  }
+}
+
 function escapeHtml(s: string): string {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -91,9 +150,23 @@ function parseCookies(header: string | undefined): Record<string, string> {
     if (idx < 0) continue;
     const k = part.slice(0, idx).trim();
     const v = part.slice(idx + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
   }
   return out;
+}
+
+class HttpInputError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string
+  ) {
+    super(message);
+  }
 }
 
 function readBody(req: http.IncomingMessage, limit = 1_000_000): Promise<string> {
@@ -103,7 +176,7 @@ function readBody(req: http.IncomingMessage, limit = 1_000_000): Promise<string>
     req.on('data', (c: Buffer) => {
       size += c.length;
       if (size > limit) {
-        reject(new Error('Body too large'));
+        reject(new HttpInputError(413, 'Body too large'));
         req.destroy();
         return;
       }
@@ -117,7 +190,11 @@ function readBody(req: http.IncomingMessage, limit = 1_000_000): Promise<string>
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
   const raw = await readBody(req);
   if (!raw.trim()) return {};
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new HttpInputError(400, 'Invalid JSON body');
+  }
 }
 
 function shellCss(): string {
@@ -347,13 +424,19 @@ function requestPageHtml(): string {
 
   const msg = (text, kind) => {
     const el = $('msg');
-    el.innerHTML = text ? '<div class="msg ' + (kind || 'info') + '">' + text + '</div>' : '';
+    el.textContent = '';
+    if (!text) return;
+    const safeKind = kind === 'ok' || kind === 'err' ? kind : 'info';
+    const box = document.createElement('div');
+    box.className = 'msg ' + safeKind;
+    box.textContent = String(text);
+    el.appendChild(box);
   };
 
   function posterHtml(url, cls) {
     const u = (url || '').trim();
     const c = cls || 'poster';
-    if (u) {
+    if (u && /^https?:\/\//i.test(u)) {
       return '<img class="' + c + '" src="' + escape(u) + '" alt="" loading="lazy" referrerpolicy="no-referrer" />';
     }
     return '<div class="' + c + ' ph" aria-hidden="true"></div>';
@@ -407,7 +490,7 @@ function requestPageHtml(): string {
       const data = await res.json();
       if (!data.ok) { msg(data.message || 'Search failed', 'err'); return; }
       const items = data.results || [];
-      if (!items.length) { msg('No results for “' + escape(query) + '”.', 'err'); return; }
+      if (!items.length) { msg('No results for “' + query + '”.', 'err'); return; }
       msg('Pick a result to submit a request.', 'info');
       const box = $('results');
       box.style.display = 'block';
@@ -420,7 +503,7 @@ function requestPageHtml(): string {
         const inLib = !!it.inLibrary;
         const btn = inLib
           ? '<button type="button" class="submit-btn" disabled>Already available</button>'
-          : '<button type="button" class="primary submit-btn" data-id="' + it.id +
+          : '<button type="button" class="primary submit-btn" data-id="' + escape(String(it.id)) +
             '" data-title="' + escape(title) + '" data-year="' + escape(String(year || '')) +
             '" data-overview="' + escape(it.overview || '') + '" data-poster="' + escape(poster) +
             '">Request</button>';
@@ -512,14 +595,15 @@ function adminLoginHtml(error?: string): string {
   return layout('Admin login', body, 'admin');
 }
 
-function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): string {
+function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[], csrfToken: string): string {
   const posterHtml = (r: TelegramRequest) => {
-    const url = (r.posterUrl || '').trim();
+    const url = sanitizePortalUrl(r.posterUrl) || '';
     if (url) {
       return `<img class="req-poster" src="${escapeHtml(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
     }
     return `<div class="req-poster ph">No art</div>`;
   };
+  const csrfField = `<input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}" />`;
   const row = (r: TelegramRequest, actions: boolean) => {
     const type = r.mediaType === 'movie' ? 'Movie' : 'TV';
     const year = r.year ? ` (${r.year})` : '';
@@ -544,10 +628,12 @@ function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): s
         actions
           ? `<div class="row">
               <form method="POST" action="/admin/approve" style="display:inline">
+                ${csrfField}
                 <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
                 <button type="submit" class="ok">Approve</button>
               </form>
               <form method="POST" action="/admin/deny" style="display:inline">
+                ${csrfField}
                 <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
                 <button type="submit" class="danger">Deny</button>
               </form>
@@ -560,7 +646,7 @@ function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): s
   const body = `
 <div class="row" style="justify-content:space-between;margin-bottom:0.85rem">
   <div class="hint">Same approve/deny pipeline as Telegram. Auto-refreshes every 30s.</div>
-  <form method="POST" action="/admin/logout"><button type="submit">Log out</button></form>
+  <form method="POST" action="/admin/logout">${csrfField}<button type="submit">Log out</button></form>
 </div>
 <div class="stats">
   <div class="stat"><b>${pending.length}</b> pending</div>
@@ -585,7 +671,7 @@ function adminPageHtml(pending: TelegramRequest[], recent: TelegramRequest[]): s
       : `<div class="hint">No recent decisions yet.</div>`
   }
 </div>
-<script>setTimeout(function(){ if (!document.hidden) location.reload(); }, 30000);</script>`;
+<script>setInterval(function(){ if (!document.hidden) location.reload(); }, 30000);</script>`;
   return layout('Admin', body, 'admin', true);
 }
 
@@ -610,6 +696,10 @@ export class WebPortalServer {
   private deps: WebPortalDeps | null = null;
   private bindHost = '127.0.0.1';
   private port = 8787;
+  private readonly ephemeralSecret = randomBytes(24).toString('hex');
+  private readonly loginLimiter = new SlidingRateLimiter(10, 5 * 60 * 1000);
+  private readonly requestLimiter = new SlidingRateLimiter(30, 5 * 60 * 1000);
+  private syncChain: Promise<void> = Promise.resolve();
 
   setDeps(deps: WebPortalDeps) {
     this.deps = deps;
@@ -636,32 +726,43 @@ export class WebPortalServer {
   }
 
   sync(settings: AppSettings) {
-    if (settings.webPortalEnabled) {
-      void this.start(settings);
-    } else {
-      this.stop();
-    }
+    this.syncChain = this.syncChain
+      .then(async () => {
+        if (settings.webPortalEnabled) {
+          await this.start(settings);
+        } else {
+          await this.stopAsync();
+        }
+      })
+      .catch(() => undefined);
   }
 
   stop() {
-    if (this.server) {
-      try {
-        this.server.close();
-      } catch {
-        // ignore
-      }
-      this.server = null;
-    }
+    void this.stopAsync();
+  }
+
+  async stopAsync(): Promise<void> {
+    const srv = this.server;
+    this.server = null;
     this.listening = false;
+    if (!srv) return;
+    await new Promise<void>((resolve) => {
+      try {
+        srv.close(() => resolve());
+        srv.closeAllConnections?.();
+      } catch {
+        resolve();
+      }
+    });
   }
 
   async start(settings: AppSettings): Promise<void> {
     const host = portalBindHost(settings);
-    const port = Math.max(1, Math.min(65535, Number(settings.webPortalPort) || 8787));
-    if (this.listening && this.server && this.bindHost === host && this.port === port) {
+    const port = Math.max(0, Math.min(65535, Number(settings.webPortalPort ?? 8787)));
+    if (this.listening && this.server && this.bindHost === host && this.port === port && port > 0) {
       return;
     }
-    this.stop();
+    await this.stopAsync();
     this.bindHost = host;
     this.port = port;
     this.lastError = null;
@@ -679,11 +780,21 @@ export class WebPortalServer {
         resolve();
       });
       server.listen(port, host, () => {
+        const addr = server.address();
+        if (typeof addr === 'object' && addr) this.port = addr.port;
         this.listening = true;
         this.lastError = null;
         resolve();
       });
     });
+  }
+
+  getBoundPort(): number {
+    return this.port;
+  }
+
+  private sessionSecret(settings: AppSettings): string {
+    return (settings.webPortalSessionSecret || '').trim() || this.ephemeralSecret;
   }
 
   private signSession(secret: string, exp: number): string {
@@ -710,25 +821,59 @@ export class WebPortalServer {
     }
   }
 
-  private isAuthed(req: http.IncomingMessage, settings: AppSettings): boolean {
-    const secret = (settings.webPortalSessionSecret || '').trim();
+  private sessionTokenFromReq(req: http.IncomingMessage): string | undefined {
     const cookies = parseCookies(req.headers.cookie);
-    return this.verifySession(secret, cookies[COOKIE_NAME]);
+    return cookies[COOKIE_NAME];
+  }
+
+  private isAuthed(req: http.IncomingMessage, settings: AppSettings): boolean {
+    const secret = this.sessionSecret(settings);
+    return this.verifySession(secret, this.sessionTokenFromReq(req));
+  }
+
+  private csrfTokenFor(req: http.IncomingMessage, settings: AppSettings): string {
+    const secret = this.sessionSecret(settings);
+    const session = this.sessionTokenFromReq(req) || '';
+    return createHmac('sha256', secret).update(`csrf:${session}`).digest('base64url');
+  }
+
+  private verifyCsrf(
+    req: http.IncomingMessage,
+    settings: AppSettings,
+    provided: string | null | undefined
+  ): boolean {
+    const hostHeader = String(req.headers.host || '').toLowerCase();
+    const originHeader = String(req.headers.origin || '').trim();
+    if (originHeader && hostHeader) {
+      try {
+        if (new URL(originHeader).host.toLowerCase() !== hostHeader) return false;
+      } catch {
+        return false;
+      }
+    }
+    const refererHeader = String(req.headers.referer || '').trim();
+    if (!originHeader && refererHeader && hostHeader) {
+      try {
+        if (new URL(refererHeader).host.toLowerCase() !== hostHeader) return false;
+      } catch {
+        return false;
+      }
+    }
+    const expected = this.csrfTokenFor(req, settings);
+    const got = String(provided || '');
+    const a = Buffer.from(got);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   private setAuthCookie(res: http.ServerResponse, settings: AppSettings) {
-    let secret = (settings.webPortalSessionSecret || '').trim();
-    if (!secret) {
-      // Should be ensured by settings migration; fall back ephemeral.
-      secret = randomBytes(24).toString('hex');
-    }
+    const secret = this.sessionSecret(settings);
     const token = this.signSession(secret, Date.now() + SESSION_TTL_MS);
-    const secure = '';
     res.setHeader(
       'Set-Cookie',
       `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(
         SESSION_TTL_MS / 1000
-      )}${secure}`
+      )}`
     );
   }
 
@@ -739,16 +884,42 @@ export class WebPortalServer {
     );
   }
 
-  private send(res: http.ServerResponse, status: number, body: string, type = 'text/html; charset=utf-8') {
-    res.writeHead(status, {
+  private send(
+    res: http.ServerResponse,
+    status: number,
+    body: string,
+    type = 'text/html; charset=utf-8',
+    extraHeaders?: Record<string, string>
+  ) {
+    const headers: Record<string, string> = {
       'Content-Type': type,
       'Cache-Control': 'no-store',
-    });
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'same-origin',
+      ...(type.startsWith('text/html')
+        ? {
+            'Content-Security-Policy':
+              "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src http: https: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+          }
+        : {}),
+      ...(extraHeaders || {}),
+    };
+    res.writeHead(status, headers);
     res.end(body);
   }
 
-  private sendJson(res: http.ServerResponse, status: number, data: unknown) {
-    this.send(res, status, JSON.stringify(data), 'application/json; charset=utf-8');
+  private sendJson(
+    res: http.ServerResponse,
+    status: number,
+    data: unknown,
+    extraHeaders?: Record<string, string>
+  ) {
+    this.send(res, status, JSON.stringify(data), 'application/json; charset=utf-8', extraHeaders);
+  }
+
+  private clientIp(req: http.IncomingMessage): string {
+    return req.socket?.remoteAddress || 'unknown';
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -764,7 +935,13 @@ export class WebPortalServer {
       }
 
       const host = req.headers.host || `127.0.0.1:${this.port}`;
-      const url = new URL(req.url || '/', `http://${host}`);
+      let url: URL;
+      try {
+        url = new URL(req.url || '/', `http://${host}`);
+      } catch {
+        this.sendJson(res, 400, { ok: false, message: 'Bad request URL' });
+        return;
+      }
       const path = url.pathname.replace(/\/+$/, '') || '/';
       const method = (req.method || 'GET').toUpperCase();
 
@@ -791,12 +968,23 @@ export class WebPortalServer {
           .filter((r) => r.status !== 'pending')
           .slice(-30)
           .reverse();
-        this.send(res, 200, adminPageHtml(pending, recent));
+        this.send(res, 200, adminPageHtml(pending, recent, this.csrfTokenFor(req, settings)));
         return;
       }
 
       if (method === 'POST' && path === '/admin/login') {
-        const raw = await readBody(req);
+        const lim = this.loginLimiter.allow(this.clientIp(req));
+        if (!lim.ok) {
+          this.send(
+            res,
+            429,
+            adminLoginHtml(`Too many login attempts. Try again in ${lim.retryAfterSec}s.`),
+            'text/html; charset=utf-8',
+            { 'Retry-After': String(lim.retryAfterSec) }
+          );
+          return;
+        }
+        const raw = await readBody(req, 16_384);
         const params = new URLSearchParams(raw);
         const password = params.get('password') || '';
         const hash = (settings.webPortalAdminPasswordHash || '').trim();
@@ -804,7 +992,7 @@ export class WebPortalServer {
           this.send(res, 200, adminLoginHtml('Set an admin password in Nightfeed Settings first.'));
           return;
         }
-        if (!verifyWebPortalPassword(password, hash)) {
+        if (!(await verifyWebPortalPasswordAsync(password, hash))) {
           this.send(res, 200, adminLoginHtml('Invalid password.'));
           return;
         }
@@ -815,6 +1003,14 @@ export class WebPortalServer {
       }
 
       if (method === 'POST' && path === '/admin/logout') {
+        if (this.isAuthed(req, settings)) {
+          const raw = await readBody(req, 16_384);
+          const params = new URLSearchParams(raw);
+          if (!this.verifyCsrf(req, settings, params.get('csrf'))) {
+            this.send(res, 403, 'Invalid CSRF token', 'text/plain; charset=utf-8');
+            return;
+          }
+        }
         this.clearAuthCookie(res);
         res.writeHead(303, { Location: '/admin', 'Cache-Control': 'no-store' });
         res.end();
@@ -827,8 +1023,12 @@ export class WebPortalServer {
           res.end();
           return;
         }
-        const raw = await readBody(req);
+        const raw = await readBody(req, 16_384);
         const params = new URLSearchParams(raw);
+        if (!this.verifyCsrf(req, settings, params.get('csrf'))) {
+          this.send(res, 403, 'Invalid CSRF token', 'text/plain; charset=utf-8');
+          return;
+        }
         const id = (params.get('id') || '').trim();
         if (id) {
           const action = path.endsWith('approve') ? 'approved' : 'denied';
@@ -841,8 +1041,8 @@ export class WebPortalServer {
 
       if (method === 'POST' && path === '/api/search') {
         const body = (await readJson(req)) as { mediaType?: string; query?: string };
-        const query = (body.query || '').trim();
-        const mediaType = body.mediaType === 'movie' ? 'movie' : 'show';
+        const query = String(body?.query || '').trim().slice(0, 200);
+        const mediaType = body?.mediaType === 'movie' ? 'movie' : 'show';
         if (!query) {
           this.sendJson(res, 400, { ok: false, message: 'Query required' });
           return;
@@ -866,15 +1066,32 @@ export class WebPortalServer {
       }
 
       if (method === 'POST' && path === '/api/request') {
+        const lim = this.requestLimiter.allow(this.clientIp(req));
+        if (!lim.ok) {
+          this.sendJson(
+            res,
+            429,
+            { ok: false, message: 'Too many requests. Please wait a moment.' },
+            { 'Retry-After': String(lim.retryAfterSec) }
+          );
+          return;
+        }
         const body = (await readJson(req)) as WebPortalSubmitInput;
-        const mediaType = body.mediaType === 'movie' ? 'movie' : 'show';
-        const mediaId = Number(body.mediaId);
-        const posterUrl = typeof body.posterUrl === 'string' ? body.posterUrl.trim() || null : null;
+        const mediaType = body?.mediaType === 'movie' ? 'movie' : 'show';
+        const mediaId = Number(body?.mediaId);
+        const title = String(body?.title || '').trim().slice(0, 200);
+        const overview =
+          typeof body?.overview === 'string' ? body.overview.trim().slice(0, 2000) : undefined;
+        const requesterName =
+          typeof body?.requesterName === 'string'
+            ? body.requesterName.trim().slice(0, 80)
+            : undefined;
+        const posterUrl = sanitizePortalUrl(body?.posterUrl);
         const requesterClientId =
-          typeof body.requesterClientId === 'string'
+          typeof body?.requesterClientId === 'string'
             ? body.requesterClientId.trim().slice(0, 80)
             : undefined;
-        if (!mediaId || !body.title) {
+        if (!Number.isFinite(mediaId) || mediaId <= 0 || !title) {
           this.sendJson(res, 400, { ok: false, message: 'mediaId and title required' });
           return;
         }
@@ -882,18 +1099,18 @@ export class WebPortalServer {
           this.sendJson(res, 200, {
             ok: false,
             alreadyAvailable: true,
-            message: `Already available in the library: ${body.title}`,
+            message: `Already available in the library: ${title}`,
           });
           return;
         }
         const result = await this.deps.submitRequest({
           mediaType,
           mediaId,
-          title: String(body.title),
-          year: body.year ?? null,
-          overview: body.overview,
+          title,
+          year: typeof body?.year === 'number' && Number.isFinite(body.year) ? body.year : null,
+          overview,
           posterUrl,
-          requesterName: body.requesterName,
+          requesterName,
           requesterClientId,
         });
         const already =
@@ -933,7 +1150,7 @@ export class WebPortalServer {
             year: r.year,
             status: r.status,
             mediaType: r.mediaType,
-            posterUrl: r.posterUrl || null,
+            posterUrl: sanitizePortalUrl(r.posterUrl),
             createdAt: r.createdAt,
             resolvedAt: r.resolvedAt,
           })),
@@ -942,10 +1159,26 @@ export class WebPortalServer {
       }
 
       if (method === 'GET' && path.startsWith('/api/request/')) {
-        const id = decodeURIComponent(path.slice('/api/request/'.length));
+        let id: string;
+        try {
+          id = decodeURIComponent(path.slice('/api/request/'.length));
+        } catch {
+          this.sendJson(res, 400, { ok: false, message: 'Invalid request id' });
+          return;
+        }
         let reqItem = this.deps.listRequests().find((r) => r.id === id);
         if (!reqItem) {
           this.sendJson(res, 404, { ok: false, message: 'Not found' });
+          return;
+        }
+        const authed = this.isAuthed(req, settings);
+        const clientId = (url.searchParams.get('clientId') || '').trim();
+        const ownsRequest =
+          reqItem.source === 'web' &&
+          !!reqItem.requesterClientId &&
+          clientId === reqItem.requesterClientId;
+        if (!authed && !ownsRequest) {
+          this.sendJson(res, 403, { ok: false, message: 'Forbidden' });
           return;
         }
         if (!(reqItem.posterUrl || '').trim() && this.deps.enrichRequests) {
@@ -964,7 +1197,7 @@ export class WebPortalServer {
             year: reqItem.year,
             status: reqItem.status,
             mediaType: reqItem.mediaType,
-            posterUrl: reqItem.posterUrl || null,
+            posterUrl: sanitizePortalUrl(reqItem.posterUrl),
             createdAt: reqItem.createdAt,
             resolvedAt: reqItem.resolvedAt,
           },
@@ -983,6 +1216,14 @@ export class WebPortalServer {
 
       this.send(res, 404, 'Not found');
     } catch (err) {
+      if (err instanceof HttpInputError) {
+        try {
+          this.sendJson(res, err.status, { ok: false, message: err.message });
+        } catch {
+          // ignore
+        }
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.lastError = message;
       try {

@@ -158,11 +158,26 @@ export default function Library({
     }
   };
 
+  const refreshCleanupRef = useRef<(() => void) | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      refreshCleanupRef.current?.();
+      refreshCleanupRef.current = null;
+    };
+  }, []);
+
+  const trackedIds = useMemo(() => new Set(shows.map((s) => s.tmdbId)), [shows]);
+
   const refreshAll = async () => {
     setRefreshing(true);
     setRefreshProgress('Starting…');
     setError(null);
+    refreshCleanupRef.current?.();
     const offProgress = window.torrentAPI.onRefreshAllProgress?.((p) => {
+      if (!mountedRef.current) return;
       if (p.phase === 'done') {
         setRefreshProgress(null);
         return;
@@ -172,10 +187,18 @@ export default function Library({
       const label = p.label ? ` — ${p.label}` : '';
       setRefreshProgress(`${phase} ${p.current}/${p.total}${label}`);
     });
+    let offDone: (() => void) | undefined;
+    const cleanup = () => {
+      offProgress?.();
+      offDone?.();
+      if (refreshCleanupRef.current === cleanup) refreshCleanupRef.current = null;
+    };
+    refreshCleanupRef.current = cleanup;
     try {
       await new Promise<void>((resolve, reject) => {
-        const offDone = window.torrentAPI.onRefreshAllDone?.((payload) => {
+        offDone = window.torrentAPI.onRefreshAllDone?.((payload) => {
           offDone?.();
+          offDone = undefined;
           if (payload?.ok === false) {
             reject(new Error(payload.error || 'Refresh failed'));
           } else {
@@ -186,21 +209,26 @@ export default function Library({
           // If invoke itself fails, reject; otherwise wait for done event.
           if (res && res.ok === false) {
             offDone?.();
+            offDone = undefined;
             reject(new Error('Refresh failed to start'));
           }
         }).catch((e) => {
           offDone?.();
+          offDone = undefined;
           reject(e instanceof Error ? e : new Error(String(e)));
         });
       });
+      if (!mountedRef.current) return;
       await load({ soft: true });
-      onRefreshDone();
+      if (mountedRef.current) onRefreshDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mountedRef.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      offProgress?.();
-      setRefreshProgress(null);
-      setRefreshing(false);
+      cleanup();
+      if (mountedRef.current) {
+        setRefreshProgress(null);
+        setRefreshing(false);
+      }
     }
   };
 
@@ -301,17 +329,22 @@ export default function Library({
                   </td>
                   <td className="mono">{r.firstAirDate || '—'}</td>
                   <td style={{ textAlign: 'right' }}>
-                    <button
-                      className="primary"
-                      disabled={busyId === r.id || shows.some((s) => s.tmdbId === r.id)}
-                      onClick={() => setPendingAdd(r)}
-                    >
-                      {shows.some((s) => s.tmdbId === r.id)
-                        ? 'Added'
-                        : busyId === r.id
-                          ? 'Adding…'
-                          : 'Add'}
-                    </button>
+                    {(() => {
+                      const alreadyTracked = trackedIds.has(r.id);
+                      return (
+                        <button
+                          className="primary"
+                          disabled={busyId === r.id || alreadyTracked}
+                          onClick={() => setPendingAdd(r)}
+                        >
+                          {alreadyTracked
+                            ? 'Added'
+                            : busyId === r.id
+                              ? 'Adding…'
+                              : 'Add'}
+                        </button>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}

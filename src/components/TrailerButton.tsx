@@ -6,13 +6,24 @@ export default function TrailerButton({ imdbId }: { imdbId?: string | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const reqGenRef = useRef(0);
 
   const close = () => {
+    reqGenRef.current += 1;
     videoRef.current?.pause();
     setOpen(false);
+    setBusy(false);
     setUrl(null);
     setError(null);
   };
+
+  useEffect(() => {
+    reqGenRef.current += 1;
+    setOpen(false);
+    setBusy(false);
+    setUrl(null);
+    setError(null);
+  }, [imdbId]);
 
   useEffect(() => {
     if (!open) return;
@@ -24,6 +35,7 @@ export default function TrailerButton({ imdbId }: { imdbId?: string | null }) {
   }, [open]);
 
   const play = async () => {
+    const gen = ++reqGenRef.current;
     setOpen(true);
     setUrl(null);
     setError(null);
@@ -34,12 +46,14 @@ export default function TrailerButton({ imdbId }: { imdbId?: string | null }) {
     setBusy(true);
     try {
       const res = await window.torrentAPI.getTrailer(imdbId);
+      if (gen !== reqGenRef.current) return;
       if (!res?.url) setError('No trailer for this title.');
       else setUrl(res.url);
     } catch (e) {
+      if (gen !== reqGenRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (gen === reqGenRef.current) setBusy(false);
     }
   };
 

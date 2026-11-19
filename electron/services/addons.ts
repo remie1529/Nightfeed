@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 import { resolveDistElectronAsset, buildUtilityProcessEnv } from './asset-path';
+import { extractZipSafely } from './safe-unzip';
 
 const execFileAsync = promisify(execFile);
 const CATALOG_URL = 'https://raw.githubusercontent.com/remie1529/Nightfeed/main/addons/catalog.json';
@@ -319,6 +320,8 @@ function applyAddonEvent(worker: AddonWorker, msg: any) {
   if (msg.event === 'telegram') {
     const command = String(msg.command || '').toLowerCase().replace(/[^a-z0-9-]/g, '');
     if (!command || command.length > 32) return;
+    const existing = telegramCommands.get(command);
+    if (existing && existing.addonId !== addonId) return;
     const audience = msg.audience === 'requests' || msg.audience === 'all' ? msg.audience : 'admin';
     telegramCommands.set(command, {
       addonId,
@@ -647,17 +650,19 @@ async function readCatalogFile(): Promise<CatalogAddon[]> {
 }
 
 export async function getCatalog(): Promise<{ addons: CatalogAddon[]; error?: string }> {
+  const validCatalogEntry = (item: CatalogAddon) =>
+    validId(String(item?.id || '')) && !!safeRelative(String(item?.dir || ''));
   try {
     const res = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(8000) });
     if (res.ok) {
       const raw = (await res.json()) as { addons?: CatalogAddon[] };
-      if (Array.isArray(raw.addons)) return { addons: raw.addons.filter((item) => validId(String(item.id || ''))) };
+      if (Array.isArray(raw.addons)) return { addons: raw.addons.filter(validCatalogEntry) };
     }
   } catch {
     // The copy shipped with the app is used when GitHub cannot be reached.
   }
   try {
-    return { addons: await readCatalogFile() };
+    return { addons: (await readCatalogFile()).filter(validCatalogEntry) };
   } catch (err) {
     return { addons: [], error: err instanceof Error ? err.message : String(err) };
   }
@@ -669,24 +674,41 @@ async function fetchText(url: string): Promise<string> {
   return res.text();
 }
 
+function assertSafeSourceFile(sourceDir: string, relFile: string): string {
+  const root = path.resolve(sourceDir);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  const from = path.resolve(root, relFile);
+  if (!from.startsWith(rootPrefix)) throw new Error('Addon file escapes its folder');
+  const st = fs.lstatSync(from);
+  if (st.isSymbolicLink() || !st.isFile()) {
+    throw new Error(`Addon file must be a regular file: ${relFile}`);
+  }
+  return from;
+}
+
 function copyAddonDir(sourceDir: string, dest: string) {
   const manifest = readManifest(sourceDir);
   fs.mkdirSync(dest, { recursive: true });
-  fs.copyFileSync(path.join(sourceDir, 'addon.json'), path.join(dest, 'addon.json'));
+  const manifestSrc = assertSafeSourceFile(sourceDir, 'addon.json');
+  fs.copyFileSync(manifestSrc, path.join(dest, 'addon.json'));
   for (const file of manifest.files) {
-    const from = path.resolve(sourceDir, file);
-    if (!from.startsWith(path.resolve(sourceDir))) throw new Error('Addon file escapes its folder');
+    const from = assertSafeSourceFile(sourceDir, file);
     fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
     fs.copyFileSync(from, path.join(dest, file));
   }
 }
 
 async function downloadAddonDir(entry: CatalogAddon, dest: string) {
-  const base = `${RAW_ROOT}/${entry.dir.replace(/^\/+|\/+$/g, '')}`;
+  const safeDir = safeRelative(entry.dir);
+  if (!safeDir) throw new Error('Invalid addon catalog directory');
+  const base = `${RAW_ROOT}/${safeDir.replace(/^\/+|\/+$/g, '')}`;
   fs.mkdirSync(dest, { recursive: true });
   const manifestText = await fetchText(`${base}/addon.json`);
   fs.writeFileSync(path.join(dest, 'addon.json'), manifestText, 'utf8');
   const manifest = readManifest(dest, false);
+  if (manifest.id !== entry.id) {
+    throw new Error(`Addon manifest id (${manifest.id}) does not match catalog id (${entry.id})`);
+  }
   for (const file of manifest.files) {
     const body = await fetchText(`${base}/${file}`);
     fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
@@ -696,6 +718,8 @@ async function downloadAddonDir(entry: CatalogAddon, dest: string) {
 }
 
 async function materializeStoreAddon(entry: CatalogAddon): Promise<string> {
+  const safeDir = safeRelative(entry.dir);
+  if (!safeDir) throw new Error('Invalid addon catalog directory');
   const dirName = entry.id.replace(/[^a-z0-9.-]/g, '_');
   const dest = path.join(rootDir(), dirName);
   const staging = path.join(rootDir(), `.staging-${dirName}`);
@@ -710,11 +734,16 @@ async function materializeStoreAddon(entry: CatalogAddon): Promise<string> {
         throw new Error('Could not download the addon update. The installed copy was left as it is.');
       }
       const bundled = bundledAddonsDir();
-      const localDir = bundled ? path.join(bundled, entry.dir) : '';
-      if (!localDir || !fs.existsSync(path.join(localDir, 'addon.json'))) {
+      const localDir = bundled ? path.resolve(bundled, safeDir) : '';
+      const bundledPrefix = bundled ? (path.resolve(bundled).endsWith(path.sep) ? path.resolve(bundled) : `${path.resolve(bundled)}${path.sep}`) : '';
+      if (!localDir || !localDir.startsWith(bundledPrefix) || !fs.existsSync(path.join(localDir, 'addon.json'))) {
         throw err instanceof Error ? err : new Error(String(err));
       }
       copyAddonDir(localDir, staging);
+      const localManifest = readManifest(staging);
+      if (localManifest.id !== entry.id) {
+        throw new Error(`Bundled addon id (${localManifest.id}) does not match catalog id (${entry.id})`);
+      }
     }
     fs.rmSync(dest, { recursive: true, force: true });
     fs.renameSync(staging, dest);
@@ -738,6 +767,9 @@ export async function installFromStore(id: string): Promise<InstalledAddon[]> {
   if (!entry) throw new Error('That addon is not in the approved store');
   const dirName = await materializeStoreAddon(entry);
   const manifest = readManifest(path.join(rootDir(), dirName));
+  if (manifest.id !== entry.id) {
+    throw new Error('Installed addon id does not match store entry');
+  }
   await remember({ id: manifest.id, enabled: true, source: 'store', dirName });
   return listInstalled();
 }
@@ -757,10 +789,10 @@ async function copyManifestTree(sourceDir: string, dirName: string) {
   const dest = path.join(rootDir(), dirName);
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
-  fs.copyFileSync(path.join(sourceDir, 'addon.json'), path.join(dest, 'addon.json'));
+  const manifestSrc = assertSafeSourceFile(sourceDir, 'addon.json');
+  fs.copyFileSync(manifestSrc, path.join(dest, 'addon.json'));
   for (const file of manifest.files) {
-    const from = path.resolve(sourceDir, file);
-    if (!from.startsWith(path.resolve(sourceDir))) throw new Error('Addon file escapes its folder');
+    const from = assertSafeSourceFile(sourceDir, file);
     if (!fs.existsSync(from)) throw new Error(`Missing ${file}`);
     fs.mkdirSync(path.dirname(path.join(dest, file)), { recursive: true });
     fs.copyFileSync(from, path.join(dest, file));
@@ -780,15 +812,7 @@ export async function installFromDialog(): Promise<InstalledAddon[]> {
   let tempDir = '';
   if (chosen.toLowerCase().endsWith('.zip')) {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-addon-'));
-    await execFileAsync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-Command',
-        `Expand-Archive -LiteralPath '${chosen.replace(/'/g, "''")}' -DestinationPath '${tempDir.replace(/'/g, "''")}' -Force`,
-      ],
-      { windowsHide: true }
-    );
+    await extractZipSafely(chosen, tempDir);
     const found = findManifestDir(tempDir);
     if (!found) throw new Error('The zip does not contain addon.json');
     sourceDir = found;

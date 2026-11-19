@@ -68,10 +68,21 @@ const api = {
     };
   },
   onAddonsChanged: (cb: () => void) => {
-    const listener = () => cb();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const listener = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        cb();
+      }, 0);
+    };
     ipcRenderer.on('addons:changed', listener);
     ipcRenderer.on('addons:pages', listener);
     return () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       ipcRenderer.removeListener('addons:changed', listener);
       ipcRenderer.removeListener('addons:pages', listener);
     };

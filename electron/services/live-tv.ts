@@ -17,6 +17,7 @@ import { currentLibrarySlot, libraryScheduleNow } from './library-channel';
 import { activityLog } from './activity-log';
 import { refreshLiveTvViaPool } from './livetv-pool';
 import { isAdult, parseM3u } from './livetv-refresh-core';
+import { extractZipSafely } from './safe-unzip';
 
 const insecureHttps = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
 const keepAliveHttp = new http.Agent({ keepAlive: true });
@@ -80,12 +81,33 @@ function downloadToFile(url: string, dest: string, hops = 0): Promise<void> {
       reject(new Error('Too many redirects while downloading ffmpeg'));
       return;
     }
-    const lib = url.startsWith('https:') ? https : http;
-    const req = lib.get(url, { headers: { 'User-Agent': 'Nightfeed' } }, (res) => {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      reject(new Error('Invalid ffmpeg download URL'));
+      return;
+    }
+    if (parsedUrl.protocol !== 'https:') {
+      reject(new Error('ffmpeg download must use HTTPS'));
+      return;
+    }
+    const req = https.get(url, { headers: { 'User-Agent': 'Nightfeed' }, timeout: 60000 }, (res) => {
       const code = res.statusCode || 0;
       if (code >= 300 && code < 400 && res.headers.location) {
         res.resume();
-        downloadToFile(new URL(res.headers.location, url).toString(), dest, hops + 1).then(resolve, reject);
+        let nextUrl: URL;
+        try {
+          nextUrl = new URL(res.headers.location, url);
+        } catch {
+          reject(new Error('Invalid redirect URL while downloading ffmpeg'));
+          return;
+        }
+        if (nextUrl.protocol !== 'https:') {
+          reject(new Error('Refused insecure HTTP redirect while downloading ffmpeg'));
+          return;
+        }
+        downloadToFile(nextUrl.toString(), dest, hops + 1).then(resolve, reject);
         return;
       }
       if (code !== 200) {
@@ -94,35 +116,41 @@ function downloadToFile(url: string, dest: string, hops = 0): Promise<void> {
         return;
       }
       const file = fs.createWriteStream(dest);
+      res.on('error', (err) => {
+        file.destroy();
+        reject(err);
+      });
       res.pipe(file);
       file.on('finish', () => file.close(() => resolve()));
       file.on('error', reject);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Timeout downloading ffmpeg'));
     });
     req.on('error', reject);
   });
 }
 
 /** Download a Windows ffmpeg build into %AppData%\\Nightfeed\\ffmpeg if none is installed. */
-function ensureBundledProbe(dir: string): void {
+async function ensureBundledProbe(dir: string): Promise<void> {
   const dest = path.join(dir, 'ffprobe.exe');
   if (fs.existsSync(dest)) return;
   const zip = path.join(dir, 'ffmpeg-essentials.zip');
   if (!fs.existsSync(zip)) return;
   const extract = path.join(dir, 'extract');
   try {
-    execFileSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-Command',
-        `Expand-Archive -LiteralPath '${zip.replace(/'/g, "''")}' -DestinationPath '${extract.replace(/'/g, "''")}' -Force`,
-      ],
-      { windowsHide: true, timeout: 180000 }
-    );
+    await extractZipSafely(zip, extract, 180_000);
     const probe = findFile(extract, 'ffprobe.exe');
     if (probe) fs.copyFileSync(probe, dest);
   } catch {
     // probe stays missing; playback still works
+  } finally {
+    try {
+      fs.rmSync(extract, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -130,7 +158,7 @@ export function ensureFfmpeg(explicit?: string): Promise<string | null> {
   const found = detectFfmpeg(explicit);
   if (found) {
     const dir = path.join(app.getPath('userData'), 'ffmpeg');
-    if (found === path.join(dir, 'ffmpeg.exe')) ensureBundledProbe(dir);
+    if (found === path.join(dir, 'ffmpeg.exe')) void ensureBundledProbe(dir);
     return Promise.resolve(found);
   }
   if (process.platform !== 'win32') return Promise.resolve(null);
@@ -140,23 +168,24 @@ export function ensureFfmpeg(explicit?: string): Promise<string | null> {
     const zip = path.join(dir, 'ffmpeg-essentials.zip');
     const extract = path.join(dir, 'extract');
     fs.mkdirSync(dir, { recursive: true });
-    await downloadToFile(FFMPEG_ZIP, zip);
-    execFileSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-Command',
-        `Expand-Archive -LiteralPath '${zip.replace(/'/g, "''")}' -DestinationPath '${extract.replace(/'/g, "''")}' -Force`,
-      ],
-      { windowsHide: true, timeout: 180000 }
-    );
-    const exe = findFile(extract, 'ffmpeg.exe');
-    if (!exe) throw new Error('ffmpeg.exe was not in the download');
-    const dest = path.join(dir, 'ffmpeg.exe');
-    fs.copyFileSync(exe, dest);
-    const probe = findFile(extract, 'ffprobe.exe');
-    if (probe) fs.copyFileSync(probe, path.join(dir, 'ffprobe.exe'));
-    return fs.existsSync(dest) ? dest : null;
+    try {
+      await downloadToFile(FFMPEG_ZIP, zip);
+      await extractZipSafely(zip, extract, 180_000);
+      const exe = findFile(extract, 'ffmpeg.exe');
+      if (!exe) throw new Error('ffmpeg.exe was not in the download');
+      const dest = path.join(dir, 'ffmpeg.exe');
+      fs.copyFileSync(exe, dest);
+      const probe = findFile(extract, 'ffprobe.exe');
+      if (probe) fs.copyFileSync(probe, path.join(dir, 'ffprobe.exe'));
+      return fs.existsSync(dest) ? dest : null;
+    } finally {
+      try {
+        fs.rmSync(extract, { recursive: true, force: true });
+        fs.rmSync(zip, { force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+    }
   })().catch((err) => {
     console.error('[live-tv] ffmpeg install failed', err);
     return null;
@@ -884,7 +913,7 @@ class LiveTvServer {
       return;
     }
     const p = url.pathname.toLowerCase();
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     if (p === '/discover.json') {
       const base = this.baseUrl(req, settings);
       this.json(res, {
@@ -964,7 +993,6 @@ class LiveTvServer {
       res.writeHead(200, {
         'Content-Type': mimeForIcon(disk),
         'Cache-Control': 'public, max-age=3600',
-        'Access-Control-Allow-Origin': '*',
       });
       stream.pipe(res);
       return;

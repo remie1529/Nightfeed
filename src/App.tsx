@@ -198,6 +198,11 @@ export default function App() {
 
   if (!bootReady) return null;
 
+  const activeAddonPage = addonPageKey
+    ? addonPages.find((page) => pageKey(page) === addonPageKey) || null
+    : null;
+  const addonBackLabel = activeAddonPage?.title || 'Addon';
+
   return (
     <div className="app-shell">
       <nav className="nav">
@@ -293,7 +298,7 @@ export default function App() {
         {view === 'show' && selectedId != null && (
           <ShowDetail
             tmdbId={selectedId}
-            backLabel={showBack === 'calendar' ? 'Calendar' : showBack === 'addon' ? 'Upcoming' : 'Library'}
+            backLabel={showBack === 'calendar' ? 'Calendar' : showBack === 'addon' ? addonBackLabel : 'Library'}
             onBack={() => setView(showBack === 'calendar' || showBack === 'addon' ? showBack : 'library')}
             onRemoved={() => {
               setSelectedId(null);
@@ -312,7 +317,7 @@ export default function App() {
         {view === 'movie' && selectedMovieId != null && (
           <MovieDetail
             tmdbId={selectedMovieId}
-            backLabel={movieBack === 'addon' ? 'Upcoming' : 'Movies'}
+            backLabel={movieBack === 'addon' ? addonBackLabel : 'Movies'}
             onBack={() => setView(movieBack === 'addon' ? 'addon' : 'movies')}
             onRemoved={() => {
               setSelectedMovieId(null);
@@ -324,12 +329,12 @@ export default function App() {
         {view === 'downloads' && <Downloads />}
         {view === 'requests' && <Requests refreshToken={requestsKey} />}
         {view === 'addons' && <Addons />}
-        {view === 'addon' && addonPageKey && (
+        {view === 'addon' && activeAddonPage && (
           <AddonPageView
-            addonId={addonPages.find((page) => pageKey(page) === addonPageKey)?.addonId || ''}
-            pageId={addonPages.find((page) => pageKey(page) === addonPageKey)?.pageId || ''}
-            title={addonPages.find((page) => pageKey(page) === addonPageKey)?.title || 'Addon'}
-            rev={addonPages.find((page) => pageKey(page) === addonPageKey)?.rev || 0}
+            addonId={activeAddonPage.addonId}
+            pageId={activeAddonPage.pageId}
+            title={activeAddonPage.title || 'Addon'}
+            rev={activeAddonPage.rev || 0}
           />
         )}
         {view === 'livetv' && liveTvOn && <LiveTvView />}

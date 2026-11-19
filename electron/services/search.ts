@@ -1761,13 +1761,18 @@ export async function searchEpisodeTorrents(
   const errors: string[] = [];
   const groups: SearchResult[][] = [];
 
+  const redactKey = (msg: string) => {
+    const key = (settings.jackettApiKey || '').trim();
+    return key ? msg.split(key).join('[redacted]') : msg;
+  };
+
   const run = (label: string, fn: () => Promise<SearchResult[]>) =>
     fn()
       .then((r) => {
         groups.push(r);
       })
       .catch((err) => {
-        errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+        errors.push(`${label}: ${redactKey(err instanceof Error ? err.message : String(err))}`);
       });
 
   const runners: Array<Promise<void>> = [];
@@ -1892,13 +1897,18 @@ export async function searchMovieTorrents(
   const errors: string[] = [];
   const groups: SearchResult[][] = [];
 
+  const redactKey = (msg: string) => {
+    const key = (settings.jackettApiKey || '').trim();
+    return key ? msg.split(key).join('[redacted]') : msg;
+  };
+
   const run = (label: string, fn: () => Promise<SearchResult[]>) =>
     fn()
       .then((r) => {
         groups.push(r);
       })
       .catch((err) => {
-        errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+        errors.push(`${label}: ${redactKey(err instanceof Error ? err.message : String(err))}`);
       });
 
   const runners: Array<Promise<void>> = [];

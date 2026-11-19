@@ -274,7 +274,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
   if (icon) {
@@ -313,8 +313,30 @@ function createWindow() {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        void shell.openExternal(url);
+      }
+    } catch {
+      // ignore invalid URLs
+    }
     return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, navUrl) => {
+    try {
+      const target = new URL(navUrl);
+      if (process.env.VITE_DEV_SERVER_URL) {
+        const devOrigin = new URL(process.env.VITE_DEV_SERVER_URL).origin;
+        if (target.origin === devOrigin) return;
+      } else if (target.protocol === 'file:') {
+        return;
+      }
+    } catch {
+      // fall through and block
+    }
+    event.preventDefault();
   });
 }
 
@@ -4229,10 +4251,10 @@ function registerIpc() {
     activityLog.info('livetv', 'Refreshing Live TV sources');
     const r = await liveTv.refreshSources();
     activityLog.info('livetv', 'Live TV sources refreshed');
-    return r;
+    return r.map(withLogoPreview);
   });
   ipcMain.handle('liveTv:setChannels', (_e, channels: LiveTvChannel[]) => {
-    if (!Array.isArray(channels)) return getLiveTvLineup();
+    if (!Array.isArray(channels)) return getLiveTvLineup().map(withLogoPreview);
     activityLog.info('livetv', `Saving Live TV lineup (${channels.length} channel(s))`);
     setLiveTvLineup(
       channels.map((c, i) => ({
@@ -4252,7 +4274,7 @@ function registerIpc() {
         showTmdbId: c.showTmdbId != null ? Number(c.showTmdbId) : null,
       }))
     );
-    return getLiveTvLineup();
+    return getLiveTvLineup().map(withLogoPreview);
   });
   ipcMain.handle('liveTv:epgOptions', () => liveTv.epgOptions());
   ipcMain.handle('liveTv:setIcon', (_e, channelId: string, filePath: string) => {

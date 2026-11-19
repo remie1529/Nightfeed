@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface CatalogAddon {
   id: string;
@@ -49,6 +49,7 @@ export function AddonPageView({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const src = `nfaddon://page/?addon=${encodeURIComponent(addonId)}&page=${encodeURIComponent(pageId)}&rev=${rev}`;
   useEffect(() => {
+    let cancelled = false;
     const onMessage = async (event: MessageEvent) => {
       if (event.source !== frameRef.current?.contentWindow) return;
       const data = event.data as { source?: string; id?: number; action?: string; payload?: unknown };
@@ -59,10 +60,14 @@ export function AddonPageView({
       } catch (err) {
         result = { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
+      if (cancelled) return;
       frameRef.current?.contentWindow?.postMessage({ source: 'nf-addon-result', id: data.id, result }, '*');
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('message', onMessage);
+    };
   }, [addonId, pageId]);
   return (
     <div className="page page-wide addon-page-view">
@@ -82,7 +87,9 @@ export default function Addons() {
   const [catalog, setCatalog] = useState<CatalogAddon[]>([]);
   const [installed, setInstalled] = useState<InstalledAddon[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busyKeys, setBusyKeys] = useState<Set<string>>(() => new Set());
+  const isBusy = (key: string) => busyKeys.has(key);
+  const anyBusy = busyKeys.size > 0;
 
   const refresh = useCallback(async () => {
     const [store, local] = await Promise.all([
@@ -103,7 +110,7 @@ export default function Addons() {
   }, [refresh]);
 
   const run = async (key: string, work: () => Promise<unknown>) => {
-    setBusy(key);
+    setBusyKeys((prev) => new Set(prev).add(key));
     setError(null);
     try {
       await work();
@@ -111,11 +118,22 @@ export default function Addons() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(null);
+      setBusyKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   };
 
-  const installedById = new Map(installed.map((item) => [item.id, item]));
+  const installedById = useMemo(
+    () => new Map(installed.map((item) => [item.id, item])),
+    [installed]
+  );
+  const catalogById = useMemo(
+    () => new Map(catalog.map((item) => [item.id, item])),
+    [catalog]
+  );
 
   return (
     <div className="page page-wide">
@@ -135,21 +153,15 @@ export default function Addons() {
           >
             Installed
           </button>
-          <button type="button" disabled={busy !== null} onClick={() => void run('file', () => window.torrentAPI.installAddonFile())}>
-            {busy === 'file' ? 'Installing…' : 'Install from file'}
+          <button type="button" disabled={anyBusy} onClick={() => void run('file', () => window.torrentAPI.installAddonFile())}>
+            {isBusy('file') ? 'Installing…' : 'Install from file'}
           </button>
           <button
             type="button"
-            disabled={busy !== null}
-            onClick={() => {
-              setBusy('refresh');
-              setError(null);
-              refresh()
-                .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-                .finally(() => setBusy(null));
-            }}
+            disabled={anyBusy}
+            onClick={() => void run('refresh', () => Promise.resolve())}
           >
-            {busy === 'refresh' ? 'Checking…' : 'Refresh'}
+            {isBusy('refresh') ? 'Checking…' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -180,10 +192,10 @@ export default function Addons() {
                 <button
                   type="button"
                   className="primary"
-                  disabled={(!!current && !newer) || busy === item.id}
+                  disabled={(!!current && !newer) || isBusy(item.id)}
                   onClick={() => void run(item.id, () => window.torrentAPI.installStoreAddon(item.id))}
                 >
-                  {busy === item.id ? (newer ? 'Updating…' : 'Installing…') : newer ? 'Update' : current ? 'Installed' : 'Install'}
+                  {isBusy(item.id) ? (newer ? 'Updating…' : 'Installing…') : newer ? 'Update' : current ? 'Installed' : 'Install'}
                 </button>
               </article>
             );
@@ -212,8 +224,9 @@ export default function Addons() {
                 </thead>
                 <tbody>
                   {installed.map((item) => {
-                    const storeItem = catalog.find((entry) => entry.id === item.id);
+                    const storeItem = catalogById.get(item.id);
                     const newer = !!storeItem && compareVersions(storeItem.version, item.version) > 0;
+                    const rowBusy = isBusy(item.id) || isBusy(`en-${item.id}`) || isBusy(`rm-${item.id}`);
                     return (
                       <tr key={item.id}>
                         <td>
@@ -231,6 +244,7 @@ export default function Addons() {
                           <input
                             type="checkbox"
                             checked={item.enabled}
+                            disabled={rowBusy}
                             onChange={(e) =>
                               void run(`en-${item.id}`, () =>
                                 window.torrentAPI.setAddonEnabled(item.id, e.target.checked)
@@ -243,16 +257,16 @@ export default function Addons() {
                             <button
                               type="button"
                               className="primary"
-                              disabled={busy === item.id}
+                              disabled={rowBusy}
                               onClick={() => void run(item.id, () => window.torrentAPI.installStoreAddon(item.id))}
                             >
-                              {busy === item.id ? 'Updating…' : 'Update'}
+                              {isBusy(item.id) ? 'Updating…' : 'Update'}
                             </button>
                           )}
                           <button
                             type="button"
                             className="danger"
-                            disabled={busy === `rm-${item.id}`}
+                            disabled={rowBusy}
                             onClick={() => void run(`rm-${item.id}`, () => window.torrentAPI.removeAddon(item.id))}
                           >
                             Remove

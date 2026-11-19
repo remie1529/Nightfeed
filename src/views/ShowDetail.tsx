@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Poster from '../components/Poster';
 import StatusBadge from '../components/StatusBadge';
 import TrailerButton from '../components/TrailerButton';
@@ -49,10 +49,15 @@ export default function ShowDetail({
   const [starting, setStarting] = useState<string | null>(null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [seasonBusy, setSeasonBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const loadGenRef = useRef(0);
 
-  const load = async () => {
+  const load = async (resetSeason = false) => {
+    const gen = ++loadGenRef.current;
     const stored = (await window.torrentAPI.getShow(tmdbId)) as Show | null;
+    if (gen !== loadGenRef.current) return;
     const s = stored || ((await window.torrentAPI.previewShow(tmdbId)) as Show);
+    if (gen !== loadGenRef.current) return;
     setTracked(!!stored);
     setShow(s);
     if (s && s.seasons.length) {
@@ -60,7 +65,13 @@ export default function ShowDetail({
         (best, cur) => (cur.seasonNumber > best.seasonNumber ? cur : best),
         s.seasons[0]
       );
-      setSeason((prev) => prev ?? latest.seasonNumber);
+      setSeason((prev) =>
+        resetSeason || prev == null || !s.seasons.some((x) => x.seasonNumber === prev)
+          ? latest.seasonNumber
+          : prev
+      );
+    } else {
+      setSeason(null);
     }
   };
 
@@ -78,7 +89,16 @@ export default function ShowDetail({
   };
 
   useEffect(() => {
-    load().catch((e) => setError(e.message || String(e)));
+    setShow(null);
+    setSeason(null);
+    setSearchEp(null);
+    setResults([]);
+    setSearchQuery('');
+    setError(null);
+    load(true).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      loadGenRef.current += 1;
+    };
   }, [tmdbId]);
 
   const currentSeason = useMemo(
@@ -104,8 +124,13 @@ export default function ShowDetail({
   };
 
   const updateShow = async (partial: Partial<Show>) => {
-    const s = (await window.torrentAPI.updateShow(tmdbId, partial)) as Show;
-    setShow({ ...show!, ...s, seasons: show!.seasons });
+    setError(null);
+    try {
+      const s = (await window.torrentAPI.updateShow(tmdbId, partial)) as Show | null;
+      if (s) setShow((prev) => (prev ? { ...prev, ...s, seasons: prev.seasons } : s));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const pickPath = async () => {
@@ -158,6 +183,7 @@ export default function ShowDetail({
     setResults([]);
     setSearchQuery('');
     setSearching(true);
+    setError(null);
     try {
       const res = (await window.torrentAPI.searchTorrents(
         tmdbId,
@@ -166,8 +192,10 @@ export default function ShowDetail({
       )) as { results: SearchResult[]; query: string; error?: string };
       setResults(res.results || []);
       setSearchQuery(res.query || '');
-    } catch {
+      if (res.error && !(res.results || []).length) setError(res.error);
+    } catch (e) {
       setResults([]);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSearching(false);
     }
@@ -176,6 +204,7 @@ export default function ShowDetail({
   const startDownload = async (result: SearchResult) => {
     if (!searchEp) return;
     setStarting(result.magnet);
+    setError(null);
     try {
       await window.torrentAPI.startDownload({
         tmdbId,
@@ -192,16 +221,27 @@ export default function ShowDetail({
       });
       setSearchEp(null);
       await refresh();
-    } catch {
-      // Download failures are written to the Log by the main process.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStarting(null);
     }
   };
 
   const remove = async () => {
-    await window.torrentAPI.removeShow(tmdbId);
-    onRemoved();
+    if (removing) return;
+    if (!window.confirm(`Remove "${show?.name || 'this show'}" from Nightfeed? Downloaded video files on disk are kept.`)) {
+      return;
+    }
+    setRemoving(true);
+    setError(null);
+    try {
+      await window.torrentAPI.removeShow(tmdbId);
+      onRemoved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setRemoving(false);
+    }
   };
 
   if (!show) {

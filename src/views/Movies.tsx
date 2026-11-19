@@ -127,6 +127,8 @@ export default function Movies({
     }
   };
 
+  const trackedIds = useMemo(() => new Set(movies.map((m) => m.tmdbId)), [movies]);
+
   return (
     <div className="page">
       <div className="page-header">
@@ -187,17 +189,22 @@ export default function Movies({
                   </td>
                   <td className="mono">{r.releaseYear || '—'}</td>
                   <td style={{ textAlign: 'right' }}>
-                    <button
-                      className="primary"
-                      disabled={busyId === r.id || movies.some((m) => m.tmdbId === r.id)}
-                      onClick={() => addMovie(r.id)}
-                    >
-                      {movies.some((m) => m.tmdbId === r.id)
-                        ? 'Added'
-                        : busyId === r.id
-                          ? 'Adding…'
-                          : 'Add'}
-                    </button>
+                    {(() => {
+                      const alreadyTracked = trackedIds.has(r.id);
+                      return (
+                        <button
+                          className="primary"
+                          disabled={busyId === r.id || alreadyTracked}
+                          onClick={() => addMovie(r.id)}
+                        >
+                          {alreadyTracked
+                            ? 'Added'
+                            : busyId === r.id
+                              ? 'Adding…'
+                              : 'Add'}
+                        </button>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}
@@ -295,9 +302,11 @@ export default function Movies({
         </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state">
-          <h2>No movies yet</h2>
+          <h2>{movies.length > 0 ? 'No matching movies' : 'No movies yet'}</h2>
           <p>
-            Search IMDb above to add a movie. Set a movie library folder in Settings first (separate from TV).
+            {movies.length > 0
+              ? 'No movies match your current filter.'
+              : 'Search IMDb above to add a movie. Set a movie library folder in Settings first (separate from TV).'}
           </p>
         </div>
       ) : (

@@ -1,6 +1,18 @@
 # Nightfeed status
 
-**Current:** v2.4.44 — Worker-pool reliability, Live TV streaming/XMLTV fixes, MCP shutdown fix, and search/manual-torrent improvements.
+**Current:** v2.4.45 — Security hardening (renderer sandbox, Web Portal, safe zip extraction, secret redaction) and UI performance, leak, and UX fixes.
+
+# Status v2.4.45
+
+## Security
+- Electron renderer `sandbox: true`, `http:`/`https:`-only external links, and `will-navigate` protection
+- Web Portal hardened: XSS fix, URL/input caps, async `scrypt` login, rate limiting, CSRF tokens + origin checks, security headers/CSP, request isolation, and serialized restart/stop
+- Safe Zip-Slip-checked extraction for addons and Live TV ffmpeg, stricter addon manifest/symlink/command isolation, no HTTPS→HTTP downgrade, and full Telegram/Jackett secret redaction
+
+## Improved & Fixed
+- Root Error Boundary, bounded poster cache without double-fetches, and broken-image fallback
+- Live TV table pagination, O(N) bulk toggles, smooth channel-number editing, serialized saves, and preserved custom logo previews
+- Cleaned up listener/timer leaks, debounced log reloads, stale-response guards across detail/calendar/trailer/downloads views, and UX polish in Addons, Movies, and Folder Scan Import
 
 # Status v2.4.44
 
