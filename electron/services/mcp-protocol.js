@@ -68,7 +68,8 @@ async function dispatchMcp(message, tools) {
     }
     try {
       const data = await tool.run(params.arguments || {});
-      const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      const raw = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      const text = raw == null ? '' : raw;
       return {
         result: {
           content: [{ type: 'text', text: text.slice(0, 100000) }],
@@ -90,6 +91,10 @@ async function dispatchMcp(message, tools) {
 }
 
 function rpcBody(message, outcome) {
+  if (!message || typeof message !== 'object') {
+    if (outcome.error) return { jsonrpc: '2.0', id: null, error: outcome.error };
+    return null;
+  }
   if (outcome.notification || !Object.prototype.hasOwnProperty.call(message, 'id')) return null;
   if (outcome.error) {
     return { jsonrpc: '2.0', id: message.id, error: outcome.error };
@@ -97,8 +102,13 @@ function rpcBody(message, outcome) {
   return { jsonrpc: '2.0', id: message.id, result: outcome.result };
 }
 
+const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_BATCH_SIZE = 50;
+const MAX_SESSIONS = 200;
+
 function createMcpHttpServer(options) {
   const sessions = new Set();
+  const sseClients = new Set();
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -126,6 +136,10 @@ function createMcpHttpServer(options) {
           connection: 'keep-alive',
         });
         res.write(': nightfeed\n\n');
+        sseClients.add(res);
+        const drop = () => sseClients.delete(res);
+        req.once('close', drop);
+        res.once('close', drop);
         return;
       }
       if (req.method !== 'POST') {
@@ -133,12 +147,25 @@ function createMcpHttpServer(options) {
         return;
       }
       const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
+      let totalBytes = 0;
+      for await (const chunk of req) {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_BODY_BYTES) {
+          json(res, 413, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request body too large' } });
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      }
       let payload;
       try {
         payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null');
       } catch {
         json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+        return;
+      }
+      if (Array.isArray(payload) && payload.length > MAX_BATCH_SIZE) {
+        json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Batch too large' } });
         return;
       }
       const list = Array.isArray(payload) ? payload : [payload];
@@ -147,9 +174,13 @@ function createMcpHttpServer(options) {
       let newSession = '';
       for (const message of list) {
         const outcome = await dispatchMcp(message, tools);
-        if (message && message.method === 'initialize') {
+        if (message && typeof message === 'object' && message.method === 'initialize') {
           newSession = crypto.randomBytes(16).toString('hex');
           sessions.add(newSession);
+          if (sessions.size > MAX_SESSIONS) {
+            const oldest = sessions.values().next().value;
+            if (oldest !== undefined) sessions.delete(oldest);
+          }
         }
         const body = rpcBody(message, outcome);
         if (body) replies.push(body);
@@ -180,7 +211,24 @@ function createMcpHttpServer(options) {
       });
     },
     close() {
-      return new Promise((resolve) => server.close(() => resolve()));
+      for (const client of sseClients) {
+        try {
+          client.end();
+        } catch {
+          // ignore
+        }
+      }
+      sseClients.clear();
+      return new Promise((resolve) => {
+        server.close(() => resolve());
+        if (typeof server.closeAllConnections === 'function') {
+          try {
+            server.closeAllConnections();
+          } catch {
+            // ignore
+          }
+        }
+      });
     },
   };
 }

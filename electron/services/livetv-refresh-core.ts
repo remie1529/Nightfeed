@@ -25,17 +25,27 @@ function channelId(url: string): string {
   return crypto.createHash('sha1').update(url).digest('hex').slice(0, 12);
 }
 
-function isAdult(ch: { group?: string; name?: string }): boolean {
+export function isAdult(ch: { group?: string; name?: string }): boolean {
   return ADULT_RE.test(`${ch.group || ''} ${ch.name || ''}`);
 }
 
-function fetchText(url: string, ua: string, timeoutMs = 25000): Promise<string> {
+const MAX_REDIRECTS = 6;
+
+function fetchText(url: string, ua: string, timeoutMs = 25000, redirects = 0): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (redirects > MAX_REDIRECTS) {
+      reject(new Error('Too many redirects'));
+      return;
+    }
     let u: URL;
     try {
       u = new URL(url);
     } catch {
       reject(new Error('Bad URL'));
+      return;
+    }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      reject(new Error('Unsupported URL protocol'));
       return;
     }
     const lib = u.protocol === 'https:' ? https : http;
@@ -51,9 +61,16 @@ function fetchText(url: string, ua: string, timeoutMs = 25000): Promise<string> 
       (res) => {
         const code = res.statusCode || 0;
         if (code >= 300 && code < 400 && res.headers.location) {
-          const next = new URL(res.headers.location, url).toString();
+          let next: string;
+          try {
+            next = new URL(res.headers.location, url).toString();
+          } catch {
+            res.resume();
+            reject(new Error('Bad redirect URL'));
+            return;
+          }
           res.resume();
-          fetchText(next, ua, timeoutMs).then(resolve, reject);
+          fetchText(next, ua, timeoutMs, redirects + 1).then(resolve, reject);
           return;
         }
         const chunks: Buffer[] = [];
@@ -71,6 +88,7 @@ function fetchText(url: string, ua: string, timeoutMs = 25000): Promise<string> 
           if (code >= 400) reject(new Error(`HTTP ${code}`));
           else resolve(Buffer.concat(chunks).toString('utf8'));
         });
+        res.on('error', reject);
       }
     );
     req.on('error', reject);
@@ -82,7 +100,7 @@ function fetchText(url: string, ua: string, timeoutMs = 25000): Promise<string> 
   });
 }
 
-function parseM3u(text: string): LiveTvChannel[] {
+export function parseM3u(text: string): LiveTvChannel[] {
   const lines = text.split(/\r?\n/);
   const out: LiveTvChannel[] = [];
   let meta: { name: string; group: string; logo: string; tvgId: string } | null = null;
@@ -197,8 +215,8 @@ async function fetchXtream(s: AppSettings, ua: string): Promise<LiveTvChannel[]>
   if (!Array.isArray(streams)) throw new Error('Xtream live list was not an array');
   const ext = s.liveTvXtreamHls ? 'm3u8' : 'ts';
   return streams.map((st: Record<string, unknown>, i: number) => {
-    const id = String(st.stream_id || '');
-    const url = `${base}/live/${s.liveTvXtreamUsername}/${s.liveTvXtreamPassword}/${id}.${ext}`;
+    const id = encodeURIComponent(String(st.stream_id || ''));
+    const url = `${base}/live/${user}/${pass}/${id}.${ext}`;
     return {
       id: channelId(url),
       name: String(st.name || `Stream ${id}`),
@@ -219,6 +237,9 @@ export async function refreshLiveTvCore(input: LiveTvRefreshInput): Promise<Live
 
   if (s.liveTvSourceType === 'direct' && (s.liveTvDirectUrl || '').trim()) {
     const url = s.liveTvDirectUrl.trim();
+    if (!/^https?:\/\//i.test(url.split('|')[0])) {
+      throw new Error('Direct Live TV URL must start with http:// or https://');
+    }
     incoming = [
       {
         id: channelId(url),
@@ -254,8 +275,8 @@ export async function refreshLiveTvCore(input: LiveTvRefreshInput): Promise<Live
   }
   if (xmlUrl) {
     try {
-      const xml = await fetchText(xmlUrl, ua, 60000);
-      xmltv = xml.length > 8_000_000 ? '' : xml;
+      // Keep full XMLTV in memory even when > 8 MB; live-tv.ts skips disk cache for large guides.
+      xmltv = await fetchText(xmlUrl, ua, 60000);
     } catch {
       xmltv = undefined;
     }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.4.44
+
+### Fixed
+- Background worker pools no longer hang on worker crashes, no longer permanently disable themselves on normal operational errors, and all pools terminate cleanly on quit
+- Live TV streaming fixes: realtime pacing and backpressure on library channels, async codec probing (no main-thread freeze between episodes), upstream socket/buffer cleanup on disconnect, crash-safe HTTP handling, redirect caps, and preserving >8 MB XMLTV guides in memory
+- MCP server now closes open SSE streams on shutdown instead of deadlocking stop/restart, and handles empty/null payloads and strict numeric/magnet validation cleanly
+- Search timeouts now cover slow response bodies, year-titled movies (such as Blade Runner 2049 and 1917) are no longer falsely rejected, junk releases are filtered out of quality/upgrade lists, and manual torrent show/movie guessing handles episode titles and year-titled films
+- Quit now flushes buffered logs and pending download state without respawning workers, music requests skip IMDb poster lookups, and concurrent request approvals are deduplicated
+
 ## 2.4.43
 
 ### Fixed

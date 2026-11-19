@@ -131,6 +131,10 @@ async function ensureWorker(): Promise<void> {
         }
         // Allow re-init on next job
         initPromise = null;
+        for (const [id, p] of pending) {
+          pending.delete(id);
+          p.reject(new Error(`Library worker exited (${code})`));
+        }
       });
       const deadline = Date.now() + 8000;
       while (Date.now() < deadline) {

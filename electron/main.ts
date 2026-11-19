@@ -100,8 +100,10 @@ import {
   webPortal,
 } from './services/web-portal';
 import { uploadFinishedFile } from './services/ftp';
-import { uploadViaPool } from './services/ftp-pool';
-import { writeBackupJsonViaPool, readBackupJsonViaPool } from './services/backup-pool';
+import { uploadViaPool, destroyFtpPool } from './services/ftp-pool';
+import { writeBackupJsonViaPool, readBackupJsonViaPool, destroyBackupPool } from './services/backup-pool';
+import { destroyLiveTvPool } from './services/livetv-pool';
+import { destroyTelegramSendPool } from './services/telegram-send-pool';
 import { vpnManager } from './services/vpn';
 import { ensureFfmpeg, liveTv, withLogoPreview } from './services/live-tv';
 import { nightfeedMcp } from './services/mcp';
@@ -169,13 +171,15 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+let singleInstanceAllowed = true;
 if (!isCrashWatchdogArg()) {
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
+    singleInstanceAllowed = false;
     app.quit();
   } else {
     app.on('second-instance', () => {
-      if (!mainWindow) return;
+      if (!mainWindow || mainWindow.isDestroyed()) return;
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
@@ -287,13 +291,18 @@ function createWindow() {
   }
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+  });
+  mainWindow.on('closed', () => {
+    mainWindow = null;
   });
   mainWindow.webContents.on('did-finish-load', () => {
-    if (uiBackendReady) mainWindow?.webContents.send('app:ready');
+    if (uiBackendReady && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:ready');
+    }
   });
   setTimeout(() => {
-    if (mainWindow && !mainWindow.isVisible()) mainWindow.show();
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
   }, 4000);
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -356,6 +365,21 @@ function persistDownloadsDebounced(items: DownloadItem[], force = false): void {
   }
   if (!persistDownloadsTimer) {
     persistDownloadsTimer = setTimeout(flush, 15000);
+  }
+}
+
+function flushDownloadsSyncOnQuit(): void {
+  if (persistDownloadsTimer) {
+    clearTimeout(persistDownloadsTimer);
+    persistDownloadsTimer = null;
+  }
+  const snapshot = pendingPersistItems;
+  pendingPersistItems = null;
+  if (!snapshot) return;
+  try {
+    saveDownloads(slimDownloadsForStore(snapshot));
+  } catch (err) {
+    console.error('[downloads] sync quit persist failed', err);
   }
 }
 
@@ -1771,6 +1795,7 @@ function emitRequestsChanged() {
 /** Resolve poster for a request from library or TVMaze/IMDb; persist if found. */
 async function resolveRequestPoster(req: TelegramRequest): Promise<string | null> {
   if ((req.posterUrl || '').trim()) return req.posterUrl || null;
+  if (req.mediaType === 'music') return null;
   try {
     if (req.mediaType === 'show') {
       const inLib = getShows().find((s) => s.tmdbId === req.mediaId);
@@ -2951,7 +2976,25 @@ async function submitPendingMediaRequest(input: {
   };
 }
 
+const resolvingRequestIds = new Set<string>();
+
 async function resolveTelegramRequest(
+  id: string,
+  action: 'approved' | 'denied',
+  adminChatId: number
+): Promise<{ ok: boolean; message: string }> {
+  if (resolvingRequestIds.has(id)) {
+    return { ok: false, message: `Request ${id} is already being processed.` };
+  }
+  resolvingRequestIds.add(id);
+  try {
+    return await resolveTelegramRequestInner(id, action, adminChatId);
+  } finally {
+    resolvingRequestIds.delete(id);
+  }
+}
+
+async function resolveTelegramRequestInner(
   id: string,
   action: 'approved' | 'denied',
   adminChatId: number
@@ -4611,6 +4654,7 @@ function buildMcpApi() {
 }
 
 app.whenReady().then(async () => {
+  if (!singleInstanceAllowed) return;
   if (isCrashWatchdogArg()) {
     runCrashWatchdog();
     app.exit(0);
@@ -5023,6 +5067,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  flushDownloadsSyncOnQuit();
   activityLog.info('app', 'Nightfeed quitting');
   activityLog.destroy();
   clearSessionLock();
@@ -5030,6 +5075,7 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    flushDownloadsSyncOnQuit();
     clearSessionLock();
     telegramBot.stop();
     webPortal.stop();
@@ -5041,6 +5087,10 @@ app.on('window-all-closed', () => {
     void destroyMetadataPool();
     void destroyLibraryPool();
     void destroyHuntPool();
+    void destroyBackupPool();
+    void destroyFtpPool();
+    void destroyLiveTvPool();
+    void destroyTelegramSendPool();
     app.quit();
   }
 });

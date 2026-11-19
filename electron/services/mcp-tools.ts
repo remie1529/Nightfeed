@@ -54,9 +54,22 @@ export interface NightfeedMcpApi {
 }
 
 function num(value: unknown, name: string): number {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
+    throw new Error(`${name} must be a number`);
+  }
   const n = Number(value);
   if (!Number.isFinite(n)) throw new Error(`${name} must be a number`);
   return n;
+}
+
+function optionalMagnet(value: unknown): string | undefined {
+  if (value == null || value === '') return undefined;
+  const s = String(value).trim();
+  if (!s) return undefined;
+  if (!s.toLowerCase().startsWith('magnet:')) {
+    throw new Error('magnet must start with magnet:');
+  }
+  return s;
 }
 
 function text(value: unknown, name: string): string {
@@ -183,7 +196,7 @@ export function createNightfeedTools(api: NightfeedMcpApi): McpTool[] {
         mazeId: num(args.mazeId, 'mazeId'),
         season: num(args.season, 'season'),
         episode: num(args.episode, 'episode'),
-        magnet: args.magnet ? String(args.magnet) : undefined,
+        magnet: optionalMagnet(args.magnet),
         ignoreMinSize: args.ignoreMinSize === true,
       }),
     },
@@ -257,7 +270,7 @@ export function createNightfeedTools(api: NightfeedMcpApi): McpTool[] {
       },
       run: (args) => api.downloadMovie({
         id: num(args.id, 'id'),
-        magnet: args.magnet ? String(args.magnet) : undefined,
+        magnet: optionalMagnet(args.magnet),
         ignoreMinSize: args.ignoreMinSize === true,
       }),
     },

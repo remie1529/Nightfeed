@@ -85,6 +85,8 @@ class NightfeedMcp {
       this.port = actual;
       this.writeBridge(settings, actual);
     } catch (err) {
+      this.server = null;
+      this.port = 0;
       this.lastError = err instanceof Error ? err.message : String(err);
       try {
         await server.close();
@@ -109,7 +111,7 @@ class NightfeedMcp {
     fs.writeFileSync(bridgePath, protocol.BRIDGE_SOURCE, 'utf8');
     const config = {
       url: `http://127.0.0.1:${port}/mcp`,
-      token: settings.mcpToken,
+      token: (settings.mcpToken || '').trim(),
     };
     fs.writeFileSync(path.join(dir, 'mcp.json'), JSON.stringify(config, null, 2), 'utf8');
   }

@@ -111,6 +111,10 @@ async function ensureWorker(): Promise<void> {
           noteMode(false);
         }
         initPromise = null;
+        for (const [id, p] of pending) {
+          pending.delete(id);
+          p.reject(new Error(`Hunt worker exited (${code})`));
+        }
       });
       const deadline = Date.now() + 8000;
       while (Date.now() < deadline) {
@@ -168,7 +172,11 @@ export async function huntShowsViaPool(
   if (!useWorker || !worker || !ready) {
     noteMode(false);
     const result = await huntShowsCore(input);
-    return { ...result, usedWorker: false };
+    return {
+      intents: result.intents || [],
+      logs: input.onLog ? [] : result.logs || [],
+      usedWorker: false,
+    };
   }
   try {
     let streamed = false;
@@ -199,7 +207,11 @@ export async function huntShowsViaPool(
     useWorker = false;
     noteMode(false);
     const result = await huntShowsCore(input);
-    return { ...result, usedWorker: false };
+    return {
+      intents: result.intents || [],
+      logs: input.onLog ? [] : result.logs || [],
+      usedWorker: false,
+    };
   }
 }
 
@@ -210,7 +222,11 @@ export async function huntMoviesViaPool(
   if (!useWorker || !worker || !ready) {
     noteMode(false);
     const result = await huntMoviesCore(input);
-    return { ...result, usedWorker: false };
+    return {
+      intents: result.intents || [],
+      logs: input.onLog ? [] : result.logs || [],
+      usedWorker: false,
+    };
   }
   try {
     let streamed = false;
@@ -240,7 +256,11 @@ export async function huntMoviesViaPool(
     useWorker = false;
     noteMode(false);
     const result = await huntMoviesCore(input);
-    return { ...result, usedWorker: false };
+    return {
+      intents: result.intents || [],
+      logs: input.onLog ? [] : result.logs || [],
+      usedWorker: false,
+    };
   }
 }
 

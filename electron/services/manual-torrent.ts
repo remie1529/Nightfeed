@@ -59,6 +59,7 @@ export type ManualTorrentMatch =
   | { kind: 'lookup-show'; title: string; season: number; episode: number }
   | { kind: 'lookup-movie'; title: string; year: number | null };
 
+const QUALITY_CUT = /\b(?:720|1080|2160)p\b|\b(?:bluray|blu-ray|web[- ]?dl|webrip|hdtv|dvdrip|brrip|hdrip|remux|x264|x265|h264|h265|hevc)\b/i;
 const RELEASE_CUT = /\b(?:19|20)\d{2}\b|\b(?:720|1080|2160)p\b|\b(?:bluray|blu-ray|web[- ]?dl|webrip|hdtv|dvdrip|brrip|hdrip)\b/i;
 
 function cleanTorrentText(name: string): string {
@@ -74,17 +75,28 @@ export function movieGuessFromTorrentName(name: string): { title: string; year: 
   let text = cleanTorrentText(name);
   let year: number | null = null;
   const paren = text.match(/\((19|20)\d{2}\)/);
-  if (paren) {
+  if (paren && paren.index != null) {
     year = Number(paren[0].slice(1, 5));
-    text = text.replace(paren[0], ' ').replace(/\s+/g, ' ').trim();
-  }
-  const cut = text.search(RELEASE_CUT);
-  if (cut > 0) {
-    if (year == null) {
-      const found = text.slice(cut).match(/\b((?:19|20)\d{2})\b/);
-      if (found) year = Number(found[1]);
+    // Keep everything before "(YYYY)" so titles like "Blade Runner 2049 (2017)" keep "2049".
+    if (paren.index > 0) {
+      text = text.slice(0, paren.index).trim();
+    } else {
+      text = text.replace(paren[0], ' ').replace(/\s+/g, ' ').trim();
     }
-    text = text.slice(0, cut).trim();
+    const qCut = text.search(QUALITY_CUT);
+    if (qCut > 0) text = text.slice(0, qCut).trim();
+  } else {
+    const qCut = text.search(QUALITY_CUT);
+    const head = qCut > 0 ? text.slice(0, qCut).trim() : text;
+    const yearMatches = Array.from(head.matchAll(/\b((?:19|20)\d{2})\b/g));
+    // Use the last year token (for "Blade Runner 2049 2017" -> year 2017, title "Blade Runner 2049").
+    const lastYear = yearMatches.length ? yearMatches[yearMatches.length - 1] : null;
+    if (lastYear && lastYear.index != null && lastYear.index > 0) {
+      year = Number(lastYear[1]);
+      text = head.slice(0, lastYear.index).trim();
+    } else {
+      text = head;
+    }
   }
   text = text.replace(/[\s\-–_:]+$/g, '').trim();
   return { title: text, year };
@@ -92,10 +104,14 @@ export function movieGuessFromTorrentName(name: string): { title: string; year: 
 
 export function showGuessFromTorrentName(name: string): string {
   let text = cleanTorrentText(name);
-  text = text.replace(/\bS\d{1,2}E\d{1,3}\b/ig, ' ');
-  text = text.replace(/\b\d{1,2}x\d{1,3}\b/ig, ' ');
-  const cut = text.search(RELEASE_CUT);
-  if (cut > 0) text = text.slice(0, cut);
+  const tagIdx = text.search(/\b(?:S\d{1,2}E\d{1,3}|\d{1,2}x\d{1,3})\b/i);
+  if (tagIdx > 0) {
+    text = text.slice(0, tagIdx);
+  } else {
+    text = text.replace(/\bS\d{1,2}E\d{1,3}\b/ig, ' ').replace(/\b\d{1,2}x\d{1,3}\b/ig, ' ');
+    const cut = text.search(RELEASE_CUT);
+    if (cut > 0) text = text.slice(0, cut);
+  }
   return text.replace(/[\s\-–_:()]+$/g, '').replace(/\s+/g, ' ').trim();
 }
 

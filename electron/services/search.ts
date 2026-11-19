@@ -113,9 +113,9 @@ export function isJunkRelease(title: string): boolean {
   );
 }
 
-function isMultiEpisodePack(title: string): boolean {
+export function isMultiEpisodePack(title: string): boolean {
   const t = (title || '').replace(/[._]/g, ' ');
-  if (/s\d{2}e\d{2}\s*[-–to]+\s*(s\d{2}e)?\d{2}/i.test(t)) return true;
+  if (/s\d{2}e\d{2}\s*(?:[-–]|\bto\b)\s*(?:s\d{2}e|e)?\d{2}(?!\d|p\b)/i.test(t)) return true;
   if (/\be\d{2}\s*[-–]\s*e\d{2}\b/i.test(t)) return true;
   if (/\bcomplete\s+(season|series)\b/i.test(t)) return true;
   if (/\bseason\s+\d+\b/i.test(t) && !/s\d{2}e\d{2}/i.test(t)) return true;
@@ -311,6 +311,7 @@ export function filterUpgradeResults(
   return (results || []).filter((r) => {
     if (!r?.magnet) return false;
     if ((r.seeders || 0) < minS) return false;
+    if (isJunkRelease(r.title || '')) return false;
     if (!r.resolution || resolutionRank(r.resolution) < resolutionRank(preferred)) return false;
     if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) return false;
     return true;
@@ -328,6 +329,7 @@ export function filterQualityResults(
   return (results || []).filter((r) => {
     if (!r?.magnet) return false;
     if ((r.seeders || 0) < minS) return false;
+    if (isJunkRelease(r.title || '')) return false;
     if (r.resolution && !meetsMinResolution(r.resolution, minimum)) return false;
     if (!sizeOkForAuto(r.size || 0, kind, r.resolution || minimum, rules)) return false;
     return true;
@@ -413,13 +415,13 @@ async function fetchWithTimeout(
   init: RequestInit = {},
   timeoutMs = 15000
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  // AbortSignal.timeout stays armed through response body reads (res.text/res.json)
+  // so stalled tracker bodies cannot hang searches indefinitely.
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, timeoutSignal])
+    : timeoutSignal;
+  return fetch(url, { ...init, signal });
 }
 
 function episodeTag(season: number, episode: number): string {
@@ -1000,19 +1002,25 @@ async function searchLimeTorrents(query: string): Promise<SearchResult[]> {
 
 /** YTS / YIFY movie API — movies only (JSON, no key). */
 async function searchYts(query: string): Promise<SearchResult[]> {
-  const url =
-    `https://movies-api.accel.li/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}` +
-    `&limit=50&sort_by=seeds&order_by=desc`;
-  let res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 20000);
-  if (!res.ok) {
-    // fallback mirror
-    res = await fetchWithTimeout(
-      `https://yts.gg/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}&limit=50&sort_by=seeds&order_by=desc`,
-      { headers: { Accept: 'application/json' } },
-      20000
-    );
+  const mirrors = [
+    `https://movies-api.accel.li/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}&limit=50&sort_by=seeds&order_by=desc`,
+    `https://yts.gg/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}&limit=50&sort_by=seeds&order_by=desc`,
+  ];
+  let res: Response | null = null;
+  let lastErr = '';
+  for (const url of mirrors) {
+    try {
+      const attempt = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 20000);
+      if (attempt.ok) {
+        res = attempt;
+        break;
+      }
+      lastErr = `HTTP ${attempt.status}`;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
   }
-  if (!res.ok) throw new Error(`YTS HTTP ${res.status}`);
+  if (!res) throw new Error(`YTS ${lastErr || 'unreachable'}`);
   const data = (await res.json()) as {
     data?: {
       movies?: Array<{
@@ -1966,7 +1974,7 @@ export async function searchMovieTorrents(
   const merged = mergeByInfoHash(groups);
   const cleaned = merged.filter((r) => !/\b(trailer|teaser)\b/i.test(r.title || ''));
   const yearPool = typeof year === 'number' && year > 0
-    ? cleaned.filter((r) => titleMatchesMovieYear(r.title || '', year))
+    ? cleaned.filter((r) => titleMatchesMovieYear(r.title || '', year, title))
     : cleaned;
   const yearFiltered = cleaned.length - yearPool.length;
   const identity = await movieMatchContext(title, hints);
@@ -2213,12 +2221,22 @@ export function titleMatchesMovie(
   return releaseDateAgrees(raw, context?.releaseDates || []);
 }
 
-/** Keep a torrent only when its title year is the movie's release year. */
-function titleMatchesMovieYear(title: string, year: number): boolean {
-  const years: number[] = [];
+/**
+ * Keep a torrent only when its release year matches the movie's year.
+ * Years that are part of the movie's own title (e.g. "Blade Runner 2049" (2017),
+ * "1917" (2019), "2001: A Space Odyssey" (1968)) are allowed alongside the release year.
+ */
+export function titleMatchesMovieYear(title: string, year: number, movieTitle?: string): boolean {
   const re = /\b(?:19|20)\d{2}\b/g;
+  const years: number[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(title))) years.push(Number(m[0]));
   if (!years.length) return false;
-  return years.every((y) => y === year);
+  if (!years.includes(year)) return false;
+  const titleYears = new Set<number>();
+  if (movieTitle) {
+    re.lastIndex = 0;
+    while ((m = re.exec(movieTitle))) titleYears.add(Number(m[0]));
+  }
+  return years.every((y) => y === year || titleYears.has(y));
 }

@@ -1,6 +1,15 @@
 # Nightfeed status
 
-**Current:** v2.4.43 — Backup/restore completeness, safe bulk refresh, loose-movie scan fixes, and Settings input/save hardening.
+**Current:** v2.4.44 — Worker-pool reliability, Live TV streaming/XMLTV fixes, MCP shutdown fix, and search/manual-torrent improvements.
+
+# Status v2.4.44
+
+## Fixed
+- Shared `SingleWorkerClient` across worker pools: crash rejection/respawn, no permanent fallback on normal errors, and full pool cleanup on quit
+- Live TV streaming pacing/backpressure, async `ffprobe`, upstream cleanup on disconnect, crash-safe HTTP routes, redirect limits, and in-memory >8 MB XMLTV support
+- MCP server tracks/closes open SSE streams on shutdown and hardens JSON-RPC / tool argument handling
+- Search response-body timeouts, year-titled movie matching (Blade Runner 2049 / 1917), junk filtering, and manual-torrent title guessing
+- Clean quit flushing for activity log and downloads, plus music-request poster and double-approve race fixes
 
 # Status v2.4.43
 

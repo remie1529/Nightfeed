@@ -84,6 +84,7 @@ class ActivityLogService extends EventEmitter {
   private stream: fs.WriteStream | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
   private ready = false;
+  private destroyed = false;
   private pendingLines: string[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
   private changedTimer: NodeJS.Timeout | null = null;
@@ -91,7 +92,7 @@ class ActivityLogService extends EventEmitter {
   private modeLogged = false;
 
   init(): void {
-    if (this.ready) return;
+    if (this.ready || this.destroyed) return;
     this.dir = path.join(app.getPath('userData'), 'logs');
     try {
       fs.mkdirSync(this.dir, { recursive: true });
@@ -159,6 +160,7 @@ class ActivityLogService extends EventEmitter {
     message: string,
     meta?: Record<string, unknown>
   ): void {
+    if (this.destroyed) return;
     try {
       if (!this.ready) this.init();
       this.openToday();
@@ -335,6 +337,8 @@ class ActivityLogService extends EventEmitter {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     if (this.pruneTimer) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
@@ -346,9 +350,17 @@ class ActivityLogService extends EventEmitter {
     if (this.changedTimer) {
       clearTimeout(this.changedTimer);
       this.changedTimer = null;
-      this.emit('changed');
     }
-    void this.flush(true);
+    // Synchronously flush remaining buffered lines before terminating the worker so quit logs are never lost.
+    if (this.pendingLines.length && this.dir) {
+      const batch = this.pendingLines.splice(0, this.pendingLines.length);
+      try {
+        const day = this.currentDay || dayKey();
+        fs.appendFileSync(path.join(this.dir, `nightfeed-${day}.log`), batch.join(''), 'utf8');
+      } catch {
+        // ignore
+      }
+    }
     void destroyLogWriter();
     try {
       this.stream?.end();

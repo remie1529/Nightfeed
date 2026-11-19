@@ -37,6 +37,7 @@ type PooledWorker = {
   worker: Worker;
   busy: boolean;
   ready: boolean;
+  currentId: number | null;
 };
 
 let pool: PooledWorker[] = [];
@@ -53,29 +54,51 @@ function settle(id: number, ok: boolean, result?: SearchPoolResult, error?: stri
   else p.reject(new Error(error || 'Search worker failed'));
 }
 
+function dropWorker(pw: PooledWorker, reason: string): void {
+  const activeId = pw.currentId;
+  pw.currentId = null;
+  pw.busy = false;
+  pw.ready = false;
+  const idx = pool.indexOf(pw);
+  if (idx >= 0) pool.splice(idx, 1);
+  if (activeId != null) {
+    settle(activeId, false, undefined, reason);
+  }
+  if (pool.length === 0) {
+    useWorkers = false;
+    initPromise = null;
+    while (waitQueue.length) {
+      const job = waitQueue.shift();
+      if (job) job();
+    }
+  } else {
+    pump();
+  }
+}
+
 function attachWorker(pw: PooledWorker): void {
   pw.worker.on('message', (msg: any) => {
     if (msg?.type === 'ready') {
       pw.ready = true;
+      pump();
       return;
     }
     pw.busy = false;
+    pw.currentId = null;
     if (typeof msg?.id === 'number') {
       settle(msg.id, !!msg.ok, msg.result, msg.error);
     }
     pump();
   });
   pw.worker.on('error', (err) => {
-    pw.busy = false;
-    // Reject all? leave pending; mark pool degraded
     console.error('[search-pool] worker error', err);
+    dropWorker(pw, err instanceof Error ? err.message : String(err));
   });
   pw.worker.on('exit', (code) => {
-    pw.busy = false;
-    pw.ready = false;
     if (code !== 0) {
       console.error('[search-pool] worker exited', code);
     }
+    dropWorker(pw, `Search worker exited (${code})`);
   });
 }
 
@@ -86,7 +109,7 @@ async function ensurePool(): Promise<void> {
       const created: PooledWorker[] = [];
       for (let i = 0; i < POOL_SIZE; i++) {
         const worker = new Worker(WORKER_PATH, { workerData: { workerId: i } });
-        const pw: PooledWorker = { worker, busy: false, ready: false };
+        const pw: PooledWorker = { worker, busy: false, ready: false, currentId: null };
         attachWorker(pw);
         created.push(pw);
       }
@@ -136,13 +159,26 @@ function runOnPool(message: Record<string, unknown>): Promise<SearchPoolResult> 
     pending.set(id, { resolve, reject });
 
     const trySend = () => {
+      if (!useWorkers || pool.length === 0) {
+        pending.delete(id);
+        reject(new Error('Search worker pool unavailable'));
+        return;
+      }
       const idle = pool.find((w) => w.ready && !w.busy);
       if (!idle) {
         waitQueue.push(trySend);
         return;
       }
       idle.busy = true;
-      idle.worker.postMessage({ ...message, id });
+      idle.currentId = id;
+      try {
+        idle.worker.postMessage({ ...message, id });
+      } catch (err) {
+        idle.busy = false;
+        idle.currentId = null;
+        pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     };
 
     trySend();
