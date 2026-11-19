@@ -2286,10 +2286,33 @@ function configureUpdaterFeed(): void {
   autoUpdater.requestHeaders = undefined as any;
 }
 
+const TRANSIENT_UPDATE_NET_RE =
+  /ERR_NETWORK_CHANGED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_RESET|ERR_CONNECTION_CLOSED|ERR_CONNECTION_ABORTED|ERR_CONNECTION_TIMED_OUT|ERR_TIMED_OUT|ERR_NAME_NOT_RESOLVED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i;
+
+let updateCheckInFlight: Promise<UpdateStatus> | null = null;
+let updateDownloadInFlight: Promise<UpdateStatus> | null = null;
+let suppressCheckTransientError = false;
+let suppressDownloadTransientError = false;
+let isQuitting = false;
+
+function isTransientUpdateNetworkError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return TRANSIENT_UPDATE_NET_RE.test(msg);
+}
+
 function formatUpdateError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (/\b401\b|Unauthorized/i.test(msg)) {
     return 'Update check returned 401. Releases are public — try again later or check GitHub status.';
+  }
+  if (/ERR_NETWORK_CHANGED/i.test(msg)) {
+    return 'Network changed during update check — try again in a moment.';
+  }
+  if (/ERR_INTERNET_DISCONNECTED|ENOTFOUND|ERR_NAME_NOT_RESOLVED|EAI_AGAIN/i.test(msg)) {
+    return 'Could not reach GitHub — check your internet connection and try again.';
+  }
+  if (/ERR_TIMED_OUT|ERR_CONNECTION_TIMED_OUT|ETIMEDOUT/i.test(msg)) {
+    return 'Update check timed out — try again in a moment.';
   }
   return msg;
 }
@@ -2347,6 +2370,10 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('error', (err) => {
+    if ((suppressCheckTransientError || suppressDownloadTransientError) && isTransientUpdateNetworkError(err)) {
+      activityLog.info('updater', `Transient network error during update: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
     updateState.checking = false;
     updateState.progress = null;
     updateState.error = formatUpdateError(err);
@@ -2370,22 +2397,43 @@ function setupAutoUpdater() {
 }
 
 async function downloadAppUpdate(): Promise<UpdateStatus> {
-  configureUpdaterFeed();
   if (updateState.downloaded) return { ...updateState };
-  updateState.available = true;
-  updateState.error = null;
-  updateState.progress = updateState.progress ?? 0;
-  updateState.message = `Downloading update ${updateState.version || ''}…`;
-  pushUpdateStatus();
-  try {
-    await autoUpdater.downloadUpdate();
-  } catch (e) {
-    updateState.error = formatUpdateError(e);
-    updateState.message = updateState.error;
-    updateState.progress = null;
+  if (updateDownloadInFlight) return updateDownloadInFlight;
+  const run = (async (): Promise<UpdateStatus> => {
+    const retryDelays = [4000, 8000];
+    configureUpdaterFeed();
+    updateState.available = true;
+    updateState.error = null;
+    updateState.progress = updateState.progress ?? 0;
+    updateState.message = `Downloading update ${updateState.version || ''}…`;
     pushUpdateStatus();
-  }
-  return { ...updateState };
+    try {
+      for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+        suppressDownloadTransientError = attempt < retryDelays.length;
+        try {
+          if (attempt > 0) configureUpdaterFeed();
+          await autoUpdater.downloadUpdate();
+          break;
+        } catch (e) {
+          if (isTransientUpdateNetworkError(e) && attempt < retryDelays.length && !isQuitting) {
+            await new Promise((r) => setTimeout(r, retryDelays[attempt]));
+            continue;
+          }
+          updateState.error = formatUpdateError(e);
+          updateState.message = updateState.error;
+          updateState.progress = null;
+          pushUpdateStatus();
+          break;
+        }
+      }
+    } finally {
+      suppressDownloadTransientError = false;
+      updateDownloadInFlight = null;
+    }
+    return { ...updateState };
+  })();
+  updateDownloadInFlight = run;
+  return run;
 }
 
 async function checkForUpdates(manual: boolean): Promise<UpdateStatus> {
@@ -2396,19 +2444,56 @@ async function checkForUpdates(manual: boolean): Promise<UpdateStatus> {
     if (manual) pushUpdateStatus();
     return { ...updateState };
   }
-  try {
-    configureUpdaterFeed();
-    updateState.checking = true;
-    updateState.error = null;
-    pushUpdateStatus();
-    await autoUpdater.checkForUpdates();
-  } catch (e) {
-    updateState.checking = false;
-    updateState.error = formatUpdateError(e);
-    updateState.message = updateState.error;
-    pushUpdateStatus();
+  if (!manual && updateState.downloaded) {
+    return { ...updateState };
   }
-  return { ...updateState };
+  if (updateCheckInFlight) {
+    return updateCheckInFlight;
+  }
+  const run = (async (): Promise<UpdateStatus> => {
+    const retryDelays = manual ? [2000, 4000] : [4000, 8000, 15000];
+    const prevMessage = updateState.error ? null : updateState.message;
+    try {
+      configureUpdaterFeed();
+      updateState.checking = true;
+      updateState.error = null;
+      pushUpdateStatus();
+      for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+        suppressCheckTransientError = !manual || attempt < retryDelays.length;
+        try {
+          if (attempt > 0) configureUpdaterFeed();
+          await autoUpdater.checkForUpdates();
+          break;
+        } catch (e) {
+          if (isTransientUpdateNetworkError(e)) {
+            if (attempt < retryDelays.length && !isQuitting) {
+              await new Promise((r) => setTimeout(r, retryDelays[attempt]));
+              continue;
+            }
+            if (!manual) {
+              updateState.checking = false;
+              updateState.error = null;
+              updateState.message = prevMessage;
+              activityLog.info('updater', 'Deferred background update check after transient network change');
+              pushUpdateStatus();
+              break;
+            }
+          }
+          updateState.checking = false;
+          updateState.error = formatUpdateError(e);
+          updateState.message = updateState.error;
+          pushUpdateStatus();
+          break;
+        }
+      }
+    } finally {
+      suppressCheckTransientError = false;
+      updateCheckInFlight = null;
+    }
+    return { ...updateState };
+  })();
+  updateCheckInFlight = run;
+  return run;
 }
 
 function wireTelegram() {
@@ -5069,10 +5154,10 @@ app.whenReady().then(async () => {
   signalUiReady();
   activityLog.info('app', 'UI ready');
 
-  // Non-blocking update check on startup, then every 6 hours
+  // Non-blocking update check on startup (after network interfaces settle), then every 6 hours
   setTimeout(() => {
     void checkForUpdates(false);
-  }, 4000);
+  }, 15000);
   setInterval(() => {
     void checkForUpdates(false);
   }, 6 * 60 * 60 * 1000);
@@ -5089,6 +5174,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   flushDownloadsSyncOnQuit();
   activityLog.info('app', 'Nightfeed quitting');
   activityLog.destroy();

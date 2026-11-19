@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.46
+
+### Fixed
+- Updater waits 15 seconds after startup before running the first background check, automatically retries transient network errors (such as `net::ERR_NETWORK_CHANGED`), deduplicates overlapping update checks/downloads, and no longer leaves stale red network errors stuck in Settings after background checks
+
 ## 2.4.45
 
 ### Security

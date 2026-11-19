@@ -1,6 +1,11 @@
 # Nightfeed status
 
-**Current:** v2.4.45 — Security hardening (renderer sandbox, Web Portal, safe zip extraction, secret redaction) and UI performance, leak, and UX fixes.
+**Current:** v2.4.46 — Resilient updater checks and downloads (no stale `net::ERR_NETWORK_CHANGED` in Settings).
+
+# Status v2.4.46
+
+## Fixed
+- Delayed startup update check from 4s to 15s, added automatic retries for transient network errors (`net::ERR_NETWORK_CHANGED`, disconnects, timeouts) in both update checks and downloads, deduplicated overlapping runs, and cleared stale background network errors from Settings
 
 # Status v2.4.45
 
