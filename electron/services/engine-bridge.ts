@@ -11,6 +11,7 @@ import { utilityProcess, app } from 'electron';
 import { DownloadEngine, EngineSettings } from './engine';
 import { activityLog } from './activity-log';
 import { DownloadItem, Movie, Show, TorrentCandidate } from '../types';
+import type { QualityRules } from './search';
 
 type StartEpisodeOpts = {
   magnet: string;
@@ -23,6 +24,8 @@ type StartEpisodeOpts = {
   triedInfoHashes?: string[];
   notifyChatId?: number;
   telegramRequestId?: string;
+  quality?: QualityRules;
+  sourceTorrentPath?: string;
 };
 
 type StartMovieOpts = {
@@ -33,6 +36,8 @@ type StartMovieOpts = {
   triedInfoHashes?: string[];
   notifyChatId?: number;
   telegramRequestId?: string;
+  quality?: QualityRules;
+  sourceTorrentPath?: string;
 };
 
 export type UtilityStartFailure = {

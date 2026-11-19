@@ -4,7 +4,7 @@
  */
 import http from 'http';
 import https from 'https';
-import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn, execFileSync, type ChildProcess } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
@@ -1138,7 +1138,7 @@ class LiveTvServer {
     cleanup: () => void,
     ff: string,
     chName: string
-  ): ChildProcessWithoutNullStreams {
+  ): ChildProcess {
     const ua = headers['User-Agent'] || DEFAULT_UA;
     const args = [
       '-hide_banner',
@@ -1253,7 +1253,7 @@ class LiveTvServer {
     cleanup: () => void,
     settings: AppSettings,
     isAlive: () => boolean,
-    setChild: (proc: ChildProcessWithoutNullStreams | null) => void
+    setChild: (proc: ChildProcess | null) => void
   ): Promise<void> {
     this.lastStreamError = this.ffmpegPath ? null : `${ch.name}: installing ffmpeg…`;
     const ff = this.ffmpegPath || (await ensureFfmpeg(settings.liveTvFfmpegPath));
@@ -1364,7 +1364,7 @@ class LiveTvServer {
     const parsed = parseStreamTarget(ch.url);
     const headers: Record<string, string> = { 'User-Agent': ua, ...parsed.headers };
     if (!headers['User-Agent']) headers['User-Agent'] = ua;
-    let child: ChildProcessWithoutNullStreams | null = null;
+    let child: ChildProcess | null = null;
     let alive = true;
     const cleanup = () => {
       if (!alive) return;

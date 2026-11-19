@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.4.43
+
+### Fixed
+- Backup export and import now preserve Live TV channels (including custom library channels) and known episode resolutions, and re-sync services after restore
+- Refreshing all shows no longer overwrites concurrent show additions, removals, edits, or finished episode downloads
+- Loose movie files in a movie root folder now track independently instead of colliding during folder scans or local file lookup
+- Settings Save waits until settings finish loading, folder-root inputs keep focus while typing, Telegram Test only saves Telegram fields, and numeric inputs guard against NaN / out-of-range ports
+- Episode disk lookup no longer matches S1E1 against S1E10–S1E19, and Windows folder sanitization trims trailing dots and guards reserved names
+
 ## 2.4.42
 
 ### Changed

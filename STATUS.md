@@ -1,6 +1,15 @@
 # Nightfeed status
 
-**Current:** v2.4.42 — A magnet or torrent file adds the movie or show when it is not in the library yet.
+**Current:** v2.4.43 — Backup/restore completeness, safe bulk refresh, loose-movie scan fixes, and Settings input/save hardening.
+
+# Status v2.4.43
+
+## Fixed
+- Backup export and import preserve Live TV channels, custom library channels, and episode resolutions, and re-sync services on restore
+- Bulk show refresh merges into live library state without clobbering concurrent changes
+- Loose movie files resolve independently during folder scans and local playback checks
+- Settings disables Save before load, fixes folder-input focus loss, scopes Telegram test saves, and hardens numeric inputs
+- Consolidated shared types, fixed TypeScript checks, and added automated unit tests (`npm test`, `npm run typecheck`)
 
 # Status v2.4.42
 

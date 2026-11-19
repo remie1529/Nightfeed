@@ -179,7 +179,7 @@ export function pickAutoDownload(
     if (!r.resolution && resolutionRank(preferred) > resolutionRank(minimum)) {
       // Unknown label: only keep if size meets the minimum rung
       if (!sizeOkForAuto(r.size || 0, kind, minimum, rules)) return false;
-    } else if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) {
+    } else if (!sizeOkForAuto(r.size || 0, kind, r.resolution ?? null, rules)) {
       return false;
     }
     return true;
@@ -247,7 +247,7 @@ export function summarizeAutoRejects(
           sizeFail += 1;
           continue;
         }
-      } else if (!sizeOkForAuto(r.size || 0, kind, r.resolution, rules)) {
+      } else if (!sizeOkForAuto(r.size || 0, kind, r.resolution ?? null, rules)) {
         sizeFail += 1;
         continue;
       }
@@ -1059,8 +1059,7 @@ async function searchYts(query: string): Promise<SearchResult[]> {
 
 /** TheRarBG / TorrentGalaxy-family public JSON search — no API key. */
 async function searchTheRarBg(query: string): Promise<SearchResult[]> {
-  const hosts = ['therarbg.com', 'torrentgalaxy.info', 'therarbg.to'];
-  let data: {
+  type TheRarBgPayload = {
     results?: Array<{
       n?: string;
       s?: number;
@@ -1069,7 +1068,9 @@ async function searchTheRarBg(query: string): Promise<SearchResult[]> {
       h?: string;
       a?: number | string;
     }>;
-  } | null = null;
+  };
+  const hosts = ['therarbg.com', 'torrentgalaxy.info', 'therarbg.to'];
+  let data: TheRarBgPayload | null = null;
   let lastErr = '';
   for (const host of hosts) {
     try {
@@ -1079,7 +1080,7 @@ async function searchTheRarBg(query: string): Promise<SearchResult[]> {
         lastErr = `HTTP ${res.status}`;
         continue;
       }
-      data = (await res.json()) as typeof data;
+      data = (await res.json()) as TheRarBgPayload | null;
       break;
     } catch (err) {
       lastErr = err instanceof Error ? err.message : String(err);
@@ -1183,12 +1184,7 @@ async function searchTokyoTosho(query: string): Promise<SearchResult[]> {
 
 /** SolidTorrents / BitSearch public JSON API — no key. */
 async function searchSolidTorrents(query: string): Promise<SearchResult[]> {
-  const hosts = [
-    `https://solidtorrents.to/api/v1/search?q=${encodeURIComponent(query)}&category=all&sort=seeders`,
-    `https://bitsearch.eu/api/v1/search?q=${encodeURIComponent(query)}&sort=seeders&limit=50`,
-    `https://bitsearch.to/api/v1/search?q=${encodeURIComponent(query)}&sort=seeders&limit=50`,
-  ];
-  let data: {
+  type SolidTorrentsPayload = {
     results?: Array<{
       title?: string;
       infohash?: string;
@@ -1199,7 +1195,13 @@ async function searchSolidTorrents(query: string): Promise<SearchResult[]> {
       imported?: string | number;
       timestamp?: number | string;
     }>;
-  } | null = null;
+  };
+  const hosts = [
+    `https://solidtorrents.to/api/v1/search?q=${encodeURIComponent(query)}&category=all&sort=seeders`,
+    `https://bitsearch.eu/api/v1/search?q=${encodeURIComponent(query)}&sort=seeders&limit=50`,
+    `https://bitsearch.to/api/v1/search?q=${encodeURIComponent(query)}&sort=seeders&limit=50`,
+  ];
+  let data: SolidTorrentsPayload | null = null;
   let lastErr = '';
   for (const url of hosts) {
     try {
@@ -1208,7 +1210,7 @@ async function searchSolidTorrents(query: string): Promise<SearchResult[]> {
         lastErr = `HTTP ${res.status}`;
         continue;
       }
-      data = (await res.json()) as typeof data;
+      data = (await res.json()) as SolidTorrentsPayload | null;
       if (data?.results?.length) break;
     } catch (err) {
       lastErr = err instanceof Error ? err.message : String(err);
@@ -1869,7 +1871,14 @@ export async function searchMovieTorrents(
   year: number | null | undefined,
   preferred: Resolution,
   hints?: MovieSearchHints
-): Promise<{ results: SearchResult[]; query: string; error?: string }> {
+): Promise<{
+  results: SearchResult[];
+  query: string;
+  error?: string;
+  yearFiltered?: number;
+  titleFiltered?: number;
+  blockFiltered?: number;
+}> {
   const query = buildMovieQuery(title, year);
   const sources = enabledTorrentSources(settings).filter((id) => id !== 'eztv');
   const errors: string[] = [];

@@ -238,15 +238,25 @@ export async function writeMovieNfos(opts: {
       : path.dirname(videoPath);
   const xml = buildMovieNfoXml(opts.movie);
   const written: string[] = [];
-  const movieNfo = path.join(movieDir || path.dirname(videoPath), 'movie.nfo');
-  try {
-    await writeFileUtf8(movieNfo, xml);
-    written.push(movieNfo);
-  } catch {
-    // ignore
+  const normDir = path.normalize(movieDir || path.dirname(videoPath)).replace(/[/\\]+$/, '').toLowerCase();
+  const normRoot = opts.movieLibraryRoot
+    ? path.normalize(opts.movieLibraryRoot).replace(/[/\\]+$/, '').toLowerCase()
+    : '';
+  // Don't write a shared movie.nfo directly inside the top-level movie library root (loose files).
+  const movieNfo =
+    !normRoot || normDir !== normRoot
+      ? path.join(movieDir || path.dirname(videoPath), 'movie.nfo')
+      : null;
+  if (movieNfo) {
+    try {
+      await writeFileUtf8(movieNfo, xml);
+      written.push(movieNfo);
+    } catch {
+      // ignore
+    }
   }
   const baseNfo = `${videoPath.replace(/\.[^.]+$/, '')}.nfo`;
-  if (path.resolve(baseNfo) !== path.resolve(movieNfo)) {
+  if (!movieNfo || path.resolve(baseNfo) !== path.resolve(movieNfo)) {
     try {
       await writeFileUtf8(baseNfo, xml);
       written.push(baseNfo);

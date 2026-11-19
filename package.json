@@ -1,7 +1,7 @@
 {
   "name": "tv-show-manager",
   "productName": "Nightfeed",
-  "version": "2.4.42",
+  "version": "2.4.43",
   "description": "Desktop TV show and movie manager",
   "main": "dist-electron/main.js",
   "author": "HoffSoftware",
@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "typecheck": "node scripts/typecheck.cjs",
+    "test": "node scripts/run-tests.cjs",
     "dist": "vite build && electron-builder --win -c.npmRebuild=false -c.win.signAndEditExecutable=false",
     "dist:dir": "vite build && electron-builder --win --dir -c.npmRebuild=false -c.win.signAndEditExecutable=false",
     "dist:linux": "vite build && electron-builder --linux AppImage"

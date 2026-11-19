@@ -7,11 +7,18 @@ const SEASON_PATTERNS = [
   /^s0*(\d+)$/i,
 ];
 
+const WINDOWS_RESERVED_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 export function sanitizeName(name: string): string {
-  return name
+  let clean = name
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
     .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
     .trim();
+  if (!clean || clean === '.' || clean === '..') return 'Untitled';
+  if (WINDOWS_RESERVED_RE.test(clean)) clean = `${clean}_`;
+  return clean;
 }
 
 export function pad2(n: number): string {
@@ -206,14 +213,12 @@ export function findLocalEpisode(
   }
   if (!seasonDir) return undefined;
 
-  const marker = `S${pad2(seasonNumber)}E${pad2(episodeNumber)}`;
-  const markerAlt = `S${seasonNumber}E${episodeNumber}`;
+  const epMatchRe = new RegExp(`S0*${seasonNumber}E0*${episodeNumber}(?!\\d)`, 'i');
   try {
     for (const file of fs.readdirSync(seasonDir)) {
       const ext = path.extname(file).toLowerCase();
       if (!VIDEO_EXTS.has(ext)) continue;
-      const upper = file.toUpperCase();
-      if (upper.includes(marker.toUpperCase()) || upper.includes(markerAlt.toUpperCase())) {
+      if (epMatchRe.test(file)) {
         return path.join(seasonDir, file);
       }
     }
@@ -223,6 +228,30 @@ export function findLocalEpisode(
   return undefined;
 }
 
+function normalizePathKey(p: string): string {
+  return path.normalize((p || '').trim()).replace(/[/\\]+$/, '').toLowerCase();
+}
+
+function isVideoFileExisting(p: string | undefined): boolean {
+  const t = (p || '').trim();
+  if (!t) return false;
+  try {
+    return fs.existsSync(t) && fs.statSync(t).isFile() && VIDEO_EXTS.has(path.extname(t).toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function normalizeLooseMovieBase(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/['']/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function getMovieFolderName(movie: Movie): string {
   const title = sanitizeName(movie.title || 'Movie');
   if (movie.releaseYear) return `${title} (${movie.releaseYear})`;
@@ -230,11 +259,13 @@ export function getMovieFolderName(movie: Movie): string {
 }
 
 export function getMovieRoot(movie: Movie, movieLibraryRoot: string, extraRoots?: string[]): string {
-  if (movie.libraryPath && dirExists(movie.libraryPath.trim())) {
-    return movie.libraryPath.trim();
+  const roots = uniqueRoots(movieLibraryRoot, extraRoots);
+  const rootKeys = new Set(roots.map(normalizePathKey));
+  const custom = (movie.libraryPath || '').trim();
+  if (custom && dirExists(custom) && !rootKeys.has(normalizePathKey(custom))) {
+    return custom;
   }
   const folder = getMovieFolderName(movie);
-  const roots = uniqueRoots(movieLibraryRoot, extraRoots);
   for (const r of roots) {
     const candidate = path.join(r, folder);
     if (dirExists(candidate)) return candidate;
@@ -276,26 +307,70 @@ export function findLocalMovie(
   movieLibraryRoot: string,
   extraRoots?: string[]
 ): string | undefined {
-  const movieRoot = getMovieRoot(movie, movieLibraryRoot, extraRoots);
-  if (!fs.existsSync(movieRoot)) return undefined;
-
-  const folderName = getMovieFolderName(movie).toLowerCase();
-  try {
-    const videos: string[] = [];
-    for (const file of fs.readdirSync(movieRoot)) {
-      const ext = path.extname(file).toLowerCase();
-      if (!VIDEO_EXTS.has(ext)) continue;
-      videos.push(path.join(movieRoot, file));
-    }
-    if (!videos.length) return undefined;
-    const exact = videos.find((v) => {
-      const base = path.basename(v, path.extname(v)).toLowerCase();
-      return base === folderName;
-    });
-    return exact || videos[0];
-  } catch {
-    return undefined;
+  // 1. Direct file path (e.g., loose movie imported from a shared movie root)
+  if (isVideoFileExisting(movie.localPath)) {
+    return movie.localPath!.trim();
   }
+  if (isVideoFileExisting(movie.libraryPath)) {
+    return movie.libraryPath!.trim();
+  }
+
+  const roots = uniqueRoots(movieLibraryRoot, extraRoots);
+  const rootKeys = new Set(roots.map(normalizePathKey));
+  const movieRoot = getMovieRoot(movie, movieLibraryRoot, extraRoots);
+  const folderName = getMovieFolderName(movie).toLowerCase();
+
+  // 2. Dedicated movie subfolder (safe to fall back to first video inside it)
+  if (movieRoot && dirExists(movieRoot) && !rootKeys.has(normalizePathKey(movieRoot))) {
+    try {
+      const videos: string[] = [];
+      for (const file of fs.readdirSync(movieRoot)) {
+        const ext = path.extname(file).toLowerCase();
+        if (!VIDEO_EXTS.has(ext)) continue;
+        videos.push(path.join(movieRoot, file));
+      }
+      if (videos.length) {
+        const exact = videos.find((v) => {
+          const base = path.basename(v, path.extname(v)).toLowerCase();
+          return base === folderName;
+        });
+        return exact || videos[0];
+      }
+    } catch {
+      // fall through to loose-file check
+    }
+  }
+
+  // 3. Loose video file directly inside a movie root (must match title/year, never pick arbitrary videos[0])
+  const searchDirs = uniqueRoots(
+    roots,
+    movie.libraryPath && dirExists(movie.libraryPath.trim()) ? movie.libraryPath.trim() : undefined
+  );
+  const wantTitle = normalizeLooseMovieBase(movie.title || '');
+  const wantWithYear = movie.releaseYear ? normalizeLooseMovieBase(`${movie.title || ''} ${movie.releaseYear}`) : '';
+  for (const dir of searchDirs) {
+    if (!dirExists(dir)) continue;
+    try {
+      for (const file of fs.readdirSync(dir)) {
+        const ext = path.extname(file).toLowerCase();
+        if (!VIDEO_EXTS.has(ext)) continue;
+        const full = path.join(dir, file);
+        try {
+          if (!fs.statSync(full).isFile()) continue;
+        } catch {
+          continue;
+        }
+        const base = path.basename(file, ext);
+        if (base.toLowerCase() === folderName) return full;
+        const norm = normalizeLooseMovieBase(base);
+        if (wantWithYear && norm === wantWithYear) return full;
+        if (wantTitle && norm === wantTitle) return full;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 /**

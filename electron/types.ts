@@ -258,6 +258,8 @@ export interface LiveTvChannel {
     | 'show';
   /** When libraryMode is show, which TVMaze show id to play. */
   showTmdbId?: number | null;
+  /** UI-only data URL; not persisted. */
+  logoPreview?: string;
 }
 
 export interface LiveTvEpgOption {
@@ -497,6 +499,16 @@ export interface TelegramRequest {
   source?: 'telegram' | 'web';
 }
 
+export interface WebPortalStatus {
+  enabled: boolean;
+  listening: boolean;
+  port: number;
+  bind: string;
+  urls: string[];
+  lastError: string | null;
+  passwordSet: boolean;
+}
+
 export interface TelegramStatus {
   enabled: boolean;
   configured: boolean;
@@ -519,6 +531,26 @@ export interface UpdateStatus {
   error: string | null;
   /** 0–100 while the installer is downloading. */
   progress: number | null;
+}
+
+export interface MazeSearchItem {
+  id: number;
+  name: string;
+  overview: string;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  firstAirDate: string | null;
+  status: string;
+}
+
+export interface TmdbMovieSearchItem {
+  id: number;
+  title: string;
+  overview: string;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  releaseDate: string | null;
+  releaseYear: number | null;
 }
 
 export const DEFAULT_TORRENT_SOURCES: TorrentSources = {

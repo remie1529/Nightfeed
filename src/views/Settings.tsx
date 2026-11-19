@@ -1,9 +1,14 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AppSettings, Resolution, TelegramStatus, TorrentSources, UpdateStatus, VpnStatus, WebPortalStatus } from '../lib/types';
 import FolderScanImport from '../components/FolderScanImport';
-import { DEFAULT_TORRENT_SOURCES } from '../lib/types';
+import { DEFAULT_SETTINGS, DEFAULT_TORRENT_SOURCES } from '../lib/types';
 
 const defaultSources: TorrentSources = { ...DEFAULT_TORRENT_SOURCES };
+
+function parseNonNegInt(raw: string, fallback = 0): number {
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? Math.max(0, n) : fallback;
+}
 
 const GENERAL_SOURCE_OPTIONS: Array<{ id: keyof TorrentSources; label: string; hint: string }> = [
   { id: 'apibay', label: 'Apibay', hint: 'Pirate Bay JSON API' },
@@ -65,7 +70,7 @@ function LibraryRootsEditor({
     <div>
       {roots.map((root, i) => (
         <div
-          key={`${root}:${i}`}
+          key={i}
           className="root-row"
           draggable
           onDragStart={() => setDragIdx(i)}
@@ -121,85 +126,25 @@ function SettingsSection({
 }
 
 const empty: AppSettings = {
-  tmdbApiKey: '',
-  libraryRoot: '',
-  libraryRoots: [],
-  movieLibraryRoot: '',
-  movieLibraryRoots: [],
-  defaultResolution: '1080p',
-  defaultMovieResolution: '1080p',
-  minimumResolution: '720p',
-  minimumMovieResolution: '720p',
-  minSizeMbTv720p: 200,
-  minSizeMbTv1080p: 500,
-  minSizeMbTv2160p: 2000,
-  minSizeMbMovie720p: 200,
-  minSizeMbMovie1080p: 500,
-  minSizeMbMovie2160p: 2000,
-  processFolder: '',
-  refreshIntervalMinutes: 60,
+  ...DEFAULT_SETTINGS,
   torrentSources: { ...defaultSources },
-  jackettUrl: 'http://127.0.0.1:9117',
-  jackettApiKey: '',
-  autoDownload: true,
-  autoDownloadDelayMinutes: 0,
-  launchOnStartup: false,
-  restartOnCrash: false,
-  telegramEnabled: false,
-  telegramBotToken: '',
-  telegramAllowedChatIds: '',
-  telegramAdminChatIds: '',
-  telegramRequestChatIds: '',
-  telegramDailyBriefing: false,
-  telegramDailyBriefingHour: 9,
-  githubToken: '',
-  maxConnections: 55,
-  maxDownloadSpeedKBps: 0,
-  maxUploadSpeedKBps: 0,
-  ftpEnabled: false,
-  ftpHost: '',
-  ftpPort: 21,
-  ftpUser: '',
-  ftpPassword: '',
-  ftpRemoteBasePath: '',
-  vpnEnabled: false,
-  vpnConfigPath: '',
-  vpnConfigName: '',
-  vpnUsername: '',
-  vpnPassword: '',
-  vpnRequireForTorrents: false,
-  webPortalEnabled: false,
-  webPortalPort: 8787,
-  webPortalBind: 'localhost',
-  webPortalAdminPasswordHash: '',
-  webPortalSessionSecret: '',
-  mcpEnabled: true,
-  mcpPort: 47321,
-  mcpToken: '',
-  liveTvEnabled: false,
-  liveTvPort: 34400,
-  liveTvBind: 'lan',
-  liveTvTuners: 3,
-  liveTvBufferMode: 'memory',
-  liveTvBufferKb: 1024,
-  liveTvBufferTimeoutMs: 8000,
-  liveTvUserAgent: 'VLC/3.0.20 LibVLC/3.0.20',
-  liveTvFfmpegPath: '',
-  liveTvHideAdult: true,
-  liveTvSourceType: 'none',
-  liveTvDirectUrl: '',
-  liveTvDirectName: '',
-  liveTvM3uUrl: '',
-  liveTvXmltvUrl: '',
-  liveTvXtreamHost: '',
-  liveTvXtreamUsername: '',
-  liveTvXtreamPassword: '',
-  liveTvXtreamPort: 80,
-  liveTvXtreamHls: false,
-  liveTvFakeEpgMissing: true,
-  liveTvFakeEpgMinutes: 60,
-  liveTvFakeEpgDays: 2,
 };
+
+function normalizeLoadedSettings(s: Partial<AppSettings> | null | undefined): AppSettings {
+  const loaded: AppSettings = { ...empty, ...(s || {}) };
+  loaded.torrentSources = {
+    ...defaultSources,
+    ...(loaded.torrentSources || {}),
+  };
+  if (!(loaded.telegramAdminChatIds || '').trim() && (loaded.telegramAllowedChatIds || '').trim()) {
+    loaded.telegramAdminChatIds = loaded.telegramAllowedChatIds;
+  }
+  if (!loaded.libraryRoots?.length && loaded.libraryRoot) loaded.libraryRoots = [loaded.libraryRoot];
+  if (!loaded.movieLibraryRoots?.length && loaded.movieLibraryRoot) {
+    loaded.movieLibraryRoots = [loaded.movieLibraryRoot];
+  }
+  return loaded;
+}
 
 function AddonSettingsSection() {
   const [sections, setSections] = useState<Array<{
@@ -322,9 +267,17 @@ function AddonSettingsSection() {
 }
 
 export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } = {}) {
-  const [settings, setLocal] = useState<AppSettings>(empty);
+  const [settings, setLocalState] = useState<AppSettings>(empty);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dirtyRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setLocal = (next: AppSettings) => {
+    dirtyRef.current = true;
+    setLocalState(next);
+  };
   const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null);
   const [tgTestMsg, setTgTestMsg] = useState<string | null>(null);
   const [tgTesting, setTgTesting] = useState(false);
@@ -391,24 +344,22 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
   };
 
   useEffect(() => {
-    window.torrentAPI.getSettings().then((s) => {
-      const loaded = { ...empty, ...(s as AppSettings) };
-      loaded.torrentSources = {
-        ...defaultSources,
-        ...(loaded.torrentSources || {}),
-      };
-      if (!(loaded.telegramAdminChatIds || '').trim() && (loaded.telegramAllowedChatIds || '').trim()) {
-        loaded.telegramAdminChatIds = loaded.telegramAllowedChatIds;
-      }
-      if (!loaded.libraryRoots?.length && loaded.libraryRoot) loaded.libraryRoots = [loaded.libraryRoot];
-      if (!loaded.movieLibraryRoots?.length && loaded.movieLibraryRoot) {
-        loaded.movieLibraryRoots = [loaded.movieLibraryRoot];
-      }
-      setLocal(loaded);
-    });
-    window.torrentAPI.getAppVersion?.().then((v) => setAppVersion(String(v || '—'))).catch(() => undefined);
-    window.torrentAPI.getThreadInfo?.().then((info) => setThreadInfo(info as typeof threadInfo)).catch(() => undefined);
-    window.torrentAPI.getUpdateStatus?.().then((s) => setUpdateStatus(s as UpdateStatus)).catch(() => undefined);
+    let cancelled = false;
+    window.torrentAPI
+      .getSettings()
+      .then((s) => {
+        if (cancelled) return;
+        dirtyRef.current = false;
+        setLocalState(normalizeLoadedSettings(s as AppSettings));
+        setLoaded(true);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    window.torrentAPI.getAppVersion?.().then((v) => { if (!cancelled) setAppVersion(String(v || '—')); }).catch(() => undefined);
+    window.torrentAPI.getThreadInfo?.().then((info) => { if (!cancelled) setThreadInfo(info as typeof threadInfo); }).catch(() => undefined);
+    window.torrentAPI.getUpdateStatus?.().then((s) => { if (!cancelled) setUpdateStatus(s as UpdateStatus); }).catch(() => undefined);
     refreshTg();
     void refreshVpn();
     void refreshPortal();
@@ -419,16 +370,35 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
       void refreshPortal();
       void refreshMcp();
     }, 4000);
+    const offSettings = window.torrentAPI.onSettingsChanged?.((s) => {
+      if (cancelled || !s) return;
+      const incoming = normalizeLoadedSettings(s as AppSettings);
+      if (!dirtyRef.current) {
+        setLocalState(incoming);
+        setLoaded(true);
+      } else {
+        setLocalState((prev) => ({
+          ...prev,
+          mcpToken: incoming.mcpToken || prev.mcpToken,
+          webPortalAdminPasswordHash: incoming.webPortalAdminPasswordHash || prev.webPortalAdminPasswordHash,
+        }));
+      }
+    });
     const off = window.torrentAPI.onUpdateStatus?.((s) => setUpdateStatus(s as UpdateStatus));
     const offVpn = window.torrentAPI.onVpnStatus?.((s) => setVpnStatus(s as VpnStatus));
     return () => {
+      cancelled = true;
       clearInterval(id);
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      offSettings?.();
       off?.();
       offVpn?.();
     };
   }, []);
 
   const save = async () => {
+    if (!loaded || saving) return;
+    setSaving(true);
     setError(null);
     setTgTestMsg(null);
     try {
@@ -441,15 +411,22 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
       // Public releases: clear unused githubToken leftover on save (no UI).
       payload.githubToken = '';
       const next = (await window.torrentAPI.setSettings(payload)) as AppSettings;
-      setLocal({ ...empty, ...next });
+      dirtyRef.current = false;
+      setLocalState(normalizeLoadedSettings(next));
       setWebPortalPassword('');
       setSaved(true);
-      setTimeout(() => setSaved(false), 1800);
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => {
+        savedTimerRef.current = null;
+        setSaved(false);
+      }, 1800);
       await refreshTg();
       await refreshPortal();
       await refreshMcp();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -501,7 +478,8 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
           `Backup imported (${res.shows ?? 0} shows, ${res.movies ?? 0} movies). Reloading settings…`
         );
         const s = (await window.torrentAPI.getSettings()) as AppSettings;
-        setLocal({ ...empty, ...s, torrentSources: { ...defaultSources, ...(s.torrentSources || {}) } });
+        dirtyRef.current = false;
+        setLocalState(normalizeLoadedSettings(s));
         await refreshTg();
       } else {
         setBackupMsg('Import failed');
@@ -525,10 +503,18 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
   };
 
   const sendTest = async () => {
+    if (!loaded || tgTesting) return;
     setTgTesting(true);
     setTgTestMsg(null);
     try {
-      await window.torrentAPI.setSettings(settings);
+      await window.torrentAPI.setSettings({
+        telegramEnabled: settings.telegramEnabled,
+        telegramBotToken: settings.telegramBotToken,
+        telegramAdminChatIds: settings.telegramAdminChatIds,
+        telegramRequestChatIds: settings.telegramRequestChatIds,
+        telegramDailyBriefing: settings.telegramDailyBriefing,
+        telegramDailyBriefingHour: settings.telegramDailyBriefingHour,
+      });
       const res = (await window.torrentAPI.sendTelegramTest()) as { ok: boolean; error?: string };
       setTgTestMsg(res.ok ? 'Test message sent.' : res.error || 'Test failed');
       await refreshTg();
@@ -636,7 +622,9 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
         </div>
         <div className="toolbar">
           {saved && <span style={{ color: 'var(--ok)' }}>Saved</span>}
-          <button className="primary" onClick={save}>Save</button>
+          <button className="primary" onClick={save} disabled={!loaded || saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
       </div>
 
@@ -842,7 +830,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
                     style={{ width: 90 }}
                     value={settings[field] ?? 0}
                     onChange={(e) =>
-                      setLocal({ ...settings, [field]: Math.max(0, parseInt(e.target.value || '0', 10)) })
+                      setLocal({ ...settings, [field]: parseNonNegInt(e.target.value, 0) })
                     }
                   />
                 </label>
@@ -871,7 +859,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
                     style={{ width: 90 }}
                     value={settings[field] ?? 0}
                     onChange={(e) =>
-                      setLocal({ ...settings, [field]: Math.max(0, parseInt(e.target.value || '0', 10)) })
+                      setLocal({ ...settings, [field]: parseNonNegInt(e.target.value, 0) })
                     }
                   />
                 </label>
@@ -894,7 +882,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
             onChange={(e) =>
               setLocal({
                 ...settings,
-                refreshIntervalMinutes: Math.max(0, parseInt(e.target.value || '0', 10)),
+                refreshIntervalMinutes: parseNonNegInt(e.target.value, 0),
               })
             }
           />
@@ -931,7 +919,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
             onChange={(e) =>
               setLocal({
                 ...settings,
-                autoDownloadDelayMinutes: Math.max(0, parseInt(e.target.value || '0', 10)),
+                autoDownloadDelayMinutes: parseNonNegInt(e.target.value, 0),
               })
             }
           />
@@ -957,7 +945,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
             }
           />
           <div className="hint">
-            Higher values can improve throughput when many peers are available. Default 200.
+            Higher values can improve throughput when many peers are available. Default 55.
             Downloads use one Electron <code>utilityProcess</code> helper (piece hashing &amp; peers off the UI), with an automatic floater respawn if that helper dies.
             Library search uses a separate <code>worker_threads</code> pool (up to 4 / CPU cores) — that is unrelated to downloads.
             Progress IPC is throttled (~1s); download store writes are debounced so search stays responsive.
@@ -1035,7 +1023,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
                 onChange={(e) =>
                   setLocal({
                     ...settings,
-                    ftpPort: Math.max(1, parseInt(e.target.value || '21', 10) || 21),
+                    ftpPort: Math.min(65535, Math.max(1, parseInt(e.target.value || '21', 10) || 21)),
                   })
                 }
               />
@@ -1381,7 +1369,7 @@ export default function SettingsView({ onOpenLog }: { onOpenLog?: () => void } =
               onChange={(e) =>
                 setLocal({
                   ...settings,
-                  telegramDailyBriefingHour: Math.min(23, Math.max(0, parseInt(e.target.value || '9', 10))),
+                  telegramDailyBriefingHour: Math.min(23, parseNonNegInt(e.target.value, 9)),
                 })
               }
             />

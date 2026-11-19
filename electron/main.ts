@@ -1296,7 +1296,7 @@ async function applyHuntIntents(
           libraryRoot: tvRoots(settings)[0] || settings.libraryRoot,
           seasonNumber: season,
           episodeNumber: episode,
-          episodeTitle: intent.episodeTitle,
+          episodeTitle: intent.episodeTitle || '',
           candidates: intent.candidates,
           triedInfoHashes: intent.triedInfoHashes,
           notifyChatId: notifyCtx?.notifyChatId,
@@ -1690,26 +1690,32 @@ async function runRefreshAllShows(): Promise<Show[]> {
     }
   };
 
-  const { failed, usedWorker } = await refreshAllViaPool({
-    shows,
-    libraryRoot: settings.libraryRoot,
-    extraRoots: tvRoots(settings),
-    downloadingKeys: Array.from(downloadingKeys()),
-    overrides: getEpisodeOverrides(),
-    resolutions: getEpisodeResolutions(),
-    onProgress: (p) => {
-      emitRefreshAllProgress({
-        phase: 'refresh',
-        current: p.current,
-        total: p.total,
-        label: p.label,
-      });
-    },
-    onWarn: (message) => activityLog.warn('library', message),
-    onShows: handleBatch,
-  });
-
-  flushBulkShowWrite();
+  let failed = 0;
+  let usedWorker = false;
+  try {
+    const res = await refreshAllViaPool({
+      shows,
+      libraryRoot: settings.libraryRoot,
+      extraRoots: tvRoots(settings),
+      downloadingKeys: Array.from(downloadingKeys()),
+      overrides: getEpisodeOverrides(),
+      resolutions: getEpisodeResolutions(),
+      onProgress: (p) => {
+        emitRefreshAllProgress({
+          phase: 'refresh',
+          current: p.current,
+          total: p.total,
+          label: p.label,
+        });
+      },
+      onWarn: (message) => activityLog.warn('library', message),
+      onShows: handleBatch,
+    });
+    failed = res.failed;
+    usedWorker = res.usedWorker;
+  } finally {
+    flushBulkShowWrite();
+  }
   emitLibraryChanged(true);
   await yieldMain();
 
@@ -1821,7 +1827,7 @@ function pickLanIpv4(): string | null {
     const nets = os.networkInterfaces();
     for (const entries of Object.values(nets)) {
       for (const e of entries || []) {
-        if (e && !e.internal && (e.family === 'IPv4' || e.family === 4)) return e.address;
+        if (e && !e.internal && (e.family === 'IPv4' || (e.family as unknown) === 4)) return e.address;
       }
     }
   } catch {
@@ -2027,13 +2033,30 @@ async function importShowFromScan(mazeId: number, folderPath: string): Promise<S
 
 async function importMovieFromScan(movieId: number, folderPath: string): Promise<Movie> {
   const settings = getSettings();
+  const roots = movieRoots(settings);
+  const trimmedPath = (folderPath || '').trim();
+  let isLooseFile = false;
+  if (trimmedPath) {
+    try {
+      isLooseFile = fs.statSync(trimmedPath).isFile();
+    } catch {
+      isLooseFile = false;
+    }
+  }
   const existing = getMovies().find((m) => m.tmdbId === movieId);
   if (existing) {
-    if (folderPath && !(existing.libraryPath || '').trim()) {
+    const needsPath =
+      trimmedPath &&
+      (isLooseFile ? !(existing.localPath || '').trim() : !(existing.libraryPath || '').trim());
+    if (needsPath) {
+      const patched: Movie = isLooseFile
+        ? { ...existing, localPath: trimmedPath }
+        : { ...existing, libraryPath: trimmedPath };
       const updated = applyMovieLocalStatus(
-        { ...existing, libraryPath: folderPath },
+        patched,
         settings.movieLibraryRoot,
-        downloadingMovieIds()
+        downloadingMovieIds(),
+        roots
       );
       upsertMovie(updated);
       emitMoviesChanged();
@@ -2052,7 +2075,8 @@ async function importMovieFromScan(movieId: number, folderPath: string): Promise
     releaseYear: null,
     runtime: null,
     status: 'missing' as const,
-    libraryPath: folderPath,
+    libraryPath: isLooseFile ? undefined : trimmedPath || undefined,
+    localPath: isLooseFile ? trimmedPath : undefined,
     addedAt: new Date().toISOString(),
   } as Movie;
   let movie = await fetchMovieDetail(
@@ -2060,10 +2084,12 @@ async function importMovieFromScan(movieId: number, folderPath: string): Promise
     settings.movieLibraryRoot,
     shell,
     downloadingMovieIds(),
-    movieRoots(settings)
+    roots
   );
-  movie = { ...movie, libraryPath: folderPath || movie.libraryPath };
-  movie = applyMovieLocalStatus(movie, settings.movieLibraryRoot, downloadingMovieIds());
+  movie = isLooseFile
+    ? { ...movie, localPath: trimmedPath || movie.localPath }
+    : { ...movie, libraryPath: trimmedPath || movie.libraryPath };
+  movie = applyMovieLocalStatus(movie, settings.movieLibraryRoot, downloadingMovieIds(), roots);
   upsertMovie(movie);
   emitMoviesChanged();
   return withMovieLocalStatus(movie);
@@ -4101,10 +4127,21 @@ function registerIpc() {
       processFolder: settings.processFolder || '',
     });
     applyLoginItem(!!settings.launchOnStartup);
+    applyCrashRestartTask(!!settings.restartOnCrash);
     telegramBot.sync(settings);
+    const portalSettings = ensureWebPortalSecrets(settings);
+    webPortal.sync(portalSettings);
+    liveTv.sync(settings);
+    const mcpSettings = ensureMcpSecret(settings);
+    nightfeedMcp.sync(mcpSettings);
+    configureUpdaterFeed();
     scheduleRefresh();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('settings:changed', getSettings());
+    }
     emitLibraryChanged();
     emitMoviesChanged();
+    emitRequestsChanged();
     pushDownloads({ persist: 'skip' });
     activityLog.info('backup', 'Imported backup', {
       path: filePaths[0],

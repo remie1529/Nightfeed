@@ -125,13 +125,23 @@ function showAlreadyTracked(shows: Show[], folderPath: string, folderName: strin
 
 function movieAlreadyTracked(
   movies: Movie[],
-  folderPath: string,
+  entryPath: string,
   title: string,
-  year: number | null
+  year: number | null,
+  movieRoots: string[] = []
 ): Movie | undefined {
-  const byPath = movies.find((m) => m.libraryPath && pathEquals(m.libraryPath, folderPath));
+  const sharedRoots = new Set(
+    movieRoots.map((r) => path.normalize(r.trim()).replace(/[/\\]+$/, '').toLowerCase())
+  );
+  const byPath = movies.find((m) => {
+    if (!m.libraryPath) return false;
+    const normLib = path.normalize(m.libraryPath.trim()).replace(/[/\\]+$/, '').toLowerCase();
+    // Never match against a legacy loose-file import whose libraryPath was the shared root
+    if (sharedRoots.has(normLib)) return false;
+    return pathEquals(m.libraryPath, entryPath);
+  });
   if (byPath) return byPath;
-  const byLocal = movies.find((m) => m.localPath && pathEquals(m.localPath, folderPath));
+  const byLocal = movies.find((m) => m.localPath && pathEquals(m.localPath, entryPath));
   if (byLocal) return byLocal;
   const norm = normalizeTitle(title);
   return movies.find((m) => {
@@ -490,28 +500,21 @@ export async function buildScanPreview(
       const entry = entries[i];
       const parsed = parseMovieFolderName(entry.name);
       onProgress?.(`Matching movie ${i + 1}/${entries.length}: ${parsed.title}`);
-      const trackPath = entry.isLooseFile ? entry.path : entry.path;
-      const existing = movieAlreadyTracked(movies, trackPath, parsed.title, parsed.year);
-      // Also treat loose file's parent+name for already check via basename
-      const existing2 =
-        existing ||
-        (entry.isLooseFile
-          ? movieAlreadyTracked(movies, movieRoot, parsed.title, parsed.year)
-          : undefined);
-      if (existing2) {
+      const existing = movieAlreadyTracked(movies, entry.path, parsed.title, parsed.year, movieRoots);
+      if (existing) {
         candidates.push({
           id: `movie:${entry.path}`,
           kind: 'movie',
           folderName: entry.name,
-          folderPath: entry.isLooseFile ? movieRoot : entry.path,
+          folderPath: entry.path,
           parsedTitle: parsed.title,
           parsedYear: parsed.year,
           status: 'already_in_library',
-          note: `Already tracked as “${existing2.title}”`,
-          matchId: existing2.tmdbId,
-          matchName: existing2.title,
-          matchYear: existing2.releaseYear,
-          matchPoster: existing2.posterPath,
+          note: `Already tracked as “${existing.title}”`,
+          matchId: existing.tmdbId,
+          matchName: existing.title,
+          matchYear: existing.releaseYear,
+          matchPoster: existing.posterPath,
           isLooseFile: entry.isLooseFile,
           selected: false,
         });
@@ -526,7 +529,7 @@ export async function buildScanPreview(
           id: `movie:${entry.path}`,
           kind: 'movie',
           folderName: entry.name,
-          folderPath: entry.isLooseFile ? movieRoot : entry.path,
+          folderPath: entry.path,
           parsedTitle: parsed.title,
           parsedYear: parsed.year,
           status: picked.status,
@@ -546,7 +549,7 @@ export async function buildScanPreview(
           id: `movie:${entry.path}`,
           kind: 'movie',
           folderName: entry.name,
-          folderPath: entry.isLooseFile ? movieRoot : entry.path,
+          folderPath: entry.path,
           parsedTitle: parsed.title,
           parsedYear: parsed.year,
           status: 'no_match',

@@ -4,7 +4,6 @@ import path from 'path';
 import {
   AppSettings,
   DEFAULT_SETTINGS,
-  DEFAULT_TORRENT_SOURCES,
   DownloadItem,
   EpisodeOverrideStatus,
   LiveTvChannel,
@@ -14,30 +13,18 @@ import {
   Show,
   TelegramRequest,
 } from '../types';
+import {
+  type AppData,
+  type BackupSnapshot,
+  buildBackupSnapshot,
+  isLibraryChannel,
+  mergeBulkShows,
+  migrateTorrentSources,
+  normalizeLiveTvLineup,
+  prepareImportedBackupData,
+} from './store-logic';
 
-export interface AppData {
-  settings: AppSettings;
-  shows: Show[];
-  movies: Movie[];
-  downloads: DownloadItem[];
-  /**
-   * Infohashes rejected/abandoned per episode or movie, durable across restarts.
-   * Keys: `ep:${showId}:${season}:${episode}` or `movie:${movieId}`.
-   */
-  triedTorrents: Record<string, string[]>;
-  /** Manual episode status overrides keyed by `${showId}:${season}:${episode}` */
-  episodeOverrides: Record<string, EpisodeOverrideStatus>;
-  /** Known on-disk resolutions keyed by `${showId}:${season}:${episode}` */
-  episodeResolutions: Record<string, Resolution>;
-  /** Telegram movie/TV requests (pending / approved / denied). */
-  telegramRequests: TelegramRequest[];
-  downloadHistory: DownloadHistoryItem[];
-  lastDailyBriefingDate: string;
-  liveTvLineup: LiveTvChannel[];
-  /** Custom library channels, stored separately so a playlist refresh cannot drop them. */
-  liveTvCustomChannels: LiveTvChannel[];
-  liveTvXmltvCache: string;
-}
+export type { AppData, BackupSnapshot };
 
 const defaults: AppData = {
   settings: {
@@ -66,23 +53,6 @@ export const store = new Store<AppData>({
 
 export function episodeKey(showId: number, season: number, episode: number): string {
   return `${showId}:${season}:${episode}`;
-}
-
-function migrateTorrentSources(raw: Partial<AppSettings>): AppSettings['torrentSources'] {
-  const base = { ...DEFAULT_TORRENT_SOURCES };
-  if (raw.torrentSources && typeof raw.torrentSources === 'object') {
-    const src = raw.torrentSources as Record<string, unknown>;
-    const out = { ...base };
-    for (const key of Object.keys(base) as Array<keyof typeof base>) {
-      if (typeof src[key] === 'boolean') out[key] = src[key] as boolean;
-    }
-    return out;
-  }
-  // Legacy single-provider dropdown → multi-source defaults
-  if (raw.searchProvider === 'jackett') {
-    return { ...base, jackett: true };
-  }
-  return base;
 }
 
 export function getSettings(): AppSettings {
@@ -259,36 +229,67 @@ export function saveShows(shows: Show[]): void {
 }
 
 
-/** Bulk refresh helpers: mutate in memory, persist every N shows / at end. */
-let bulkShows: Show[] | null = null;
+/** Bulk refresh helpers: buffer refreshed shows and merge into live store state on flush. */
+let bulkWriteActive = false;
+const bulkPendingShows = new Map<number, Show>();
+const bulkRemovedShowIds = new Set<number>();
+const bulkExternallyEditedShowIds = new Set<number>();
 
 export function beginBulkShowWrite(): void {
-  bulkShows = getShows().slice();
+  bulkWriteActive = true;
+  bulkPendingShows.clear();
+  bulkRemovedShowIds.clear();
+  bulkExternallyEditedShowIds.clear();
 }
 
 export function upsertShowBulk(show: Show): void {
-  if (!bulkShows) {
+  if (!bulkWriteActive) {
     upsertShow(show);
     return;
   }
-  const idx = bulkShows.findIndex((s) => s.tmdbId === show.tmdbId);
-  if (idx >= 0) bulkShows[idx] = show;
-  else bulkShows.push(show);
-}
-
-export function flushBulkShowWrite(): Show[] {
-  if (!bulkShows) return getShows();
-  saveShows(bulkShows);
-  const out = bulkShows;
-  bulkShows = null;
-  return out;
+  if (bulkRemovedShowIds.has(show.tmdbId)) return;
+  bulkPendingShows.set(show.tmdbId, show);
 }
 
 export function persistBulkShowWrite(): void {
-  if (bulkShows) saveShows(bulkShows);
+  if (!bulkWriteActive || bulkPendingShows.size === 0) return;
+  const merged = mergeBulkShows(
+    getShows(),
+    bulkPendingShows,
+    bulkRemovedShowIds,
+    bulkExternallyEditedShowIds
+  );
+  saveShows(merged);
+  bulkPendingShows.clear();
+}
+
+export function flushBulkShowWrite(): Show[] {
+  if (!bulkWriteActive) return getShows();
+  try {
+    if (bulkPendingShows.size > 0) {
+      const merged = mergeBulkShows(
+        getShows(),
+        bulkPendingShows,
+        bulkRemovedShowIds,
+        bulkExternallyEditedShowIds
+      );
+      saveShows(merged);
+      return merged;
+    }
+    return getShows();
+  } finally {
+    bulkWriteActive = false;
+    bulkPendingShows.clear();
+    bulkRemovedShowIds.clear();
+    bulkExternallyEditedShowIds.clear();
+  }
 }
 
 export function upsertShow(show: Show): Show[] {
+  if (bulkWriteActive) {
+    bulkRemovedShowIds.delete(show.tmdbId);
+    bulkExternallyEditedShowIds.add(show.tmdbId);
+  }
   const shows = getShows();
   const idx = shows.findIndex((s) => s.tmdbId === show.tmdbId);
   if (idx >= 0) shows[idx] = show;
@@ -298,9 +299,15 @@ export function upsertShow(show: Show): Show[] {
 }
 
 export function removeShow(tmdbId: number): Show[] {
+  if (bulkWriteActive) {
+    bulkRemovedShowIds.add(tmdbId);
+    bulkPendingShows.delete(tmdbId);
+    bulkExternallyEditedShowIds.delete(tmdbId);
+  }
   const shows = getShows().filter((s) => s.tmdbId !== tmdbId);
   saveShows(shows);
   clearShowOverrides(tmdbId);
+  pruneTriedTorrentsByPrefix(`ep:${tmdbId}:`);
   return shows;
 }
 
@@ -324,6 +331,7 @@ export function upsertMovie(movie: Movie): Movie[] {
 export function removeMovie(tmdbId: number): Movie[] {
   const movies = getMovies().filter((m) => m.tmdbId !== tmdbId);
   saveMovies(movies);
+  pruneTriedTorrentsByPrefix(triedMovieKey(tmdbId), true);
   return movies;
 }
 
@@ -370,6 +378,18 @@ export function addTriedTorrents(key: string, hashes: string[]): string[] {
   all[key] = next;
   store.set('triedTorrents', all);
   return next;
+}
+
+function pruneTriedTorrentsByPrefix(prefix: string, exact = false): void {
+  const all = getTriedTorrentsMap();
+  let changed = false;
+  for (const k of Object.keys(all)) {
+    if (exact ? k === prefix : k.startsWith(prefix)) {
+      delete all[k];
+      changed = true;
+    }
+  }
+  if (changed) store.set('triedTorrents', all);
 }
 
 export function getEpisodeOverrides(): Record<string, EpisodeOverrideStatus> {
@@ -484,20 +504,8 @@ export function setLastDailyBriefingDate(day: string): void {
   store.set('lastDailyBriefingDate', day);
 }
 
-function isLibraryChannel(c: LiveTvChannel): boolean {
-  return c?.kind === 'library' || String(c?.url || '').startsWith('nightfeed://library/');
-}
-
 export function getLiveTvLineup(): LiveTvChannel[] {
-  const raw = store.get('liveTvLineup');
-  const lineup = Array.isArray(raw) ? raw : [];
-  const saved = store.get('liveTvCustomChannels');
-  const custom = Array.isArray(saved) ? saved : [];
-  const ids = new Set(lineup.map((c) => c.id));
-  const extra = custom.filter((c) => c && c.id && !ids.has(c.id) && isLibraryChannel(c));
-  return [...lineup, ...extra].map((c) =>
-    isLibraryChannel(c) ? { ...c, kind: 'library' as const } : c
-  );
+  return normalizeLiveTvLineup(store.get('liveTvLineup'), store.get('liveTvCustomChannels')).lineup;
 }
 
 export function setLiveTvLineup(channels: LiveTvChannel[]): void {
@@ -520,86 +528,34 @@ export function setLiveTvXmltvCache(xml: string): void {
 }
 
 /** Full app data snapshot for backup (includes secrets from settings). */
-export function exportBackupData(): AppData & { exportedAt: string; app: string; version: number } {
-  return {
+export function exportBackupData(): BackupSnapshot {
+  return buildBackupSnapshot({
     settings: getSettings(),
     shows: getShows(),
     movies: getMovies(),
     downloads: getDownloads(),
     triedTorrents: getTriedTorrentsMap(),
     episodeOverrides: getEpisodeOverrides(),
+    episodeResolutions: getEpisodeResolutions(),
     telegramRequests: getTelegramRequests(),
     downloadHistory: getDownloadHistory(),
     lastDailyBriefingDate: getLastDailyBriefingDate(),
     liveTvLineup: getLiveTvLineup(),
+    liveTvCustomChannels: getLiveTvLineup().filter((c) => isLibraryChannel(c)),
     liveTvXmltvCache: '',
-    exportedAt: new Date().toISOString(),
-    app: 'Nightfeed',
-    version: 1,
-  };
+  });
 }
 
 /**
- * Replace all persisted data with a backup payload.
+ * Replace all persisted data with a backup payload atomically.
  * Expects the shape written by exportBackupData (or a raw AppData object).
  */
-export function importBackupData(raw: unknown): { shows: number; movies: number } {
-  if (!raw || typeof raw !== 'object') {
-    throw new Error('Invalid backup: not an object');
-  }
-  const data = raw as Partial<AppData> & { settings?: AppSettings };
-  if (!data.settings || typeof data.settings !== 'object') {
-    throw new Error('Invalid backup: missing settings');
-  }
-  if (!Array.isArray(data.shows)) {
-    throw new Error('Invalid backup: missing shows array');
-  }
-  if (!Array.isArray(data.movies)) {
-    // Older backups may omit movies
-    data.movies = [];
-  }
-  if (!Array.isArray(data.downloads)) {
-    data.downloads = [];
-  }
-  if (!(data as AppData).triedTorrents || typeof (data as AppData).triedTorrents !== 'object') {
-    (data as AppData).triedTorrents = {};
-  }
-  if (!data.episodeOverrides || typeof data.episodeOverrides !== 'object') {
-    data.episodeOverrides = {};
-  }
-  if (!Array.isArray((data as AppData).telegramRequests)) {
-    (data as AppData).telegramRequests = [];
-  }
-
-  const nextSettings: AppSettings = { ...DEFAULT_SETTINGS, ...data.settings };
-  nextSettings.torrentSources = migrateTorrentSources(data.settings as Partial<AppSettings>);
-  if (nextSettings.telegramAdminChatIds == null) nextSettings.telegramAdminChatIds = '';
-  if (nextSettings.telegramRequestChatIds == null) nextSettings.telegramRequestChatIds = '';
-  if (typeof nextSettings.webPortalEnabled !== 'boolean') nextSettings.webPortalEnabled = false;
-  if (!nextSettings.webPortalPort || nextSettings.webPortalPort < 1) nextSettings.webPortalPort = 8787;
-  if (nextSettings.webPortalBind !== 'lan') nextSettings.webPortalBind = 'localhost';
-  if (nextSettings.webPortalAdminPasswordHash == null) nextSettings.webPortalAdminPasswordHash = '';
-  if (nextSettings.webPortalSessionSecret == null) nextSettings.webPortalSessionSecret = '';
-  if (
-    !(nextSettings.telegramAdminChatIds || '').trim() &&
-    !(nextSettings.telegramRequestChatIds || '').trim() &&
-    (nextSettings.telegramAllowedChatIds || '').trim()
-  ) {
-    nextSettings.telegramAdminChatIds = nextSettings.telegramAllowedChatIds;
-  }
-
-  store.set('settings', nextSettings);
-  store.set('shows', data.shows);
-  store.set('movies', data.movies);
-  store.set('downloads', data.downloads);
-  store.set('triedTorrents', (data as AppData).triedTorrents || {});
-  store.set('episodeOverrides', data.episodeOverrides);
-  store.set('telegramRequests', (data as AppData).telegramRequests || []);
-  store.set('downloadHistory', Array.isArray((data as AppData).downloadHistory) ? (data as AppData).downloadHistory : []);
-  store.set(
-    'lastDailyBriefingDate',
-    typeof (data as AppData).lastDailyBriefingDate === 'string' ? (data as AppData).lastDailyBriefingDate : ''
-  );
-
-  return { shows: data.shows.length, movies: (data.movies || []).length };
+export function importBackupData(raw: unknown): {
+  shows: number;
+  movies: number;
+  liveTvChannels: number;
+} {
+  const { data, counts } = prepareImportedBackupData(raw);
+  store.store = data;
+  return counts;
 }
