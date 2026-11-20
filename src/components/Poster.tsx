@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const MAX_CACHE_ENTRIES = 1000;
 const posterMemoryCache = new Map<string, string>();
@@ -12,6 +12,12 @@ function rememberPoster(remote: string, local: string): void {
   posterMemoryCache.set(remote, local);
 }
 
+function tierForWidth(width: number): 'thumb' | 'w342' | 'w500' {
+  if (width <= 64) return 'thumb';
+  if (width >= 170) return 'w500';
+  return 'w342';
+}
+
 export default function Poster({
   path,
   alt,
@@ -23,19 +29,57 @@ export default function Poster({
   width?: number;
   height?: number;
 }) {
-  const remote = path ? window.torrentAPI.posterUrl(path, width > 200 ? 'w500' : 'w342') : null;
-  const cached = remote ? posterMemoryCache.get(remote) || null : null;
+  const remote = path ? window.torrentAPI.posterUrl(path, tierForWidth(width)) : null;
+  const memoryHit = remote ? posterMemoryCache.get(remote) || null : null;
+  const isRemoteHttp = !!remote && /^https?:\/\//i.test(remote);
+
+  const [inView, setInView] = useState<boolean>(() => !isRemoteHttp || !!memoryHit);
   const [src, setSrc] = useState<string | null>(() => {
     if (!remote || failedPosters.has(remote)) return null;
-    return cached || (remote && /^https?:\/\//i.test(remote) ? null : remote);
+    if (!isRemoteHttp) return remote;
+    return memoryHit;
   });
+  const [failed, setFailed] = useState<boolean>(() => !remote || failedPosters.has(remote));
+  const holderRef = useRef<HTMLDivElement | null>(null);
+
+  // Defer remote cache requests for off-screen cards so visible posters load first.
+  useEffect(() => {
+    if (!remote || !isRemoteHttp || posterMemoryCache.has(remote)) {
+      setInView(true);
+      return;
+    }
+    const el = holderRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setInView(true);
+      return;
+    }
+    let done = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (done) return;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            done = true;
+            setInView(true);
+            observer.disconnect();
+            break;
+          }
+        }
+      },
+      { rootMargin: '400px 0px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [remote, isRemoteHttp]);
 
   useEffect(() => {
     if (!remote || failedPosters.has(remote)) {
       setSrc(null);
+      setFailed(true);
       return;
     }
-    if (!/^https?:\/\//i.test(remote)) {
+    setFailed(false);
+    if (!isRemoteHttp) {
       setSrc(remote);
       return;
     }
@@ -44,8 +88,8 @@ export default function Poster({
       setSrc(hit);
       return;
     }
+    if (!inView) return;
     let cancelled = false;
-    // Ask main process cache first to avoid double-fetching remote CDN + main cache simultaneously.
     const cacheCall = window.torrentAPI.cachedPoster?.(remote);
     if (!cacheCall) {
       setSrc(remote);
@@ -64,9 +108,9 @@ export default function Poster({
     return () => {
       cancelled = true;
     };
-  }, [remote]);
+  }, [remote, isRemoteHttp, inView]);
 
-  if (!src) {
+  if (!remote || failed) {
     return (
       <div
         className="poster"
@@ -85,6 +129,18 @@ export default function Poster({
       </div>
     );
   }
+
+  if (!src) {
+    return (
+      <div
+        ref={holderRef}
+        className="poster skeleton-poster"
+        aria-label={alt}
+        style={{ width, height }}
+      />
+    );
+  }
+
   return (
     <img
       className="poster"
@@ -101,6 +157,7 @@ export default function Poster({
           return;
         }
         if (remote) failedPosters.add(remote);
+        setFailed(true);
         setSrc(null);
       }}
     />

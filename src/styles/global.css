@@ -969,9 +969,15 @@ table.dense tr:hover td {
 /* Library poster grid — content-visibility helps with 200+ cards */
 .poster-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(140px, 168px));
   gap: 1.1rem;
   width: 100%;
+}
+
+.poster-card .poster {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 2 / 3;
 }
 
 .poster-card {

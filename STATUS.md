@@ -1,6 +1,12 @@
 # Nightfeed status
 
-**Current:** v2.4.47 — Live TV overhaul (verified GPU encoder probing, real durations, in-order show playback, stream sharing, gzipped/persistent XMLTV, UI polish) and switch to MIT License.
+**Current:** v2.4.48 — Fast, sharp movie posters (CDN resizing, viewport lazy-loading, deduplicated/capped poster cache, crisp 2:3 card sizing).
+
+# Status v2.4.48
+
+## Improved & Fixed
+- Sized IMDb/Amazon poster URLs (`UX140` / `UX360` / `UX560`) cut movie poster downloads ~80x and eliminate heavy downscale aliasing/pixelation
+- Viewport-aware `Poster` lazy-loading + skeleton shimmer, deduplicated & concurrency-capped `poster-cache.ts` with oversized-image downscaling, and crisp `140–168px` poster grid sizing
 
 # Status v2.4.47
 

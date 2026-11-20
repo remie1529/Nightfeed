@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.48
+
+### Improved & Fixed
+- Movie posters now request crisp sized IMDb/Amazon CDN variants (~35–75 KB instead of raw 3–15 MB theatrical print files) and upgrade tiny thumbnails, fixing both slow loading and pixelated downscaling in the Movies tab
+- Added viewport lazy-loading (`IntersectionObserver`) and shimmer loading states to posters so visible cards load immediately instead of waiting behind off-screen posters
+- Added in-flight request deduplication, an 8-connection download concurrency cap, 12-second fetch timeouts, and automatic oversized-image downscaling to the poster cache
+- Capped poster grid card width (`140–168px`, crisp `2:3` aspect ratio) so movie and show posters stay sharp on wide monitors
+
 ## 2.4.47
 
 ### Added & Improved

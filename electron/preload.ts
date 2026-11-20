@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { sizePosterUrl } from './services/poster-url';
 import type {
   AppSettings,
   CalendarEpisode,
@@ -386,11 +387,7 @@ const api = {
     };
   },
 
-  posterUrl: (path: string | null, _size?: string) => {
-    if (!path) return null;
-    if (path.startsWith('http://') || path.startsWith('https://')) return path;
-    return path;
-  },
+  posterUrl: (path: string | null, size?: string) => sizePosterUrl(path, size),
 };
 
 contextBridge.exposeInMainWorld('torrentAPI', api);
