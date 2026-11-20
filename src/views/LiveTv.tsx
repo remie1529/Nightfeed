@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppSettings, LiveTvChannel, LiveTvEpgOption, LiveTvStatus, ShowListItem } from '../lib/types';
+import type {
+  AppSettings,
+  LiveTvChannel,
+  LiveTvEpgOption,
+  LiveTvStatus,
+  LiveTvTestResult,
+  ShowListItem,
+} from '../lib/types';
 
 const PAGE_SIZE = 100;
 
@@ -19,6 +26,7 @@ export default function LiveTvView() {
   const [channels, setChannels] = useState<LiveTvChannel[]>([]);
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('');
+  const [enabledOnly, setEnabledOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -29,10 +37,12 @@ export default function LiveTvView() {
   const [customShow, setCustomShow] = useState<number | ''>('');
   const [page, setPage] = useState(0);
   const [numDrafts, setNumDrafts] = useState<Record<string, string>>({});
+  const [testResults, setTestResults] = useState<Record<string, LiveTvTestResult | 'testing'>>({});
   const channelsRef = useRef<LiveTvChannel[]>(channels);
   channelsRef.current = channels;
   const persistChainRef = useRef<Promise<void>>(Promise.resolve());
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
 
   const load = useCallback(async () => {
     const [s, st, ch, epg] = await Promise.all([
@@ -41,15 +51,18 @@ export default function LiveTvView() {
       window.torrentAPI.getLiveTvChannels?.(),
       window.torrentAPI.getLiveTvEpgOptions?.(),
     ]);
+    if (!mountedRef.current) return;
     setSettings(s as AppSettings);
     setStatus((st || null) as LiveTvStatus | null);
     setChannels(Array.isArray(ch) ? (ch as LiveTvChannel[]) : []);
     setEpgOptions(Array.isArray(epg) ? (epg as LiveTvEpgOption[]) : []);
     const shows = await window.torrentAPI.getShows?.();
+    if (!mountedRef.current) return;
     setLibShows(Array.isArray(shows) ? (shows as ShowListItem[]) : []);
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     let cancelled = false;
     void load().catch((e) => {
       if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -63,6 +76,7 @@ export default function LiveTvView() {
         .catch(() => undefined);
     }, 4000);
     return () => {
+      mountedRef.current = false;
       cancelled = true;
       clearInterval(t);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
@@ -73,10 +87,11 @@ export default function LiveTvView() {
     setError(null);
     try {
       const next = (await window.torrentAPI.setSettings(partial)) as AppSettings;
+      if (!mountedRef.current) return;
       setSettings(next);
       setStatus((await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mountedRef.current) setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -84,16 +99,34 @@ export default function LiveTvView() {
     setBusy(true);
     setError(null);
     try {
+      // Flush any edited source fields before refreshing so clicking Refresh right after typing works.
+      if (settings) {
+        const saved = (await window.torrentAPI.setSettings({
+          liveTvSourceType: settings.liveTvSourceType,
+          liveTvM3uUrl: settings.liveTvM3uUrl,
+          liveTvXmltvUrl: settings.liveTvXmltvUrl,
+          liveTvXtreamHost: settings.liveTvXtreamHost,
+          liveTvXtreamPort: settings.liveTvXtreamPort,
+          liveTvXtreamUsername: settings.liveTvXtreamUsername,
+          liveTvXtreamPassword: settings.liveTvXtreamPassword,
+          liveTvXtreamHls: settings.liveTvXtreamHls,
+          liveTvDirectUrl: settings.liveTvDirectUrl,
+          liveTvDirectName: settings.liveTvDirectName,
+        })) as AppSettings;
+        if (mountedRef.current) setSettings(saved);
+      }
       const ch = (await window.torrentAPI.refreshLiveTv?.()) as LiveTvChannel[];
+      if (!mountedRef.current) return;
       setChannels(Array.isArray(ch) ? ch : []);
       setNumDrafts({});
+      setTestResults({});
       setStatus((await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus);
       const epg = await window.torrentAPI.getLiveTvEpgOptions?.();
-      setEpgOptions(Array.isArray(epg) ? (epg as LiveTvEpgOption[]) : []);
+      if (mountedRef.current) setEpgOptions(Array.isArray(epg) ? (epg as LiveTvEpgOption[]) : []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mountedRef.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
 
@@ -104,35 +137,84 @@ export default function LiveTvView() {
       .then(async () => {
         await window.torrentAPI.setLiveTvChannels?.(next);
         const st = (await window.torrentAPI.getLiveTvStatus?.()) as LiveTvStatus;
-        if (st) setStatus(st);
+        if (mountedRef.current && st) setStatus(st);
       })
       .catch((e) => {
-        setError(e instanceof Error ? e.message : String(e));
+        if (mountedRef.current) setError(e instanceof Error ? e.message : String(e));
       });
     return persistChainRef.current;
   };
 
+  const pickChannelIcon = async (channelId: string) => {
+    try {
+      const p = await window.torrentAPI.pickFile?.([
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+      ]);
+      if (!p) return;
+      const next = (await window.torrentAPI.setLiveTvIcon?.(channelId, p)) as LiveTvChannel[];
+      if (mountedRef.current && Array.isArray(next)) {
+        channelsRef.current = next;
+        setChannels(next);
+      }
+    } catch (e) {
+      if (mountedRef.current) setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const runChannelTest = async (channelId: string) => {
+    setTestResults((prev) => ({ ...prev, [channelId]: 'testing' }));
+    try {
+      const res = await window.torrentAPI.testLiveTvChannel?.(channelId);
+      if (!mountedRef.current) return;
+      if (res) {
+        setTestResults((prev) => ({ ...prev, [channelId]: res }));
+      }
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setTestResults((prev) => ({
+        ...prev,
+        [channelId]: {
+          ok: false,
+          latencyMs: 0,
+          detail: e instanceof Error ? e.message : String(e),
+        },
+      }));
+    }
+  };
+
+  const dismissStreamError = async () => {
+    try {
+      const st = await window.torrentAPI.clearLiveTvError?.();
+      if (mountedRef.current && st) setStatus(st);
+    } catch {
+      // ignore
+    }
+  };
+
   const groups = useMemo(() => {
     const s = new Set<string>();
-    for (const c of channels) if (c.group) s.add(c.group);
+    for (const c of channels) if (c.kind !== 'library' && c.group) s.add(c.group);
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [channels]);
 
   const customChannels = useMemo(() => channels.filter((c) => c.kind === 'library'), [channels]);
+  const iptvChannels = useMemo(() => channels.filter((c) => c.kind !== 'library'), [channels]);
+  const iptvEnabledCount = useMemo(() => iptvChannels.filter((c) => c.enabled).length, [iptvChannels]);
+  const enabledCount = useMemo(() => channels.filter((c) => c.enabled).length, [channels]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return channels.filter((c) => {
-      if (c.kind === 'library') return false;
+    return iptvChannels.filter((c) => {
+      if (enabledOnly && !c.enabled) return false;
       if (group && c.group !== group) return false;
       if (q && !`${c.name} ${c.group} ${c.tvgId}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [channels, query, group]);
+  }, [iptvChannels, query, group, enabledOnly]);
 
   useEffect(() => {
     setPage(0);
-  }, [query, group]);
+  }, [query, group, enabledOnly]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -143,10 +225,9 @@ export default function LiveTvView() {
 
   const applyToVisible = (patch: Partial<LiveTvChannel>) => {
     const visibleIds = new Set(visible.map((v) => v.id));
-    void persist(channels.map((c) => (visibleIds.has(c.id) ? { ...c, ...patch } : c)));
+    void persist(channelsRef.current.map((c) => (visibleIds.has(c.id) ? { ...c, ...patch } : c)));
   };
 
-  const enabledCount = useMemo(() => channels.filter((c) => c.enabled).length, [channels]);
   const s = settings;
 
   const copy = async (text: string, label: string) => {
@@ -161,6 +242,76 @@ export default function LiveTvView() {
     } catch {
       setCopied(null);
     }
+  };
+
+  const renderNumberInput = (c: LiveTvChannel) => {
+    const numValue = numDrafts[c.id] !== undefined ? numDrafts[c.id] : String(c.number);
+    return (
+      <input
+        className="mono"
+        style={{ width: 64, padding: '0.25rem 0.35rem' }}
+        value={numValue}
+        onChange={(e) => {
+          const raw = e.target.value.replace(/[^0-9]/g, '');
+          setNumDrafts((prev) => ({ ...prev, [c.id]: raw }));
+        }}
+        onBlur={() => {
+          const raw = numDrafts[c.id];
+          setNumDrafts((prev) => {
+            if (!(c.id in prev)) return prev;
+            const copy = { ...prev };
+            delete copy[c.id];
+            return copy;
+          });
+          if (raw === undefined) return;
+          const parsed = parseInt(raw, 10);
+          const nextNum = Number.isFinite(parsed) && parsed >= 1 ? parsed : c.number;
+          if (nextNum === c.number) return;
+          void persist(channelsRef.current.map((x) => (x.id === c.id ? { ...x, number: nextNum } : x)));
+        }}
+      />
+    );
+  };
+
+  const renderIconCell = (c: LiveTvChannel) => {
+    const iconSrc = c.logoPreview || (/^https?:\/\//i.test(c.logo) ? c.logo : '');
+    return (
+      <div className="row" style={{ gap: 4, alignItems: 'center' }}>
+        {iconSrc ? <img className="ltv-logo" src={iconSrc} alt="" /> : <span className="ltv-logo ltv-logo-empty" />}
+        <button
+          type="button"
+          style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
+          title="Choose local icon image"
+          onClick={() => void pickChannelIcon(c.id)}
+        >
+          …
+        </button>
+      </div>
+    );
+  };
+
+  const renderTestStatus = (channelId: string) => {
+    const res = testResults[channelId];
+    if (!res) return null;
+    if (res === 'testing') {
+      return (
+        <div className="hint" style={{ margin: '2px 0 0', fontSize: '0.75rem' }}>
+          Testing…
+        </div>
+      );
+    }
+    return (
+      <div
+        className="hint"
+        style={{
+          margin: '2px 0 0',
+          fontSize: '0.75rem',
+          color: res.ok ? 'var(--ok, #6fcf97)' : 'var(--danger)',
+        }}
+      >
+        {res.detail}
+      </div>
+    );
   };
 
   return (
@@ -181,7 +332,17 @@ export default function LiveTvView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
-      {status?.lastError && <div className="error-banner">{status.lastError}</div>}
+      {status?.lastError && (
+        <div
+          className="error-banner"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
+        >
+          <span>{status.lastError}</span>
+          <button type="button" onClick={() => void dismissStreamError()} style={{ flexShrink: 0 }}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {enabledCount > 400 && (
         <div className="error-banner">Plex may struggle with more than ~400 enabled channels ({enabledCount} on).</div>
       )}
@@ -189,8 +350,8 @@ export default function LiveTvView() {
       <div className="settings-section">Plex</div>
       <div className="hint" style={{ marginBottom: 12 }}>
         Plex Pass → Settings → Live TV &amp; DVR → Set Up Plex DVR → “Don’t see your HDHomeRun?” → paste the tuner
-        URL. Then add the XMLTV guide URL. Plex needs MPEG-TS; Nightfeed converts HLS (.m3u8) automatically. If a
-        channel still won’t play, install ffmpeg and set Settings → Live TV → Buffer to ffmpeg.
+        URL. Then add the XMLTV guide URL. Plex needs MPEG-TS; Nightfeed converts HLS (.m3u8) automatically and shares
+        active channel streams across multiple viewers.
       </div>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         <code className="status-line">{status?.tunerUrl || '—'}</code>
@@ -204,10 +365,13 @@ export default function LiveTvView() {
       </div>
       <div className="hint" style={{ marginBottom: 16 }}>
         Tuners in use: {status?.tunersInUse ?? 0}/{status?.tuners ?? 0}
-        {status?.active?.length
-          ? ` — ${status.active.map((a) => `${a.number} ${a.name}`).join(', ')}`
+        {status?.active?.length ? ` — ${status.active.map((a) => `${a.number} ${a.name}`).join(', ')}` : ''}
+        {status?.ffmpegFound
+          ? ` · ffmpeg ready${status.hwEncoder ? ` (${status.hwEncoder})` : ''}`
+          : ' · ffmpeg not found (auto-installs for custom channels)'}
+        {typeof status?.epgChannelCount === 'number' && status.epgChannelCount > 0
+          ? ` · EPG: ${status.epgChannelCount} channels`
           : ''}
-        {status?.ffmpegFound ? ` · ffmpeg ${status.ffmpegPath}` : ' · ffmpeg not found (memory/off buffer still work)'}
       </div>
 
       <div className="settings-section">Source</div>
@@ -257,11 +421,12 @@ export default function LiveTvView() {
                 </div>
               </div>
               <div className="field">
-                <label>XMLTV guide URL (optional)</label>
+                <label>XMLTV guide URL (optional, supports .xml and .xml.gz)</label>
                 <input
                   value={s.liveTvXmltvUrl || ''}
                   onChange={(e) => setSettings({ ...s, liveTvXmltvUrl: e.target.value })}
                   onBlur={() => void saveSettings({ liveTvXmltvUrl: s.liveTvXmltvUrl })}
+                  placeholder="https://…/epg.xml.gz"
                 />
               </div>
             </>
@@ -275,6 +440,24 @@ export default function LiveTvView() {
                   placeholder="http://host:port or host"
                   onChange={(e) => setSettings({ ...s, liveTvXtreamHost: e.target.value })}
                   onBlur={() => void saveSettings({ liveTvXtreamHost: s.liveTvXtreamHost })}
+                />
+              </div>
+              <div className="field">
+                <label>Port (when not included in Host)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={s.liveTvXtreamPort ?? 80}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    setSettings({ ...s, liveTvXtreamPort: Number.isFinite(n) ? n : 80 });
+                  }}
+                  onBlur={() =>
+                    void saveSettings({
+                      liveTvXtreamPort: Math.max(1, Math.min(65535, s.liveTvXtreamPort || 80)),
+                    })
+                  }
                 />
               </div>
               <div className="field">
@@ -295,6 +478,15 @@ export default function LiveTvView() {
                   onBlur={() => void saveSettings({ liveTvXtreamPassword: s.liveTvXtreamPassword })}
                 />
                 <div className="hint">Never logged.</div>
+              </div>
+              <div className="field">
+                <label>XMLTV guide URL override (optional, leave blank to use Xtream EPG)</label>
+                <input
+                  value={s.liveTvXmltvUrl || ''}
+                  onChange={(e) => setSettings({ ...s, liveTvXmltvUrl: e.target.value })}
+                  onBlur={() => void saveSettings({ liveTvXmltvUrl: s.liveTvXmltvUrl })}
+                  placeholder="Optional custom .xml / .xml.gz URL"
+                />
               </div>
               <div className="field">
                 <label className="toggle-row">
@@ -331,10 +523,11 @@ export default function LiveTvView() {
         </>
       )}
 
-      <div className="settings-section">Custom channels</div>
+      <div className="settings-section">Custom channels ({customChannels.length})</div>
       <div className="hint" style={{ marginBottom: 10 }}>
-        These play files already in your TV and movie libraries. The guide lists the movie or episode that is on.
-        Nightfeed downloads ffmpeg automatically the first time a custom channel plays. H.264 files are copied (almost no CPU). Other files are decoded and encoded on the GPU. Enable the channel, then refresh the Plex DVR guide.
+        These play files already in your TV and movie libraries using real probed durations and continuous schedules.
+        H.264 files copy video directly; HEVC/other codecs use your verified GPU encoder ({status?.hwEncoder || 'auto'})
+        when available.
       </div>
       <div className="toolbar" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
         <input
@@ -375,7 +568,7 @@ export default function LiveTvView() {
           onClick={() => {
             if (customMode === 'show' && customShow === '') return;
             const id = `lib-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-            const number = channels.reduce((max, c) => Math.max(max, c.number || 0), 0) + 1;
+            const number = channelsRef.current.reduce((max, c) => Math.max(max, c.number || 0), 0) + 1;
             const ch: LiveTvChannel = {
               id,
               name: customName.trim() || 'Nightfeed',
@@ -390,7 +583,7 @@ export default function LiveTvView() {
               showTmdbId: customMode === 'show' && customShow !== '' ? Number(customShow) : null,
               epgCustom: true,
             };
-            void persist([ch, ...channels]);
+            void persist([ch, ...channelsRef.current]);
           }}
         >
           Add channel
@@ -402,9 +595,12 @@ export default function LiveTvView() {
             <thead>
               <tr>
                 <th style={{ width: 52 }}>On</th>
+                <th style={{ width: 70 }}>#</th>
+                <th style={{ width: 52 }}>Icon</th>
                 <th>Name</th>
                 <th>Plays</th>
-                <th style={{ width: 90 }}></th>
+                <th>Now playing</th>
+                <th style={{ width: 150 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -416,25 +612,51 @@ export default function LiveTvView() {
                       checked={c.enabled}
                       onChange={(e) =>
                         void persist(
-                          channels.map((x) => (x.id === c.id ? { ...x, enabled: e.target.checked } : x))
+                          channelsRef.current.map((x) => (x.id === c.id ? { ...x, enabled: e.target.checked } : x))
                         )
                       }
                     />
                   </td>
-                  <td>{c.name}</td>
+                  <td>{renderNumberInput(c)}</td>
+                  <td>{renderIconCell(c)}</td>
+                  <td>
+                    <input
+                      value={c.name}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const next = channelsRef.current.map((x) => (x.id === c.id ? { ...x, name: v } : x));
+                        channelsRef.current = next;
+                        setChannels(next);
+                      }}
+                      onBlur={() => void persist(channelsRef.current)}
+                    />
+                  </td>
                   <td style={{ color: 'var(--text-dim)' }}>
                     {LIBRARY_MODES.find((m) => m.id === c.libraryMode)?.label || c.libraryMode}
                     {c.libraryMode === 'show'
-                      ? ` — ${libShows.find((s) => s.tmdbId === c.showTmdbId)?.name || 'show'}`
+                      ? ` — ${libShows.find((sh) => sh.tmdbId === c.showTmdbId)?.name || 'show'}`
                       : ''}
                   </td>
+                  <td style={{ color: 'var(--text-dim)', maxWidth: 260 }}>
+                    <div>{status?.libraryNowPlaying?.[c.id] || '—'}</div>
+                    {renderTestStatus(c.id)}
+                  </td>
                   <td>
-                    <button
-                      type="button"
-                      onClick={() => void persist(channels.filter((x) => x.id !== c.id))}
-                    >
-                      Remove
-                    </button>
+                    <div className="row" style={{ gap: 6 }}>
+                      <button
+                        type="button"
+                        disabled={testResults[c.id] === 'testing'}
+                        onClick={() => void runChannelTest(c.id)}
+                      >
+                        Test
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void persist(channelsRef.current.filter((x) => x.id !== c.id))}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -444,9 +666,9 @@ export default function LiveTvView() {
       )}
 
       <div className="settings-section">
-        IPTV channels ({enabledCount} enabled / {channels.length})
+        IPTV channels ({iptvEnabledCount} enabled / {iptvChannels.length})
       </div>
-      <div className="toolbar" style={{ marginBottom: 10 }}>
+      <div className="toolbar" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
         <input
           style={{ maxWidth: 220 }}
           placeholder="Search channels…"
@@ -461,28 +683,24 @@ export default function LiveTvView() {
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          onClick={() => applyToVisible({ enabled: true })}
-        >
+        <label className="toggle-row" style={{ margin: '0 4px' }}>
+          <input
+            type="checkbox"
+            checked={enabledOnly}
+            onChange={(e) => setEnabledOnly(e.target.checked)}
+          />
+          <span>Enabled only</span>
+        </label>
+        <button type="button" onClick={() => applyToVisible({ enabled: true })}>
           Enable visible
         </button>
-        <button
-          type="button"
-          onClick={() => applyToVisible({ enabled: false })}
-        >
+        <button type="button" onClick={() => applyToVisible({ enabled: false })}>
           Disable visible
         </button>
-        <button
-          type="button"
-          onClick={() => applyToVisible({ fakeEpg: true })}
-        >
+        <button type="button" onClick={() => applyToVisible({ fakeEpg: true })}>
           Fake EPG on visible
         </button>
-        <button
-          type="button"
-          onClick={() => applyToVisible({ fakeEpg: false })}
-        >
+        <button type="button" onClick={() => applyToVisible({ fakeEpg: false })}>
           Clear fake on visible
         </button>
       </div>
@@ -492,11 +710,7 @@ export default function LiveTvView() {
             Showing {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, visible.length)} of{' '}
             {visible.length} matching channels
           </span>
-          <button
-            type="button"
-            disabled={safePage === 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-          >
+          <button type="button" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
             ← Prev
           </button>
           <span className="mono" style={{ fontSize: '0.82rem' }}>
@@ -523,10 +737,15 @@ export default function LiveTvView() {
         ))}
       </datalist>
 
-      {channels.length === 0 ? (
+      {iptvChannels.length === 0 ? (
         <div className="empty-state">
-          <h2>No channels yet</h2>
+          <h2>No IPTV channels yet</h2>
           <p>Set a source above and click Refresh playlist. New channels stay off until you enable them for Plex.</p>
+        </div>
+      ) : visible.length === 0 ? (
+        <div className="empty-state">
+          <h2>No matching channels</h2>
+          <p>Try clearing your search, group, or “Enabled only” filter.</p>
         </div>
       ) : (
         <div className="table-wrap">
@@ -540,77 +759,25 @@ export default function LiveTvView() {
                 <th>Group</th>
                 <th>EPG id</th>
                 <th style={{ width: 70 }}>Fake</th>
+                <th style={{ width: 90 }}>Test</th>
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((c) => {
-                const iconSrc = c.logoPreview || (/^https?:\/\//i.test(c.logo) ? c.logo : '');
-                const numValue = numDrafts[c.id] !== undefined ? numDrafts[c.id] : String(c.number);
-                return (
+              {pageRows.map((c) => (
                 <tr key={c.id}>
                   <td>
                     <input
                       type="checkbox"
                       checked={c.enabled}
                       onChange={(e) =>
-                        void persist(channelsRef.current.map((x) => (x.id === c.id ? { ...x, enabled: e.target.checked } : x)))
+                        void persist(
+                          channelsRef.current.map((x) => (x.id === c.id ? { ...x, enabled: e.target.checked } : x))
+                        )
                       }
                     />
                   </td>
-                  <td>
-                    <input
-                      className="mono"
-                      style={{ width: 64, padding: '0.25rem 0.35rem' }}
-                      value={numValue}
-                      onChange={(e) => {
-                        const raw = e.target.value.replace(/[^0-9]/g, '');
-                        setNumDrafts((prev) => ({ ...prev, [c.id]: raw }));
-                      }}
-                      onBlur={() => {
-                        const raw = numDrafts[c.id];
-                        setNumDrafts((prev) => {
-                          if (!(c.id in prev)) return prev;
-                          const copy = { ...prev };
-                          delete copy[c.id];
-                          return copy;
-                        });
-                        if (raw === undefined) return;
-                        const parsed = parseInt(raw, 10);
-                        const nextNum = Number.isFinite(parsed) && parsed >= 1 ? parsed : c.number;
-                        if (nextNum === c.number) return;
-                        void persist(
-                          channelsRef.current.map((x) => (x.id === c.id ? { ...x, number: nextNum } : x))
-                        );
-                      }}
-                    />
-                  </td>
-                  <td>
-                    <div className="row" style={{ gap: 4, alignItems: 'center' }}>
-                      {iconSrc ? (
-                        <img className="ltv-logo" src={iconSrc} alt="" />
-                      ) : (
-                        <span className="ltv-logo ltv-logo-empty" />
-                      )}
-                      <button
-                        type="button"
-                        style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
-                        onClick={async () => {
-                          try {
-                            const p = await window.torrentAPI.pickFile?.([
-                              { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
-                            ]);
-                            if (!p) return;
-                            const next = (await window.torrentAPI.setLiveTvIcon?.(c.id, p)) as LiveTvChannel[];
-                            if (Array.isArray(next)) setChannels(next);
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : String(e));
-                          }
-                        }}
-                      >
-                        …
-                      </button>
-                    </div>
-                  </td>
+                  <td>{renderNumberInput(c)}</td>
+                  <td>{renderIconCell(c)}</td>
                   <td>
                     <input
                       value={c.name}
@@ -622,6 +789,7 @@ export default function LiveTvView() {
                       }}
                       onBlur={() => void persist(channelsRef.current)}
                     />
+                    {renderTestStatus(c.id)}
                   </td>
                   <td style={{ color: 'var(--text-dim)' }}>{c.group || '—'}</td>
                   <td>
@@ -661,9 +829,17 @@ export default function LiveTvView() {
                       }
                     />
                   </td>
+                  <td>
+                    <button
+                      type="button"
+                      disabled={testResults[c.id] === 'testing'}
+                      onClick={() => void runChannelTest(c.id)}
+                    >
+                      {testResults[c.id] === 'testing' ? '…' : 'Test'}
+                    </button>
+                  </td>
                 </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
         </div>

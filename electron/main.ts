@@ -105,7 +105,7 @@ import { writeBackupJsonViaPool, readBackupJsonViaPool, destroyBackupPool } from
 import { destroyLiveTvPool } from './services/livetv-pool';
 import { destroyTelegramSendPool } from './services/telegram-send-pool';
 import { vpnManager } from './services/vpn';
-import { ensureFfmpeg, liveTv, withLogoPreview } from './services/live-tv';
+import { ensureFfmpeg, liveTv, withLogoPreviews } from './services/live-tv';
 import { nightfeedMcp } from './services/mcp';
 import {
   magnetDisplayName,
@@ -4331,15 +4331,15 @@ function registerIpc() {
     }
   );
   ipcMain.handle('liveTv:status', () => liveTv.getStatus(getSettings()));
-  ipcMain.handle('liveTv:channels', () => getLiveTvLineup().map(withLogoPreview));
+  ipcMain.handle('liveTv:channels', () => withLogoPreviews(getLiveTvLineup()));
   ipcMain.handle('liveTv:refresh', async () => {
     activityLog.info('livetv', 'Refreshing Live TV sources');
     const r = await liveTv.refreshSources();
     activityLog.info('livetv', 'Live TV sources refreshed');
-    return r.map(withLogoPreview);
+    return withLogoPreviews(r);
   });
   ipcMain.handle('liveTv:setChannels', (_e, channels: LiveTvChannel[]) => {
-    if (!Array.isArray(channels)) return getLiveTvLineup().map(withLogoPreview);
+    if (!Array.isArray(channels)) return withLogoPreviews(getLiveTvLineup());
     activityLog.info('livetv', `Saving Live TV lineup (${channels.length} channel(s))`);
     setLiveTvLineup(
       channels.map((c, i) => ({
@@ -4359,11 +4359,18 @@ function registerIpc() {
         showTmdbId: c.showTmdbId != null ? Number(c.showTmdbId) : null,
       }))
     );
-    return getLiveTvLineup().map(withLogoPreview);
+    liveTv.probeLibraryDurationsInBackground();
+    return withLogoPreviews(getLiveTvLineup());
   });
   ipcMain.handle('liveTv:epgOptions', () => liveTv.epgOptions());
   ipcMain.handle('liveTv:setIcon', (_e, channelId: string, filePath: string) => {
     return liveTv.applyChannelIcon(String(channelId || ''), String(filePath || ''));
+  });
+  ipcMain.handle('liveTv:testChannel', (_e, channelId: string) => {
+    return liveTv.testChannel(String(channelId || ''));
+  });
+  ipcMain.handle('liveTv:clearError', () => {
+    return liveTv.clearError(getSettings());
   });
   ipcMain.handle('dialog:pickFile', async (_e, filters?: Array<{ name: string; extensions: string[] }>) => {
     const r = await dialog.showOpenDialog(mainWindow!, {

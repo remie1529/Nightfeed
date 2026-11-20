@@ -6,10 +6,16 @@ import http from 'http';
 import https from 'https';
 import fs from 'fs';
 import crypto from 'crypto';
+import zlib from 'zlib';
 import type { AppSettings, LiveTvChannel } from '../types';
 
 const ADULT_RE = /xxx|adult|porn|erotic|18\+|nsfw|playboy/i;
 const DEFAULT_UA = 'VLC/3.0.20 LibVLC/3.0.20';
+const MAX_COMPRESSED_BYTES = 80_000_000;
+const MAX_DECOMPRESSED_BYTES = 120_000_000;
+
+// IPTV providers frequently serve playlists/XMLTV over self-signed HTTPS.
+const iptvHttpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
 
 export type LiveTvRefreshInput = {
   settings: AppSettings;
@@ -25,8 +31,33 @@ function channelId(url: string): string {
   return crypto.createHash('sha1').update(url).digest('hex').slice(0, 12);
 }
 
+function deduplicateChannelIds(list: LiveTvChannel[]): LiveTvChannel[] {
+  const counts = new Map<string, number>();
+  return list.map((ch) => {
+    const seen = counts.get(ch.id) || 0;
+    counts.set(ch.id, seen + 1);
+    if (seen === 0) return ch;
+    return { ...ch, id: `${ch.id}-${seen + 1}` };
+  });
+}
+
 export function isAdult(ch: { group?: string; name?: string }): boolean {
   return ADULT_RE.test(`${ch.group || ''} ${ch.name || ''}`);
+}
+
+export function decodeResponseBody(buf: Buffer, contentEncoding: string, url: string): string {
+  const enc = String(contentEncoding || '').toLowerCase();
+  const isGzipMagic = buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+  const wantsGzip = enc.includes('gzip') || /\.gz(\?|$)/i.test(url) || isGzipMagic;
+  if (wantsGzip) {
+    const out = zlib.gunzipSync(buf, { maxOutputLength: MAX_DECOMPRESSED_BYTES });
+    return out.toString('utf8');
+  }
+  if (enc.includes('deflate')) {
+    const out = zlib.inflateSync(buf, { maxOutputLength: MAX_DECOMPRESSED_BYTES });
+    return out.toString('utf8');
+  }
+  return buf.toString('utf8');
 }
 
 const MAX_REDIRECTS = 6;
@@ -48,14 +79,20 @@ function fetchText(url: string, ua: string, timeoutMs = 25000, redirects = 0): P
       reject(new Error('Unsupported URL protocol'));
       return;
     }
-    const lib = u.protocol === 'https:' ? https : http;
+    const isHttps = u.protocol === 'https:';
+    const lib = isHttps ? https : http;
     const req = lib.request(
       {
         hostname: u.hostname,
-        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        port: u.port || (isHttps ? 443 : 80),
         path: u.pathname + u.search,
         method: 'GET',
-        headers: { 'User-Agent': ua, Accept: '*/*' },
+        agent: isHttps ? iptvHttpsAgent : undefined,
+        headers: {
+          'User-Agent': ua,
+          Accept: '*/*',
+          'Accept-Encoding': 'gzip, deflate',
+        },
         timeout: timeoutMs,
       },
       (res) => {
@@ -77,7 +114,7 @@ function fetchText(url: string, ua: string, timeoutMs = 25000, redirects = 0): P
         let size = 0;
         res.on('data', (c: Buffer) => {
           size += c.length;
-          if (size > 80_000_000) {
+          if (size > MAX_COMPRESSED_BYTES) {
             req.destroy();
             reject(new Error('Response too large'));
             return;
@@ -85,8 +122,17 @@ function fetchText(url: string, ua: string, timeoutMs = 25000, redirects = 0): P
           chunks.push(c);
         });
         res.on('end', () => {
-          if (code >= 400) reject(new Error(`HTTP ${code}`));
-          else resolve(Buffer.concat(chunks).toString('utf8'));
+          if (code >= 400) {
+            reject(new Error(`HTTP ${code}`));
+            return;
+          }
+          try {
+            const raw = Buffer.concat(chunks);
+            const encoding = String(res.headers['content-encoding'] || '');
+            resolve(decodeResponseBody(raw, encoding, url));
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
         });
         res.on('error', reject);
       }
@@ -114,6 +160,8 @@ export function parseM3u(text: string): LiveTvChannel[] {
       if (ua) vlc.push(`User-Agent=${ua[1].trim()}`);
       const ref = opt.match(/^http-referr?er=(.+)/i);
       if (ref) vlc.push(`Referer=${ref[1].trim()}`);
+      const origin = opt.match(/^http-origin=(.+)/i);
+      if (origin) vlc.push(`Origin=${origin[1].trim()}`);
       continue;
     }
     if (line.startsWith('#EXTINF')) {
@@ -121,8 +169,8 @@ export function parseM3u(text: string): LiveTvChannel[] {
       const attrs = comma >= 0 ? line.slice(0, comma) : line;
       const name = comma >= 0 ? line.slice(comma + 1).trim() : 'Channel';
       const attr = (key: string) => {
-        const m = attrs.match(new RegExp(`${key}="([^"]*)"`, 'i'));
-        return m?.[1] || '';
+        const m = attrs.match(new RegExp(`${key}=(?:"([^"]*)"|'([^']*)')`, 'i'));
+        return m?.[1] ?? m?.[2] ?? '';
       };
       meta = {
         name: name || attr('tvg-name') || 'Channel',
@@ -151,7 +199,7 @@ export function parseM3u(text: string): LiveTvChannel[] {
     });
     meta = null;
   }
-  return out;
+  return deduplicateChannelIds(out);
 }
 
 function xtreamBase(host: string, port: number): string {
@@ -214,20 +262,22 @@ async function fetchXtream(s: AppSettings, ua: string): Promise<LiveTvChannel[]>
   const streams = JSON.parse(await fetchText(api, ua));
   if (!Array.isArray(streams)) throw new Error('Xtream live list was not an array');
   const ext = s.liveTvXtreamHls ? 'm3u8' : 'ts';
-  return streams.map((st: Record<string, unknown>, i: number) => {
-    const id = encodeURIComponent(String(st.stream_id || ''));
-    const url = `${base}/live/${user}/${pass}/${id}.${ext}`;
-    return {
-      id: channelId(url),
-      name: String(st.name || `Stream ${id}`),
-      number: i + 1,
-      group: cats[String(st.category_id || '')] || '',
-      logo: String(st.stream_icon || ''),
-      tvgId: String(st.epg_channel_id || ''),
-      url,
-      enabled: false,
-    };
-  });
+  return deduplicateChannelIds(
+    streams.map((st: Record<string, unknown>, i: number) => {
+      const id = encodeURIComponent(String(st.stream_id || ''));
+      const url = `${base}/live/${user}/${pass}/${id}.${ext}`;
+      return {
+        id: channelId(url),
+        name: String(st.name || `Stream ${id}`),
+        number: i + 1,
+        group: cats[String(st.category_id || '')] || '',
+        logo: String(st.stream_icon || ''),
+        tvgId: String(st.epg_channel_id || ''),
+        url,
+        enabled: false,
+      };
+    })
+  );
 }
 
 export async function refreshLiveTvCore(input: LiveTvRefreshInput): Promise<LiveTvRefreshOutput> {
@@ -275,7 +325,7 @@ export async function refreshLiveTvCore(input: LiveTvRefreshInput): Promise<Live
   }
   if (xmlUrl) {
     try {
-      // Keep full XMLTV in memory even when > 8 MB; live-tv.ts skips disk cache for large guides.
+      // Full XMLTV (supports .xml.gz and Content-Encoding: gzip); live-tv.ts persists it compressed on disk.
       xmltv = await fetchText(xmlUrl, ua, 60000);
     } catch {
       xmltv = undefined;

@@ -267,6 +267,14 @@ export interface LiveTvEpgOption {
   name: string;
 }
 
+export interface LiveTvTestResult {
+  ok: boolean;
+  status?: number;
+  latencyMs: number;
+  contentType?: string;
+  detail: string;
+}
+
 export interface LiveTvStatus {
   enabled: boolean;
   listening: boolean;
@@ -274,6 +282,9 @@ export interface LiveTvStatus {
   bind: 'localhost' | 'lan';
   ffmpegFound: boolean;
   ffmpegPath: string | null;
+  hwEncoder?: string | null;
+  epgChannelCount?: number;
+  libraryNowPlaying?: Record<string, string>;
   tuners: number;
   tunersInUse: number;
   channelCount: number;

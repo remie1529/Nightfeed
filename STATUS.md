@@ -1,6 +1,18 @@
 # Nightfeed status
 
-**Current:** v2.4.46 — Resilient updater checks and downloads (no stale `net::ERR_NETWORK_CHANGED` in Settings).
+**Current:** v2.4.47 — Live TV overhaul (verified GPU encoder probing, real durations, in-order show playback, stream sharing, gzipped/persistent XMLTV, UI polish) and switch to MIT License.
+
+# Status v2.4.47
+
+## Changed
+- Switched repository and package license to MIT License
+
+## Added & Fixed (Live TV)
+- Verified GPU encoder probing (`h264_nvenc` / `h264_qsv` / `h264_amf` / `libx264`) + `vcopy-aac` + `hw-swdec` fallback + monotonic MPEG-TS timestamps
+- Fixed “One show, in order” sorting, real `ffprobe` duration caching, continuous cross-midnight scheduling, and no dead-silence gaps
+- Added shared channel stream fan-out with 2-second grace period, first-byte `200`/`502` ffmpeg handling, full custom headers, and HLS live-edge / AES-128 / fMP4 checks
+- Added `.xml.gz` / gzipped XMLTV support, compressed disk EPG cache (`>8 MB` survives restarts), O(N) XMLTV indexing, and O(1)-readdir icon previews
+- Upgraded Live TV UI with editable custom channels + Now playing, per-channel Test, Enabled-only filter, dismissible error banner, and source-flush before refresh
 
 # Status v2.4.46
 

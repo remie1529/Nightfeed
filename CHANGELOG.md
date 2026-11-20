@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.4.47
+
+### Added & Improved
+- Switched the project license to the open-source **MIT License**
+- Live TV GPU encoder probing now tests `h264_nvenc`, `h264_qsv`, and `h264_amf` against the actual GPU (with software-decode + GPU-encode fallback for 10-bit/AV1 files) instead of assuming NVIDIA NVENC is present
+- Live TV H.264 library files with DTS/TrueHD/Opus/FLAC audio now copy video directly (`-c:v copy -c:a aac`) instead of re-encoding video
+- Live TV streams are now shared (fanned out) across multiple viewers tuning the same channel with a 2-second reconnect grace period to avoid IPTV 1-connection kicks and speed up Plex tuning
+- Live TV UI improvements: editable custom library channels (channel #, icon, name, “Now playing”), per-channel **Test** button, **Enabled only** filter, dismissible stream errors, verified encoder & EPG counts, Xtream Port & optional XMLTV override fields, and flushing source edits before refreshing
+
+### Fixed
+- Custom “One show, in order” Live TV channels now play strictly in Season/Episode order instead of shuffling
+- Custom library channels now probe and cache real media durations via `ffprobe`, keep continuous epoch-anchored schedules across midnight, advance cleanly if a file ends early instead of sending dead silence, and keep MPEG-TS timestamps monotonic across back-to-back files
+- Live TV XMLTV now supports gzipped feeds (`.xml.gz` / `Content-Encoding: gzip`), persists large (>8 MB) guides compressed on disk across restarts, handles single-quoted attributes and XML entities, deduplicates shared EPG IDs, and indexes in O(N) time
+- Live TV icon preview loading now scans the icon directory once instead of once per channel, `spawnFfmpeg` forwards all sanitized custom headers and waits for first bytes before sending HTTP `200`, HLS handles variant fMP4/AES-128 checks and live-edge starts, and `stop()` closes active keep-alive connections cleanly
+
 ## 2.4.46
 
 ### Fixed

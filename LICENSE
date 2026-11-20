@@ -1,35 +1,21 @@
-Nightfeed — Proprietary License
-Copyright (c) 2026 HoffSoftware. All rights reserved.
+MIT License
 
-HoffSoftware owns Nightfeed (the "Software"), including all copyrights and
-commercial rights.
+Copyright (c) 2026 HoffSoftware
 
-1. Personal use (allowed)
-   You may download, install, and use the Software for private, non-commercial,
-   personal use only (for example at home for yourself and your household).
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-2. Not allowed without prior written permission from HoffSoftware
-   - Use in any business, organization, or commercial context
-   - Selling, renting, leasing, or licensing the Software
-   - Offering the Software (or access to it) as a paid product or service
-   - Redistributing the Software except as needed for your own personal use
-   - Removing or altering copyright or license notices
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-3. No trademark rights
-   This license does not grant rights to use HoffSoftware or Nightfeed names
-   or logos except as needed to identify the Software.
-
-4. No warranty
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. TO THE
-   MAXIMUM EXTENT PERMITTED BY LAW, HOFFSOFTWARE IS NOT LIABLE FOR ANY
-   DAMAGES ARISING FROM USE OF THE SOFTWARE.
-
-5. Termination
-   If you breach this license, your rights end automatically. You must then
-   stop using the Software and delete copies in your possession.
-
-For commercial licensing or other permissions, contact HoffSoftware.
-
-Keeping the repository private does not change this license; it still applies
-to anyone you give the app or installer to. The same terms apply if the
-repository is made public later.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

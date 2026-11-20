@@ -7,6 +7,7 @@ import type {
   LiveTvChannel,
   LiveTvEpgOption,
   LiveTvStatus,
+  LiveTvTestResult,
   MazeSearchItem,
   Movie,
   SearchResult,
@@ -206,6 +207,9 @@ const api = {
   getLiveTvEpgOptions: (): Promise<LiveTvEpgOption[]> => ipcRenderer.invoke('liveTv:epgOptions'),
   setLiveTvIcon: (channelId: string, filePath: string): Promise<LiveTvChannel[]> =>
     ipcRenderer.invoke('liveTv:setIcon', channelId, filePath),
+  testLiveTvChannel: (channelId: string): Promise<LiveTvTestResult> =>
+    ipcRenderer.invoke('liveTv:testChannel', channelId),
+  clearLiveTvError: (): Promise<LiveTvStatus> => ipcRenderer.invoke('liveTv:clearError'),
   onSettingsChanged: (cb: (s: AppSettings) => void) => {
     const listener = (_: unknown, s: AppSettings) => cb(s);
     ipcRenderer.on('settings:changed', listener);
